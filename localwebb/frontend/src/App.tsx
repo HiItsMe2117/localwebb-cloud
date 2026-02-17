@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import NexusCanvas from './components/NexusCanvas';
-import { Upload, MessageSquare, Search, Layout, Clock, RefreshCw, Database, Shield } from 'lucide-react';
+import { Upload, MessageSquare, Layout, Clock, RefreshCw, Database, Shield } from 'lucide-react';
 import { useNodesState, useEdgesState } from 'reactflow';
 import type { Node } from 'reactflow';
 import axios from 'axios';
