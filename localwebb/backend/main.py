@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 from pinecone import Pinecone
 from llama_index.core import VectorStoreIndex, StorageContext
 from llama_index.vector_stores.pinecone import PineconeVectorStore
-from llama_index.embeddings.google import GeminiEmbedding
-from llama_index.llms.google import Gemini
+from llama_index.embeddings.google_genai import GeminiEmbedding
+from llama_index.llms.google_genai import Gemini
 from google.cloud import storage
 
 load_dotenv()
