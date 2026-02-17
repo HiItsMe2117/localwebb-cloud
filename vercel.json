@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "localwebb/frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
+    },
+    {
+      "src": "localwebb/backend/main.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "localwebb/backend/main.py" },
+    { "source": "/(.*)", "destination": "localwebb/frontend/$1" }
+  ]
+}
