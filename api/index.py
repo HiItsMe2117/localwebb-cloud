@@ -203,44 +203,35 @@ async def get_insights():
 async def query_index(request: QueryRequest):
     try:
         print(f"DEBUG: Querying for: {request.query}")
-        # 1. Embed Query - MATCHING THE INGESTION MODEL
         res = client.models.embed_content(
             model="models/text-embedding-004",
             contents=[request.query]
         )
         embedding = res.embeddings[0].values
-        print("DEBUG: Generated embedding")
 
-        # 2. Query Pinecone
-        results = index.query(vector=embedding, top_k=10, include_metadata=True)
-        print(f"DEBUG: Pinecone matches: {len(results.matches)}")
+        # Reduce top_k to 3 for speed
+        results = index.query(vector=embedding, top_k=3, include_metadata=True)
         
         context_parts = []
         for r in results.matches:
-            print(f"DEBUG: Match score: {r.score}")
-            if not r.metadata: 
-                print("DEBUG: Match has NO metadata")
-                continue
-            # Handle different metadata keys
+            if not r.metadata: continue
             text = r.metadata.get('text') or r.metadata.get('content') or ""
             if text:
-                context_parts.append(text)
+                # Truncate context to 1000 chars per match
+                context_parts.append(text[:1000])
         
-        context = "\n\n---\n\n".join(context_parts)
+        context = "\n\n".join(context_parts)
         
         if not context:
-            return {"response": "I couldn't find any relevant documents in the database to answer that question."}
+            return {"response": "No relevant info found."}
 
-        # 3. Generate Answer
+        # Simplified prompt
         prompt = (
-            "You are a master investigative analyst. Use the following context to answer the user's question.\n"
-            "If the information is not in the context, say so.\n\n"
-            f"CONTEXT:\n{context}\n\n"
-            f"QUESTION: {request.query}\n\n"
-            "DETAILED RESPONSE:"
+            f"Context: {context}\n"
+            f"Question: {request.query}\n"
+            "Answer briefly."
         )
         
-        print("DEBUG: Sending to Gemini Flash...")
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt
