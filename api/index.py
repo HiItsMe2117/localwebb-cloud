@@ -352,6 +352,50 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
     background_tasks.add_task(process_upload, file_path, file.filename)
     return {"status": "Processing"}
 
+def extract_text_from_pdf(file_path, filename):
+    """Extract text from PDF, using Gemini vision for scanned/poor-quality pages."""
+    reader = PdfReader(file_path)
+    all_text = []
+
+    # First pass: try standard text extraction
+    has_good_text = False
+    for page_num, page in enumerate(reader.pages):
+        text = (page.extract_text() or "").strip()
+        clean_words = [w for w in text.split() if len(w) > 2 and w.isalpha()]
+        if len(clean_words) >= 10:
+            has_good_text = True
+            all_text.append({"text": text, "page": page_num + 1})
+
+    # If standard extraction found good text, use it
+    if has_good_text and len(all_text) > len(reader.pages) * 0.3:
+        return all_text
+
+    # Otherwise, use Gemini vision to read the scanned PDF directly
+    print(f"DEBUG: Standard OCR insufficient for {filename}, using Gemini vision...")
+    all_text = []
+    try:
+        with open(file_path, "rb") as f:
+            pdf_bytes = f.read()
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=[
+                types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                "Extract ALL text from this document. Preserve the structure and content as faithfully as possible. Return only the extracted text."
+            ]
+        )
+        full_text = response.text.strip()
+        if full_text:
+            all_text.append({"text": full_text, "page": 1})
+    except Exception as e:
+        print(f"DEBUG: Gemini vision OCR failed for {filename}: {e}")
+        # Fall back to whatever pypdf got
+        for page_num, page in enumerate(reader.pages):
+            text = (page.extract_text() or "").strip()
+            if text:
+                all_text.append({"text": text, "page": page_num + 1})
+
+    return all_text
+
 def process_upload(file_path, filename):
     try:
         if not bucket:
@@ -367,19 +411,24 @@ def process_upload(file_path, filename):
         blob = bucket.blob(f"uploads/{filename}")
         blob.upload_from_filename(file_path)
 
-        reader = PdfReader(file_path)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
+        pages = extract_text_from_pdf(file_path, filename)
+        print(f"DEBUG: Extracted {len(pages)} pages from {filename}")
 
-        chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
-        for i, chunk in enumerate(chunks):
-            res = client.models.embed_content(model="gemini-embedding-001", contents=[chunk])
-            index.upsert(vectors=[(
-                f"{filename}-{i}", 
-                res.embeddings[0].values, 
-                {"text": chunk, "filename": filename, "gcs_path": f"gs://{GCS_BUCKET}/uploads/{filename}"}
-            )])
+        for page_data in pages:
+            text = page_data["text"]
+            page_num = page_data["page"]
+            # Split long pages into chunks
+            chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
+            for i, chunk in enumerate(chunks):
+                vec_id = f"{filename}-p{page_num}-{i}"
+                res = client.models.embed_content(model="gemini-embedding-001", contents=[chunk])
+                index.upsert(vectors=[(
+                    vec_id,
+                    res.embeddings[0].values,
+                    {"text": chunk, "filename": filename, "page": page_num,
+                     "gcs_path": f"gs://{GCS_BUCKET}/uploads/{filename}"}
+                )])
+        print(f"DEBUG: Finished indexing {filename}")
     finally:
         shutil.rmtree(os.path.dirname(file_path), ignore_errors=True)
 
