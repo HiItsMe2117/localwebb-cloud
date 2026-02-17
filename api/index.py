@@ -39,9 +39,9 @@ app.add_middleware(
 
 # --- Configuration ---
 GCS_BUCKET = os.getenv("GCS_BUCKET_NAME", "").strip()
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+PINECONE_API_KEY = (os.getenv("PINECONE_API_KEY") or os.getenv("PINCONE_API_KEY") or "").strip()
+PINECONE_INDEX_NAME = (os.getenv("PINECONE_INDEX") or os.getenv("pinecone_index") or "").strip()
+GOOGLE_API_KEY = (os.getenv("GOOGLE_API_KEY") or "").strip()
 
 # --- GCP Credentials Handling ---
 gcp_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
@@ -75,9 +75,17 @@ bucket = get_bucket()
 
 def get_pinecone_index():
     try:
+        print(f"DEBUG: Pinecone Check - Key Present: {bool(PINECONE_API_KEY)}, Index Present: {bool(PINECONE_INDEX_NAME)}")
         if PINECONE_API_KEY and PINECONE_INDEX_NAME:
             pc = Pinecone(api_key=PINECONE_API_KEY)
-            return pc.Index(PINECONE_INDEX_NAME)
+            idx = pc.Index(PINECONE_INDEX_NAME)
+            print(f"DEBUG: Pinecone Index '{PINECONE_INDEX_NAME}' initialized successfully")
+            return idx
+        else:
+            missing = []
+            if not PINECONE_API_KEY: missing.append("PINECONE_API_KEY")
+            if not PINECONE_INDEX_NAME: missing.append("PINECONE_INDEX")
+            print(f"DEBUG: Pinecone initialization skipped. Missing: {', '.join(missing)}")
     except Exception as e:
         print(f"Error initializing Pinecone: {e}")
     return None
