@@ -15,13 +15,17 @@ function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [yearFilter, setYearFilter] = useState(2026);
 
+  const [error, setError] = useState<string | null>(null);
+
   const loadGraph = async () => {
     try {
+      setError(null);
       const res = await axios.get('/api/graph');
       setNodes(res.data.nodes || []);
       setEdges(res.data.edges || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to load graph:", err);
+      setError(`Failed to load graph: ${err.response?.data?.detail || err.message}`);
     }
   };
 
@@ -78,11 +82,17 @@ function App() {
 
   const handleQuery = async () => {
     setIsAnalyzing(true);
+    setError(null);
     try {
       const res = await axios.post('/api/query', { query });
-      setResponse(res.data.response);
-    } catch (err) {
+      if (res.data.response && res.data.response.startsWith("Error:")) {
+        setError(res.data.response);
+      } else {
+        setResponse(res.data.response);
+      }
+    } catch (err: any) {
       console.error(err);
+      setError(`Analysis failed: ${err.response?.data?.detail || err.message}`);
     } finally {
       setIsAnalyzing(false);
     }
@@ -196,6 +206,13 @@ function App() {
                 ) : 'Run Analysis'}
               </button>
             </div>
+            
+            {error && (
+              <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-sm flex items-center gap-3">
+                <Shield size={16} className="shrink-0" />
+                <p>{error}</p>
+              </div>
+            )}
             
             {response && (
               <div className="mt-6 p-5 bg-blue-500/5 rounded-xl text-sm leading-relaxed border border-blue-500/10 text-zinc-300 relative">

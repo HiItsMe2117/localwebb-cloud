@@ -4,7 +4,8 @@ import shutil
 import tempfile
 import uuid
 from typing import List, Optional
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -19,6 +20,14 @@ from pypdf import PdfReader
 load_dotenv()
 
 app = FastAPI(title="LocalWebb Cloud API")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print(f"GLOBAL ERROR: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Internal Server Error", "detail": str(exc)},
+    )
 
 # Enable CORS
 app.add_middleware(
@@ -42,31 +51,65 @@ if gcp_json:
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = f.name
 
 # --- Initialize Clients ---
-storage_client = storage.Client()
-bucket = storage_client.bucket(GCS_BUCKET)
-pc = Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(PINECONE_INDEX_NAME)
-client = genai.Client(api_key=GOOGLE_API_KEY)
+def get_storage_client():
+    try:
+        return storage.Client()
+    except Exception as e:
+        print(f"Error initializing storage client: {e}")
+        return None
+
+storage_client = get_storage_client()
+bucket = storage_client.bucket(GCS_BUCKET) if storage_client and GCS_BUCKET else None
+
+def get_pinecone_index():
+    try:
+        if PINECONE_API_KEY and PINECONE_INDEX_NAME:
+            pc = Pinecone(api_key=PINECONE_API_KEY)
+            return pc.Index(PINECONE_INDEX_NAME)
+    except Exception as e:
+        print(f"Error initializing Pinecone: {e}")
+    return None
+
+index = get_pinecone_index()
+
+def get_genai_client():
+    try:
+        if GOOGLE_API_KEY:
+            return genai.Client(api_key=GOOGLE_API_KEY)
+    except Exception as e:
+        print(f"Error initializing GenAI client: {e}")
+    return None
+
+client = get_genai_client()
 
 class GraphStore:
     def __init__(self):
-        self.blob = bucket.blob("graph_store.json")
-        if not self.blob.exists():
-            self.save({"nodes": [], "edges": []})
+        self.blob = None
+        if bucket:
+            try:
+                self.blob = bucket.blob("graph_store.json")
+                if not self.blob.exists():
+                    self.save({"nodes": [], "edges": []})
+            except Exception as e:
+                print(f"Error initializing GraphStore blob: {e}")
 
     def load(self):
+        if not self.blob:
+            return {"nodes": [], "edges": []}
         try:
             if self.blob.exists():
                 return json.loads(self.blob.download_as_text())
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error loading graph: {e}")
         return {"nodes": [], "edges": []}
 
     def save(self, data):
+        if not self.blob:
+            return
         try:
             self.blob.upload_from_string(json.dumps(data, indent=2))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error saving graph: {e}")
 
     def update_node_position(self, node_id, x, y):
         data = self.load()
@@ -132,6 +175,11 @@ async def update_positions(updates: List[PositionUpdate]):
 @app.get("/api/insights")
 async def get_insights():
     try:
+        if not index:
+            return {"error": "Pinecone index not initialized. Please check environment variables."}
+        if not client:
+            return {"error": "GenAI client not initialized. Please check environment variables."}
+
         print("DEBUG: Fetching sampling vectors from Pinecone...")
         # 1. Get sample data for extraction
         results = index.query(
@@ -202,6 +250,11 @@ async def get_insights():
 @app.post("/api/query")
 async def query_index(request: QueryRequest):
     try:
+        if not index:
+            return {"response": "Error: Pinecone index not initialized. Please check environment variables."}
+        if not client:
+            return {"response": "Error: GenAI client not initialized. Please check environment variables."}
+
         print(f"DEBUG: Querying for: {request.query}")
         res = client.models.embed_content(
             model="models/text-embedding-004",
@@ -251,6 +304,16 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
 
 def process_upload(file_path, filename):
     try:
+        if not bucket:
+            print(f"Error: GCS bucket not initialized. Could not upload {filename}.")
+            return
+        if not client:
+            print(f"Error: GenAI client not initialized. Could not index {filename}.")
+            return
+        if not index:
+            print(f"Error: Pinecone index not initialized. Could not index {filename}.")
+            return
+
         blob = bucket.blob(f"uploads/{filename}")
         blob.upload_from_filename(file_path)
 
