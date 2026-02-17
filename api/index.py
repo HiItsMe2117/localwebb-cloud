@@ -281,7 +281,7 @@ async def query_index(request: QueryRequest):
         # 1. Embed query
         print("DEBUG: Embedding query...")
         res = client.models.embed_content(
-            model="models/text-embedding-004",
+            model="models/embedding-001",
             contents=[request.query]
         )
         embedding = res.embeddings[0].values
@@ -345,7 +345,7 @@ def process_upload(file_path, filename):
 
         chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
         for i, chunk in enumerate(chunks):
-            res = client.models.embed_content(model="text-embedding-004", contents=[chunk])
+            res = client.models.embed_content(model="models/embedding-001", contents=[chunk])
             index.upsert(vectors=[(
                 f"{filename}-{i}", 
                 res.embeddings[0].values, 
