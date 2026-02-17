@@ -85,10 +85,6 @@ graph_store = GraphStore()
 class QueryRequest(BaseModel):
     query: str
 
-@app.get("/")
-async def root():
-    return {"status": "LocalWebb Cloud API is active"}
-
 @app.get("/api")
 async def api_health():
     return {"status": "LocalWebb Cloud API is active"}
