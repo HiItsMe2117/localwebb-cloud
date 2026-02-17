@@ -1,6 +1,6 @@
 fastapi
 google-genai
-pinecone-client
+pinecone
 google-cloud-storage
 pypdf
 python-multipart
