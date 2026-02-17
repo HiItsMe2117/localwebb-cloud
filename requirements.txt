@@ -1,9 +1,7 @@
 fastapi
-pinecone-client
 google-genai
+pinecone-client
 google-cloud-storage
-python-multipart
-pydantic
-python-dotenv
 pypdf
-requests
+python-multipart
+python-dotenv
