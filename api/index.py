@@ -38,7 +38,7 @@ app.add_middleware(
 )
 
 # --- Configuration ---
-GCS_BUCKET = os.getenv("GCS_BUCKET_NAME")
+GCS_BUCKET = os.getenv("GCS_BUCKET_NAME", "").strip()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -59,7 +59,19 @@ def get_storage_client():
         return None
 
 storage_client = get_storage_client()
-bucket = storage_client.bucket(GCS_BUCKET) if storage_client and GCS_BUCKET else None
+
+def get_bucket():
+    if not storage_client or not GCS_BUCKET:
+        return None
+    try:
+        # Bucket names must start/end with a number or letter
+        if GCS_BUCKET[0].isalnum():
+            return storage_client.bucket(GCS_BUCKET)
+    except Exception as e:
+        print(f"Invalid bucket name or access error: {e}")
+    return None
+
+bucket = get_bucket()
 
 def get_pinecone_index():
     try:
