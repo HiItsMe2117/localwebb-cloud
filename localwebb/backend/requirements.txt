@@ -9,6 +9,5 @@ google-cloud-storage
 python-multipart
 pydantic
 python-dotenv
-rapidfuzz
 pymupdf
 requests
