@@ -50,24 +50,22 @@ index = pc.Index(PINECONE_INDEX_NAME)
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
 class GraphStore:
-    def __init__(self, filename):
-        self.filename = filename
-        if not os.path.exists(self.filename):
+    def __init__(self):
+        self.blob = bucket.blob("graph_store.json")
+        if not self.blob.exists():
             self.save({"nodes": [], "edges": []})
 
     def load(self):
         try:
-            if os.path.exists(self.filename):
-                with open(self.filename, 'r') as f:
-                    return json.load(f)
+            if self.blob.exists():
+                return json.loads(self.blob.download_as_text())
         except Exception:
             pass
         return {"nodes": [], "edges": []}
 
     def save(self, data):
         try:
-            with open(self.filename, 'w') as f:
-                json.dump(data, f, indent=2)
+            self.blob.upload_from_string(json.dumps(data, indent=2))
         except Exception:
             pass
 
@@ -82,7 +80,7 @@ class GraphStore:
             if (edge["source"], edge["target"]) not in existing_edges: data["edges"].append(edge)
         self.save(data)
 
-graph_store = GraphStore(GRAPH_FILE)
+graph_store = GraphStore()
 
 class QueryRequest(BaseModel):
     query: str

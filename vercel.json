@@ -2,6 +2,7 @@
   "version": 2,
   "rewrites": [
     { "source": "/api/(.*)", "destination": "api.py" },
-    { "source": "/(.*)", "destination": "localwebb/frontend/$1" }
+    { "source": "/assets/(.*)", "destination": "/localwebb/frontend/dist/assets/$1" },
+    { "source": "/(.*)", "destination": "/localwebb/frontend/dist/index.html" }
   ]
 }
