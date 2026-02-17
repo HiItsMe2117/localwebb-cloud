@@ -1,5 +1,4 @@
 fastapi
-uvicorn
 pinecone-client
 google-genai
 google-cloud-storage
