@@ -7,11 +7,8 @@ llama-index-vector-stores-pinecone
 pinecone-client
 google-cloud-storage
 python-multipart
-spacy
 pydantic
 python-dotenv
 rapidfuzz
 pymupdf
-pillow
-tqdm
 requests
