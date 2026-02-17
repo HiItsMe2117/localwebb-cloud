@@ -280,10 +280,27 @@ async def query_index(request: QueryRequest):
 
         # 1. Embed query
         print("DEBUG: Embedding query...")
-        res = client.models.embed_content(
-            model="models/embedding-001",
-            contents=[request.query]
-        )
+        # Log available models to help debug 404s
+        try:
+            available_models = [m.name for m in client.models.list()]
+            print(f"DEBUG: Available models: {available_models}")
+        except:
+            pass
+
+        embedding_model = "text-embedding-004"
+        try:
+            res = client.models.embed_content(
+                model=embedding_model,
+                contents=[request.query]
+            )
+        except Exception as e:
+            print(f"DEBUG: {embedding_model} failed ({e}), trying fallback...")
+            embedding_model = "embedding-001"
+            res = client.models.embed_content(
+                model=embedding_model,
+                contents=[request.query]
+            )
+        
         embedding = res.embeddings[0].values
 
         # 2. Query Pinecone
@@ -345,7 +362,7 @@ def process_upload(file_path, filename):
 
         chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
         for i, chunk in enumerate(chunks):
-            res = client.models.embed_content(model="models/embedding-001", contents=[chunk])
+            res = client.models.embed_content(model="text-embedding-004", contents=[chunk])
             index.upsert(vectors=[(
                 f"{filename}-{i}", 
                 res.embeddings[0].values, 
