@@ -1,0 +1,11 @@
+localwebb/backend/venv
+localwebb/frontend/node_modules
+localwebb/frontend/dist
+node_modules
+.git
+chroma_db
+data
+logs
+*.zip
+*.png
+epsteinfiles-487701-fad3618ad671.json

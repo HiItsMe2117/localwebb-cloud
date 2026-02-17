@@ -1,10 +1,7 @@
 fastapi
-llama-index-core
-llama-index-readers-file
-llama-index-llms-google-genai
-llama-index-embeddings-google-genai
-llama-index-vector-stores-pinecone
+uvicorn
 pinecone-client
+google-genai
 google-cloud-storage
 python-multipart
 pydantic
