@@ -250,47 +250,48 @@ async def get_insights():
 @app.post("/api/query")
 async def query_index(request: QueryRequest):
     try:
+        print(f"DEBUG: Starting query for: {request.query}")
         if not index:
+            print("ERROR: Pinecone index not initialized")
             return {"response": "Error: Pinecone index not initialized. Please check environment variables."}
         if not client:
+            print("ERROR: GenAI client not initialized")
             return {"response": "Error: GenAI client not initialized. Please check environment variables."}
 
-        print(f"DEBUG: Querying for: {request.query}")
+        # 1. Embed query
+        print("DEBUG: Embedding query...")
         res = client.models.embed_content(
             model="models/text-embedding-004",
             contents=[request.query]
         )
         embedding = res.embeddings[0].values
 
-        # Reduce top_k to 3 for speed
-        results = index.query(vector=embedding, top_k=3, include_metadata=True)
+        # 2. Query Pinecone
+        print("DEBUG: Querying Pinecone...")
+        results = index.query(vector=embedding, top_k=2, include_metadata=True)
         
         context_parts = []
         for r in results.matches:
-            if not r.metadata: continue
-            text = r.metadata.get('text') or r.metadata.get('content') or ""
-            if text:
-                # Truncate context to 1000 chars per match
-                context_parts.append(text[:1000])
+            if r.metadata and 'text' in r.metadata:
+                context_parts.append(r.metadata['text'][:800])
         
         context = "\n\n".join(context_parts)
-        
         if not context:
-            return {"response": "No relevant info found."}
+            print("DEBUG: No context found")
+            return {"response": "No relevant info found in the database."}
 
-        # Simplified prompt
-        prompt = (
-            f"Context: {context}\n"
-            f"Question: {request.query}\n"
-            "Answer briefly."
-        )
+        # 3. Generate response
+        print("DEBUG: Generating Gemini response...")
+        prompt = f"Context: {context}\n\nQuestion: {request.query}\n\nAnswer briefly based ONLY on the context."
         
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt
         )
+        print("DEBUG: Query successful")
         return {"response": response.text}
     except Exception as e:
+        print(f"CRITICAL ERROR in query_index: {str(e)}")
         return {"response": f"Analysis failed: {str(e)}"}
 
 @app.post("/api/upload")
