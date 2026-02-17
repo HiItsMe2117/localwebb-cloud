@@ -132,13 +132,19 @@ async def update_positions(updates: List[PositionUpdate]):
 @app.get("/api/insights")
 async def get_insights():
     try:
+        print("DEBUG: Fetching sampling vectors from Pinecone...")
         # 1. Get sample data for extraction
         results = index.query(
-            vector=[0.0] * 3072, # Zero vector for random-ish sampling or use a real query
+            vector=[0.0] * 3072, 
             top_k=20, 
             include_metadata=True
         )
+        print(f"DEBUG: Pinecone returned {len(results.matches)} matches for insights")
         context = "\n".join([r.metadata.get('text', '') for r in results.matches if r.metadata])
+        
+        if not context:
+            print("DEBUG: No context found in metadata!")
+            return graph_store.load()
 
         # 2. Structured Extraction with Gemini
         prompt = (
@@ -147,6 +153,7 @@ async def get_insights():
             "Return JSON with 'entities' and 'connections' keys."
         )
         
+        print("DEBUG: Sending extraction prompt to Gemini...")
         res = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt,
@@ -156,7 +163,8 @@ async def get_insights():
             )
         )
         
-        output = res.parsed # Gemini SDK automatically parses JSON based on response_schema
+        output = res.parsed 
+        print(f"DEBUG: Gemini extracted {len(output.entities)} entities")
         
         new_nodes = []
         type_colors = {
@@ -194,26 +202,35 @@ async def get_insights():
 @app.post("/api/query")
 async def query_index(request: QueryRequest):
     try:
-        # 1. Embed Query
+        print(f"DEBUG: Querying for: {request.query}")
+        # 1. Embed Query - MATCHING THE INGESTION MODEL
         res = client.models.embed_content(
-            model="text-embedding-004",
+            model="models/text-embedding-004",
             contents=[request.query]
         )
         embedding = res.embeddings[0].values
+        print("DEBUG: Generated embedding")
 
         # 2. Query Pinecone
         results = index.query(vector=embedding, top_k=10, include_metadata=True)
+        print(f"DEBUG: Pinecone matches: {len(results.matches)}")
         
         context_parts = []
         for r in results.matches:
-            if not r.metadata: continue
-            # Handle different metadata keys (LlamaIndex uses 'text', our direct upload uses 'text')
+            print(f"DEBUG: Match score: {r.score}")
+            if not r.metadata: 
+                print("DEBUG: Match has NO metadata")
+                continue
+            # Handle different metadata keys
             text = r.metadata.get('text') or r.metadata.get('content') or ""
             if text:
                 context_parts.append(text)
         
         context = "\n\n---\n\n".join(context_parts)
         
+        if not context:
+            return {"response": "I couldn't find any relevant documents in the database to answer that question."}
+
         # 3. Generate Answer
         prompt = (
             "You are a master investigative analyst. Use the following context to answer the user's question.\n"
@@ -223,6 +240,7 @@ async def query_index(request: QueryRequest):
             "DETAILED RESPONSE:"
         )
         
+        print("DEBUG: Sending to Gemini Flash...")
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt
