@@ -18,3 +18,4 @@ tmp_extract/
 tmp_extract_4/
 *.zip
 .vercel
+.env*.local

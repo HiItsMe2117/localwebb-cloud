@@ -208,7 +208,14 @@ async def get_insights():
             include_metadata=True
         )
         print(f"DEBUG: Pinecone returned {len(results.matches)} matches for insights")
-        context = "\n".join([r.metadata.get('text', '') for r in results.matches if r.metadata])
+        def extract_text(metadata):
+            if '_node_content' in metadata:
+                try:
+                    return json.loads(metadata['_node_content']).get('text', '')
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return metadata.get('text', '')
+        context = "\n".join([extract_text(r.metadata) for r in results.matches if r.metadata])
         
         if not context:
             print("DEBUG: No context found in metadata!")
@@ -223,7 +230,7 @@ async def get_insights():
         
         print("DEBUG: Sending extraction prompt to Gemini...")
         res = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-pro",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -287,30 +294,35 @@ async def query_index(request: QueryRequest):
         except:
             pass
 
-        embedding_model = "text-embedding-004"
-        try:
-            res = client.models.embed_content(
-                model=embedding_model,
-                contents=[request.query]
-            )
-        except Exception as e:
-            print(f"DEBUG: {embedding_model} failed ({e}), trying fallback...")
-            embedding_model = "embedding-001"
-            res = client.models.embed_content(
-                model=embedding_model,
-                contents=[request.query]
-            )
+        embedding_model = "gemini-embedding-001"
+        res = client.models.embed_content(
+            model=embedding_model,
+            contents=[request.query]
+        )
         
         embedding = res.embeddings[0].values
 
         # 2. Query Pinecone
         print("DEBUG: Querying Pinecone...")
-        results = index.query(vector=embedding, top_k=2, include_metadata=True)
+        results = index.query(vector=embedding, top_k=5, include_metadata=True)
         
         context_parts = []
         for r in results.matches:
-            if r.metadata and 'text' in r.metadata:
-                context_parts.append(r.metadata['text'][:800])
+            if not r.metadata:
+                continue
+            text = ""
+            # Support LlamaIndex metadata format (text nested in _node_content JSON)
+            if '_node_content' in r.metadata:
+                try:
+                    node = json.loads(r.metadata['_node_content'])
+                    text = node.get('text', '')
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            # Also support simple format (top-level text key)
+            if not text:
+                text = r.metadata.get('text', '')
+            if text:
+                context_parts.append(text[:800])
         
         context = "\n\n".join(context_parts)
         if not context:
@@ -322,7 +334,7 @@ async def query_index(request: QueryRequest):
         prompt = f"Context: {context}\n\nQuestion: {request.query}\n\nAnswer briefly based ONLY on the context."
         
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-pro",
             contents=prompt
         )
         print("DEBUG: Query successful")
@@ -362,7 +374,7 @@ def process_upload(file_path, filename):
 
         chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
         for i, chunk in enumerate(chunks):
-            res = client.models.embed_content(model="text-embedding-004", contents=[chunk])
+            res = client.models.embed_content(model="gemini-embedding-001", contents=[chunk])
             index.upsert(vectors=[(
                 f"{filename}-{i}", 
                 res.embeddings[0].values, 
