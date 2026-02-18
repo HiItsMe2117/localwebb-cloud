@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import ReactFlow, {
   addEdge,
   Background,
+  BackgroundVariant,
   Controls,
   MiniMap,
 } from 'reactflow';
@@ -10,7 +11,7 @@ import 'reactflow/dist/style.css';
 import EntityNode from './EntityNode';
 
 const TYPE_COLORS: Record<string, string> = {
-  PERSON: '#3b82f6',
+  PERSON: '#4169E1',
   ORGANIZATION: '#f59e0b',
   LOCATION: '#10b981',
   EVENT: '#8b5cf6',
@@ -54,26 +55,27 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
   const styledEdges = useMemo(() => {
     return edges.map(e => ({
       ...e,
-      labelStyle: { fill: '#a1a1aa', fontSize: 10, fontWeight: 500 },
-      labelBgStyle: { fill: '#0d0d0f', fillOpacity: 0.9 },
-      labelBgPadding: [6, 3] as [number, number],
-      labelBgBorderRadius: 4,
+      // Retro Terminal Edge Style
+      labelStyle: { fill: '#4169E1', fontSize: 10, fontFamily: 'monospace', fontWeight: 700 },
+      labelBgStyle: { fill: '#050510', stroke: '#4169E1', strokeWidth: 1 },
+      labelBgPadding: [4, 2] as [number, number],
+      labelBgBorderRadius: 0,
       style: {
-        stroke: e.data?.confidence === 'INFERRED' ? '#f59e0b' : '#3b82f6',
-        strokeWidth: 1.5,
-        strokeDasharray: e.data?.confidence === 'INFERRED' ? '5 5' : undefined,
+        stroke: '#2b4a9c', // Dim blue for lines
+        strokeWidth: 1,
         ...(e.style || {}),
       },
+      animated: true, // Always animate data flow?
     }));
   }, [edges]);
 
   const miniMapNodeColor = useCallback((node: Node) => {
     const entityType = (node.data?.entityType || node.data?.type || '').toUpperCase();
-    return TYPE_COLORS[entityType] || '#52525b';
+    return TYPE_COLORS[entityType] || '#a4b9ef';
   }, []);
 
   return (
-    <div style={{ width: '100%', height: height || '70vh', border: '1px solid #333', borderRadius: '8px', background: '#050505' }}>
+    <div style={{ width: '100%', height: height || '70vh', background: '#050510' }}>
       <ReactFlow
         nodes={nodes}
         edges={styledEdges}
@@ -88,17 +90,35 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
         minZoom={0.1}
         maxZoom={2}
         defaultEdgeOptions={{
-          type: 'smoothstep',
+          type: 'default', // Straight lines for retro feel? Or 'step'?
           animated: false,
         }}
       >
-        <Background color="#222" gap={20} />
-        <Controls />
+        <Background 
+          color="#2b4a9c" 
+          variant={BackgroundVariant.Lines} 
+          gap={40} 
+          size={1} 
+          style={{ opacity: 0.2 }}
+        />
+        <Controls 
+          style={{ 
+            borderRadius: 0, 
+            border: '1px solid #4169E1', 
+            background: '#050510', 
+            color: '#4169E1' 
+          }} 
+          showInteractive={false}
+        />
         <MiniMap
           nodeColor={miniMapNodeColor}
           nodeStrokeWidth={2}
-          style={{ background: '#0a0a0c', border: '1px solid #222' }}
-          maskColor="rgba(0,0,0,0.7)"
+          maskColor="rgba(5, 5, 16, 0.8)"
+          style={{ 
+            background: '#050510', 
+            border: '1px solid #4169E1', 
+            borderRadius: 0 
+          }}
         />
       </ReactFlow>
     </div>

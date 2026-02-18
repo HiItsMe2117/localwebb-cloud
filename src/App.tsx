@@ -222,62 +222,61 @@ function App() {
   const handleSuggestedQuery = (query: string) => sendQuery(query);
 
   return (
-    <div className="h-screen flex flex-col bg-[#0a0a0c] text-zinc-100 font-sans selection:bg-blue-500/30">
-      {/* Header */}
-      <header className="flex justify-between items-center px-6 py-3 border-b border-white/5 shrink-0">
+    <div className="h-screen flex flex-col bg-[#050510] text-[#a4b9ef] font-mono selection:bg-[#4169E1] selection:text-white crt overflow-hidden">
+      {/* Terminal Header / Status Bar */}
+      <header className="flex justify-between items-center px-4 py-2 border-b border-[#4169E1] bg-[#050510] shrink-0 z-50">
         <div className="flex items-center gap-4">
-          <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl flex items-center justify-center shadow-lg shadow-blue-900/20">
-            <Shield size={20} className="text-white" />
+          <div className="flex items-center justify-center border border-[#4169E1] px-2 py-1">
+            <Shield size={16} className="text-[#4169E1]" />
           </div>
           <div>
-            <h1 className="text-lg font-black tracking-tighter text-white leading-none">LOCALWEBB <span className="text-blue-500">CLOUD</span></h1>
-            <p className="text-[9px] text-zinc-500 font-mono tracking-widest uppercase">Investigative Intelligence OS</p>
+            <h1 className="text-sm font-bold tracking-widest text-[#4169E1] leading-none">
+              LOCALWEBB_CLOUD <span className="text-[#a4b9ef] animate-pulse">v2.0</span>
+            </h1>
+            <p className="text-[10px] text-[#2b4a9c] uppercase tracking-wider">
+              :: INTELLIGENCE_OS :: READY
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Stats badges */}
-          <div className="hidden sm:flex items-center gap-2 text-[10px] font-mono text-zinc-500">
-            <span className="bg-zinc-900/80 px-2 py-1 rounded border border-white/5">{nodes.length} entities</span>
-            <span className="bg-zinc-900/80 px-2 py-1 rounded border border-white/5">{edges.length} links</span>
-            <span className="bg-zinc-900/80 px-2 py-1 rounded border border-white/5">{communities.length} clusters</span>
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+        <div className="flex items-center gap-4 text-xs">
+          {/* Stats Line */}
+          <div className="hidden sm:flex items-center gap-4 text-[#2b4a9c]">
+            <span>ENTITIES: <span className="text-[#a4b9ef]">{nodes.length}</span></span>
+            <span>LINKS: <span className="text-[#a4b9ef]">{edges.length}</span></span>
+            <span>CLUSTERS: <span className="text-[#a4b9ef]">{communities.length}</span></span>
+            <div className="w-2 h-2 bg-[#4169E1] animate-pulse" />
           </div>
 
-          {/* Graph toggle */}
+          <div className="h-4 w-px bg-[#2b4a9c]" />
+
+          {/* Controls */}
           <button
             onClick={() => setGraphOpen(!graphOpen)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+            className={`flex items-center gap-2 px-2 py-1 transition-colors border ${
               graphOpen
-                ? 'bg-blue-600 text-white border-blue-400/20'
-                : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-white/5'
+                ? 'bg-[#4169E1] text-[#050510] border-[#4169E1]'
+                : 'bg-transparent text-[#4169E1] border-[#4169E1] hover:bg-[#4169E1]/10'
             }`}
           >
-            <Network size={15} />
-            <span className="hidden sm:inline">Graph</span>
-            {nodes.length > 0 && (
-              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
-                graphOpen ? 'bg-blue-500/30 text-blue-100' : 'bg-zinc-800 text-zinc-400'
-              }`}>
-                {nodes.length}
-              </span>
-            )}
+            <Network size={14} />
+            <span className="hidden sm:inline">[ GRAPH: {graphOpen ? 'ON' : 'OFF'} ]</span>
           </button>
 
-          {/* Sync */}
           <button
             onClick={triggerInsights}
             disabled={isSyncing}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-800 text-white px-3 py-2 rounded-lg text-sm font-bold transition-all border border-blue-400/20 active:scale-95"
+            className="flex items-center gap-2 text-[#4169E1] hover:text-[#a4b9ef] disabled:text-[#2b4a9c] transition-colors"
           >
-            <RefreshCw size={15} className={isSyncing ? "animate-spin" : ""} />
-            <span className="hidden sm:inline">{isSyncing ? "Syncing..." : "Sync"}</span>
+            <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
+            <span className="hidden sm:inline">
+              {isSyncing ? "[ SYNCING... ]" : "[ SYNC ]"}
+            </span>
           </button>
 
-          {/* Upload */}
-          <label className="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer transition-all border border-white/5">
-            <Upload size={15} />
-            <span className="hidden sm:inline">Upload PDF</span>
+          <label className="flex items-center gap-2 text-[#4169E1] hover:text-[#a4b9ef] cursor-pointer transition-colors">
+            <Upload size={14} />
+            <span className="hidden sm:inline">[ UPLOAD_PDF ]</span>
             <input type="file" className="hidden" onChange={handleUpload} />
           </label>
         </div>
@@ -302,7 +301,7 @@ function App() {
         onOrgFilterChange={setOrgFilter}
       />
 
-      {/* Graph Panel (slide-up overlay, always mounted) */}
+      {/* Graph Panel */}
       <GraphPanel
         open={graphOpen}
         onClose={() => setGraphOpen(false)}
@@ -319,7 +318,7 @@ function App() {
         communities={communities}
       />
 
-      {/* Evidence Panel (overlay) */}
+      {/* Evidence Panel */}
       <EvidencePanel
         selectedNode={selectedNode}
         selectedEdge={selectedEdge}
