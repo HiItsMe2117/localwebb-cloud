@@ -23,23 +23,23 @@ export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, al
       return (
         <>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-blue-600/10 flex items-center justify-center border border-blue-500/20">
-              <Share2 size={20} className="text-blue-400" />
+            <div className="w-10 h-10 rounded-xl bg-[#007AFF]/10 flex items-center justify-center border border-[#007AFF]/20">
+              <Share2 size={20} className="text-[#007AFF]" />
             </div>
             <div>
-              <h3 className="text-white font-bold">Relationship Details</h3>
-              <p className="text-xs text-zinc-500">Evidence of a connection</p>
+              <h3 className="text-white font-semibold text-[17px]">Relationship Details</h3>
+              <p className="text-[13px] text-[rgba(235,235,245,0.3)]">Evidence of a connection</p>
             </div>
           </div>
-          
-          <div className="mt-6 p-4 bg-zinc-900 rounded-xl border border-zinc-800/80">
-            <div className="flex items-center justify-between text-sm text-white font-medium">
+
+          <div className="mt-5 p-4 bg-[#2C2C2E] rounded-xl border border-[rgba(84,84,88,0.65)]">
+            <div className="flex items-center justify-between text-[15px] text-white font-medium">
               <span className="truncate">{sourceNode?.data?.label || selectedEdge.source}</span>
-              <ChevronRight size={16} className="text-zinc-600 shrink-0 mx-2" />
+              <ChevronRight size={16} className="text-[rgba(235,235,245,0.3)] shrink-0 mx-2" />
               <span className="truncate text-right">{targetNode?.data?.label || selectedEdge.target}</span>
             </div>
             <div className="text-center mt-2">
-              <span className="text-xs font-semibold text-blue-400 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20 uppercase tracking-wider">
+              <span className="text-[11px] font-semibold text-[#007AFF] bg-[#007AFF]/10 px-3 py-1 rounded-full border border-[#007AFF]/20 uppercase tracking-wider">
                 {d.predicate || selectedEdge.label || 'related_to'}
               </span>
             </div>
@@ -47,27 +47,27 @@ export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, al
 
           {d.evidence_text && (
             <div className="mt-4 space-y-2">
-              <h4 className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider flex items-center gap-2">
+              <h4 className="text-[13px] text-[rgba(235,235,245,0.3)] font-semibold flex items-center gap-2">
                 <Quote size={12} /> Extracted Evidence
               </h4>
-              <div className="p-4 bg-zinc-950/50 rounded-xl text-sm text-zinc-300 leading-relaxed italic border border-zinc-800">
+              <div className="p-4 bg-[#2C2C2E] rounded-xl text-[15px] text-[rgba(235,235,245,0.6)] leading-relaxed italic border border-[rgba(84,84,88,0.65)]">
                 "{d.evidence_text}"
               </div>
             </div>
           )}
 
-          <div className="mt-4 space-y-3 text-xs">
+          <div className="mt-4 space-y-3 text-[13px]">
             {d.source_filename && (
-              <div className="flex justify-between items-center text-zinc-400">
-                <span className="flex items-center gap-2 text-zinc-500"><FileText size={14} /> Source File</span>
-                <span>{d.source_filename} {d.source_page > 0 && `(p. ${d.source_page})`}</span>
+              <div className="flex justify-between items-center">
+                <span className="flex items-center gap-2 text-[rgba(235,235,245,0.3)]"><FileText size={14} /> Source File</span>
+                <span className="text-[rgba(235,235,245,0.6)]">{d.source_filename} {d.source_page > 0 && `(p. ${d.source_page})`}</span>
               </div>
             )}
             <div className="flex justify-between items-center">
-              <span className="flex items-center gap-2 text-zinc-500">
+              <span className="flex items-center gap-2 text-[rgba(235,235,245,0.3)]">
                 {d.confidence === 'INFERRED' ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />} Confidence
               </span>
-              <span className={d.confidence === 'INFERRED' ? 'text-amber-400' : 'text-green-400'}>
+              <span className={d.confidence === 'INFERRED' ? 'text-[#FF9F0A]' : 'text-[#30D158]'}>
                 {d.confidence || 'STATED'}
               </span>
             </div>
@@ -86,25 +86,25 @@ export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, al
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full mt-1" style={{ background: nd.communityColor || '#3b82f6' }} />
-                <h3 className="text-white font-bold text-lg">{nd.label}</h3>
+                <div className="w-3 h-3 rounded-full mt-1" style={{ background: nd.communityColor || '#007AFF' }} />
+                <h3 className="text-white font-bold text-[20px]">{nd.label}</h3>
               </div>
-              <span className="text-xs font-bold uppercase tracking-wider ml-5" style={{color: nd.communityColor || '#3b82f6'}}>
+              <span className="text-[13px] font-semibold uppercase tracking-wider ml-5" style={{color: nd.communityColor || '#007AFF'}}>
                 {nd.entityType || nd.type || 'UNKNOWN'}
               </span>
             </div>
           </div>
 
           {nd.description && (
-            <p className="text-sm text-zinc-400 leading-relaxed mt-4">{nd.description}</p>
+            <p className="text-[15px] text-[rgba(235,235,245,0.6)] leading-relaxed mt-4">{nd.description}</p>
           )}
 
           {nd.aliases && nd.aliases.length > 0 && (
             <div className="mt-4">
-              <h4 className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-2">Aliases</h4>
+              <h4 className="text-[13px] text-[rgba(235,235,245,0.3)] font-semibold mb-2">Aliases</h4>
               <div className="flex flex-wrap gap-2">
                 {nd.aliases.map((a: string, i: number) => (
-                  <span key={i} className="text-xs bg-zinc-800 text-zinc-300 px-2.5 py-1 rounded-md border border-zinc-700">{a}</span>
+                  <span key={i} className="text-[13px] bg-[#2C2C2E] text-[rgba(235,235,245,0.6)] px-2.5 py-1 rounded-lg border border-[rgba(84,84,88,0.65)]">{a}</span>
                 ))}
               </div>
             </div>
@@ -112,7 +112,7 @@ export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, al
 
           {connectedEdges.length > 0 && (
             <div className="mt-6">
-              <h4 className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-3 flex items-center gap-2">
+              <h4 className="text-[13px] text-[rgba(235,235,245,0.3)] font-semibold mb-3 flex items-center gap-2">
                 <Link2 size={12} /> Connections ({connectedEdges.length})
               </h4>
               <div className="space-y-2">
@@ -123,12 +123,12 @@ export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, al
                   const isOutgoing = edge.source === selectedNode.id;
 
                   return (
-                    <div key={edge.id} className="p-3 bg-zinc-900/70 rounded-xl border border-zinc-800 hover:border-zinc-700 transition-colors">
-                      <div className="flex items-center gap-2 text-xs text-white mb-1">
-                        <span className={`text-zinc-500 ${isOutgoing ? 'text-red-400' : 'text-green-400'}`}>{isOutgoing ? '→' : '←'}</span>
+                    <div key={edge.id} className="p-3 bg-[#2C2C2E] rounded-xl border border-[rgba(84,84,88,0.65)] hover:border-[rgba(84,84,88,1)] transition-colors">
+                      <div className="flex items-center gap-2 text-[13px] text-white mb-1">
+                        <span className={isOutgoing ? 'text-[#FF453A]' : 'text-[#30D158]'}>{isOutgoing ? '\u2192' : '\u2190'}</span>
                         <span className="font-medium">{otherNode?.data?.label || otherId}</span>
                       </div>
-                      <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider ml-5">
+                      <span className="text-[11px] font-semibold text-[#007AFF] uppercase tracking-wider ml-5">
                         {d.predicate || edge.label || 'related'}
                       </span>
                     </div>
@@ -144,23 +144,39 @@ export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, al
   };
 
   return (
-    <div 
-      className={`fixed top-0 right-0 h-full w-[450px] bg-[#09090b] border-l border-zinc-800 z-[100] shadow-2xl shadow-black/50 transition-transform duration-300 ease-out ${
-        isOpen ? 'translate-x-0' : 'translate-x-full'
-      }`}
-    >
-      {/* Panel Content */}
-      <div className="h-full overflow-y-auto p-6 space-y-6 relative">
-        {renderContent()}
-      </div>
+    <>
+      {/* Backdrop overlay */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-[99] transition-opacity"
+          onClick={onClose}
+        />
+      )}
 
-      {/* Close Button */}
-      <button 
-        onClick={onClose} 
-        className="absolute top-4 right-4 w-9 h-9 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-all"
+      {/* Bottom Sheet */}
+      <div
+        className={`fixed bottom-0 left-0 right-0 max-h-[85vh] bg-[#1C1C1E] rounded-t-[14px] z-[100] shadow-2xl shadow-black/60 transition-transform duration-300 ease-out ${
+          isOpen ? 'translate-y-0' : 'translate-y-full'
+        }`}
       >
-        <X size={16} />
-      </button>
-    </div>
+        {/* Pull Handle */}
+        <div className="flex justify-center pt-3 pb-2">
+          <div className="w-9 h-[5px] rounded-full bg-[rgba(235,235,245,0.3)]" />
+        </div>
+
+        {/* Close Button */}
+        <button
+          onClick={onClose}
+          className="absolute top-3 right-4 w-8 h-8 rounded-full bg-[#2C2C2E] hover:bg-[#3A3A3C] flex items-center justify-center text-[rgba(235,235,245,0.6)] hover:text-white transition-all"
+        >
+          <X size={14} />
+        </button>
+
+        {/* Panel Content */}
+        <div className="overflow-y-auto px-5 pb-8 pt-2 space-y-4 max-h-[calc(85vh-40px)]">
+          {renderContent()}
+        </div>
+      </div>
+    </>
   );
 }

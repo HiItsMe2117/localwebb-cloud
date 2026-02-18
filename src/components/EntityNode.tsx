@@ -5,17 +5,17 @@ import { User, Building2, MapPin, Calendar, FileText, DollarSign, HelpCircle } f
 
 // Modern Type Configuration
 const TYPE_CONFIG: Record<string, { color: string; icon: typeof User }> = {
-  PERSON:           { color: '#60a5fa', icon: User }, // blue-400
-  ORGANIZATION:     { color: '#fbbf24', icon: Building2 }, // amber-400
-  LOCATION:         { color: '#4ade80', icon: MapPin }, // green-400
-  EVENT:            { color: '#a78bfa', icon: Calendar }, // violet-400
-  DOCUMENT:         { color: '#fb923c', icon: FileText }, // orange-400
-  FINANCIAL_ENTITY: { color: '#f87171', icon: DollarSign }, // red-400
+  PERSON:           { color: '#60a5fa', icon: User },
+  ORGANIZATION:     { color: '#fbbf24', icon: Building2 },
+  LOCATION:         { color: '#4ade80', icon: MapPin },
+  EVENT:            { color: '#a78bfa', icon: Calendar },
+  DOCUMENT:         { color: '#fb923c', icon: FileText },
+  FINANCIAL_ENTITY: { color: '#f87171', icon: DollarSign },
 };
 
 function EntityNode({ data, selected }: NodeProps) {
   const entityType = (data.entityType || 'PERSON').toUpperCase();
-  const config = TYPE_CONFIG[entityType] || { color: '#9ca3af', icon: HelpCircle }; // gray-400
+  const config = TYPE_CONFIG[entityType] || { color: '#9ca3af', icon: HelpCircle };
   const Icon = config.icon;
   const communityColor = data.communityColor || config.color;
 
@@ -24,32 +24,32 @@ function EntityNode({ data, selected }: NodeProps) {
 
   return (
     <div
-      className="bg-zinc-900 shadow-lg rounded-xl overflow-hidden transition-all duration-150"
+      className="bg-[#1C1C1E] shadow-lg rounded-xl overflow-hidden transition-all duration-150"
       style={{
         border: `2px solid ${selected ? config.color : communityColor}`,
-        boxShadow: selected ? `0 0 20px ${config.color}30` : `0 4px 6px -1px rgba(0,0,0,0.2)`,
+        boxShadow: selected ? `0 0 20px ${config.color}30` : `0 2px 10px rgba(0,0,0,0.3)`,
         minWidth: 220,
         maxWidth: 240,
       }}
     >
-      <Handle 
-        type="target" 
-        position={Position.Top} 
-        style={{ background: '#52525b', width: 10, height: 10, borderColor: '#18181b', borderWidth: 2 }} 
+      <Handle
+        type="target"
+        position={Position.Top}
+        style={{ background: '#3A3A3C', width: 10, height: 10, borderColor: '#1C1C1E', borderWidth: 2 }}
       />
 
       {/* Header */}
-      <div className="p-3 border-b border-zinc-800" style={{ borderBottomColor: `${communityColor}20`}}>
+      <div className="p-3 border-b border-[rgba(84,84,88,0.65)]" style={{ borderBottomColor: `${communityColor}20`}}>
         <div className="flex items-center gap-3">
-          <div 
-            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" 
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
             style={{ backgroundColor: `${config.color}20` }}
           >
             <Icon size={16} style={{ color: config.color }} />
           </div>
           <div className="flex-1 overflow-hidden">
-            <p 
-              className="text-sm font-bold text-zinc-100 truncate"
+            <p
+              className="text-sm font-semibold text-white truncate"
               title={data.label}
             >
               {data.label}
@@ -63,18 +63,18 @@ function EntityNode({ data, selected }: NodeProps) {
           </div>
         </div>
       </div>
-      
+
       {/* Body */}
       {truncatedDesc && (
-        <div className="px-4 py-3 text-xs text-zinc-400 leading-relaxed">
+        <div className="px-4 py-3 text-xs text-[rgba(235,235,245,0.6)] leading-relaxed">
           {truncatedDesc}
         </div>
       )}
 
-      <Handle 
-        type="source" 
-        position={Position.Bottom} 
-        style={{ background: '#52525b', width: 10, height: 10, borderColor: '#18181b', borderWidth: 2 }} 
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        style={{ background: '#3A3A3C', width: 10, height: 10, borderColor: '#1C1C1E', borderWidth: 2 }}
       />
     </div>
   );

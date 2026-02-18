@@ -12,8 +12,6 @@ interface GraphPanelProps {
   onNodeClick: (node: Node) => void;
   onEdgeClick: (edge: Edge) => void;
   communities: Community[];
-  // The following props are no longer used in the new layout, but kept for type consistency if needed elsewhere.
-  // We can remove them if this becomes the only implementation.
   open: boolean;
   onClose: () => void;
   yearFilter: number;
@@ -27,7 +25,7 @@ export default function GraphPanel({
 }: GraphPanelProps) {
 
   return (
-    <div className="flex-1 h-full relative flex flex-col bg-zinc-950">
+    <div className="flex-1 h-full relative flex flex-col bg-black">
       {/* Canvas Area */}
       <div className="flex-1 relative overflow-hidden">
         <NexusCanvas
@@ -44,17 +42,17 @@ export default function GraphPanel({
 
       {/* Modern Footer / Legend */}
       {communities.length > 0 && (
-        <div className="flex items-center gap-4 px-6 py-3 border-t border-zinc-800 bg-[#09090b] shrink-0">
-          <div className="flex items-center gap-2 text-zinc-500">
+        <div className="flex items-center gap-4 px-5 py-3 border-t border-[rgba(84,84,88,0.65)] bg-[#1C1C1E] shrink-0">
+          <div className="flex items-center gap-2 text-[rgba(235,235,245,0.3)]">
             <Network size={16} />
-            <span className="text-xs font-bold uppercase tracking-wider">Detected Clusters:</span>
+            <span className="text-[13px] font-semibold text-[rgba(235,235,245,0.6)]">Clusters:</span>
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-2">
             {communities.map((c) => (
               <div key={c.id} className="flex items-center gap-2">
                 <div className="w-2.5 h-2.5 rounded-full border border-white/10" style={{ background: c.color }} />
-                <span className="text-xs text-zinc-400 font-mono">
-                  {c.size} <span className="text-zinc-500">nodes</span>
+                <span className="text-[13px] text-[rgba(235,235,245,0.6)]">
+                  {c.size} <span className="text-[rgba(235,235,245,0.3)]">nodes</span>
                 </span>
               </div>
             ))}

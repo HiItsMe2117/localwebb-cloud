@@ -5,7 +5,7 @@ import ReactFlow, {
   BackgroundVariant,
   Controls,
   MiniMap,
-  MarkerType, // Import MarkerType
+  MarkerType,
 } from 'reactflow';
 import type { Connection, Edge, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -56,19 +56,19 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
   const styledEdges = useMemo(() => {
     return edges.map(e => ({
       ...e,
-      labelStyle: { fill: '#a1a1aa', fontSize: 11, fontWeight: 600 },
-      labelBgStyle: { fill: '#18181b', fillOpacity: 0.8 },
+      labelStyle: { fill: 'rgba(235,235,245,0.6)', fontSize: 11, fontWeight: 600 },
+      labelBgStyle: { fill: '#1C1C1E', fillOpacity: 0.9 },
       labelBgPadding: [8, 4] as [number, number],
       labelBgBorderRadius: 6,
       style: {
-        stroke: e.selected ? '#3b82f6' : (e.data?.confidence === 'INFERRED' ? '#a1a1aa' : '#52525b'),
+        stroke: e.selected ? '#007AFF' : (e.data?.confidence === 'INFERRED' ? 'rgba(235,235,245,0.3)' : 'rgba(84,84,88,0.65)'),
         strokeWidth: e.selected ? 2.5 : 1.5,
         strokeDasharray: e.data?.confidence === 'INFERRED' ? '4 4' : undefined,
         ...(e.style || {}),
       },
       markerEnd: {
-        type: MarkerType.Arrow, // Use MarkerType.Arrow
-        color: '#52525b',
+        type: MarkerType.Arrow,
+        color: 'rgba(84,84,88,0.65)',
       }
     }));
   }, [edges]);
@@ -79,7 +79,7 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
   }, []);
 
   return (
-    <div style={{ width: '100%', height: height || '100%', background: '#09090b' }}>
+    <div style={{ width: '100%', height: height || '100%', background: '#000000' }}>
       <ReactFlow
         nodes={nodes}
         edges={styledEdges}
@@ -98,17 +98,17 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
           animated: false,
         }}
       >
-        <Background 
-          color="#27272a" 
-          variant={BackgroundVariant.Dots} 
-          gap={24} 
-          size={1} 
+        <Background
+          color="rgba(84,84,88,0.3)"
+          variant={BackgroundVariant.Dots}
+          gap={24}
+          size={1}
         />
         <Controls showInteractive={false} />
         <MiniMap
           nodeColor={miniMapNodeColor}
           nodeStrokeWidth={2}
-          maskColor="rgba(9, 9, 11, 0.6)"
+          maskColor="rgba(0, 0, 0, 0.6)"
         />
       </ReactFlow>
     </div>

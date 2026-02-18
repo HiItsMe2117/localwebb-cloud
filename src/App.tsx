@@ -3,15 +3,13 @@ import ChatArea from './components/ChatArea';
 import InputBar from './components/InputBar';
 import GraphPanel from './components/GraphPanel';
 import EvidencePanel from './components/EvidencePanel';
-import { 
-  Upload, 
-  RefreshCw, 
-  Shield, 
-  Network, 
-  MessageSquare, 
+import {
+  Upload,
+  RefreshCw,
+  Network,
+  MessageSquare,
   Database,
   Settings as SettingsIcon,
-  ChevronRight,
   FileText
 } from 'lucide-react';
 import { useNodesState, useEdgesState } from 'reactflow';
@@ -24,7 +22,7 @@ type View = 'chat' | 'graph' | 'docs';
 
 function App() {
   const [activeView, setActiveView] = useState<View>('chat');
-  
+
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -234,93 +232,40 @@ function App() {
   const handleSend = () => sendQuery(inputValue.trim());
   const handleSuggestedQuery = (query: string) => sendQuery(query);
 
+  const tabs: { id: View; label: string; icon: typeof MessageSquare }[] = [
+    { id: 'chat', label: 'Chat', icon: MessageSquare },
+    { id: 'graph', label: 'Graph', icon: Network },
+    { id: 'docs', label: 'Docs', icon: Database },
+  ];
+
   return (
-    <div className="h-screen flex bg-[#09090b] text-zinc-100 font-sans overflow-hidden">
-      {/* Sidebar Navigation */}
-      <aside className="w-64 border-r border-zinc-800 flex flex-col bg-[#09090b] z-50">
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
-            <Shield size={18} className="text-white" />
-          </div>
-          <span className="font-bold tracking-tight text-lg">LocalWebb</span>
-        </div>
-
-        <nav className="flex-1 px-3 space-y-1">
-          <button
-            onClick={() => setActiveView('chat')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              activeView === 'chat' 
-                ? 'bg-zinc-800 text-white' 
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-            }`}
-          >
-            <MessageSquare size={18} />
-            Investigation Chat
-          </button>
-          <button
-            onClick={() => setActiveView('graph')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              activeView === 'graph' 
-                ? 'bg-zinc-800 text-white' 
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-            }`}
-          >
-            <Network size={18} />
-            Connection Map
-          </button>
-          <button
-            onClick={() => setActiveView('docs')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              activeView === 'docs' 
-                ? 'bg-zinc-800 text-white' 
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-            }`}
-          >
-            <Database size={18} />
-            Knowledge Base
-          </button>
-        </nav>
-
-        <div className="p-4 border-t border-zinc-800">
-           <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800/50">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">System Status</span>
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-              </div>
-              <div className="space-y-1">
-                <p className="text-[11px] text-zinc-400 flex justify-between">
-                  <span>Entities:</span> <span>{nodes.length}</span>
-                </p>
-                <p className="text-[11px] text-zinc-400 flex justify-between">
-                  <span>Links:</span> <span>{edges.length}</span>
-                </p>
-              </div>
-           </div>
-           
-           <button
-             onClick={triggerInsights}
-             disabled={isSyncing}
-             className="w-full mt-4 flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-semibold transition-all"
-           >
-             <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-             {isSyncing ? "Syncing Engine..." : "Sync Insights"}
-           </button>
-        </div>
-      </aside>
+    <div className="h-screen flex flex-col bg-black text-white font-sans overflow-hidden">
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col relative overflow-hidden bg-[#09090b]">
-        
+      <main className="flex-1 flex flex-col relative overflow-hidden">
+
         {activeView === 'chat' && (
           <>
-            <header className="h-16 border-b border-zinc-800 flex items-center px-8 shrink-0">
-               <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-                 Investigation <ChevronRight size={14} /> <span className="text-white">Active Case Analysis</span>
-               </h2>
+            {/* iOS Large Title Header with Status Pill */}
+            <header className="shrink-0 px-5 pt-4 pb-2 bg-black">
+              <div className="flex items-center justify-between">
+                <h1 className="text-[28px] font-bold tracking-tight text-white">Chat</h1>
+                <button
+                  onClick={triggerInsights}
+                  disabled={isSyncing}
+                  className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)]"
+                >
+                  <div className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-[#FF9F0A] animate-pulse' : 'bg-[#30D158]'}`} />
+                  <span className="text-[rgba(235,235,245,0.6)]">
+                    {isSyncing ? 'Syncing...' : `${nodes.length} entities`}
+                  </span>
+                  <RefreshCw size={12} className={`text-[rgba(235,235,245,0.3)] ${isSyncing ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
             </header>
-            
+
             <ChatArea messages={messages} onSuggestedQuery={handleSuggestedQuery} />
-            
+
             <InputBar
               value={inputValue}
               onChange={setInputValue}
@@ -340,24 +285,24 @@ function App() {
 
         {activeView === 'graph' && (
           <div className="flex-1 flex flex-col h-full relative">
-            <header className="h-16 border-b border-zinc-800 flex items-center justify-between px-8 shrink-0 bg-[#09090b]">
-               <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest">Nexus Map</h2>
-               <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-3 bg-zinc-900/50 px-3 py-1.5 rounded-lg border border-zinc-800">
-                    <span className="text-[11px] font-mono text-zinc-400">{yearFilter}</span>
-                    <input
-                      type="range" min="1980" max="2026" value={yearFilter}
-                      onChange={(e) => setYearFilter(parseInt(e.target.value))} // Corrected: setYearFilter
-                      className="w-24 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                    />
-                  </div>
-                  <button
-                    onClick={() => onLayout('TB')}
-                    className="flex items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border border-zinc-700 text-zinc-300"
-                  >
-                    Auto-Layout
-                  </button>
-               </div>
+            <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between">
+              <h1 className="text-[28px] font-bold tracking-tight text-white">Graph</h1>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
+                  <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">{yearFilter}</span>
+                  <input
+                    type="range" min="1980" max="2026" value={yearFilter}
+                    onChange={(e) => setYearFilter(parseInt(e.target.value))}
+                    className="w-20 h-1 bg-[#3A3A3C] rounded-lg appearance-none cursor-pointer accent-[#007AFF]"
+                  />
+                </div>
+                <button
+                  onClick={() => onLayout('TB')}
+                  className="flex items-center gap-1.5 bg-[#1C1C1E] hover:bg-[#2C2C2E] px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)]"
+                >
+                  Auto-Layout
+                </button>
+              </div>
             </header>
             <div className="flex-1">
               <GraphPanel
@@ -380,54 +325,56 @@ function App() {
         )}
 
         {activeView === 'docs' && (
-          <div className="flex-1 flex flex-col p-8 overflow-y-auto">
-            <div className="max-w-4xl mx-auto w-full">
-              <div className="flex justify-between items-center mb-8">
-                <div>
-                  <h2 className="text-2xl font-bold mb-1">Knowledge Base</h2>
-                  <p className="text-zinc-500 text-sm">Upload and manage documents for analysis.</p>
-                </div>
-                
-                <label className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-all shadow-lg shadow-blue-500/20 active:scale-95">
-                  <Upload size={16} />
-                  Upload PDF
-                  <input type="file" className="hidden" onChange={handleUpload} />
-                </label>
-              </div>
+          <div className="flex-1 flex flex-col overflow-y-auto">
+            <header className="shrink-0 px-5 pt-4 pb-2 bg-black">
+              <h1 className="text-[28px] font-bold tracking-tight text-white">Docs</h1>
+            </header>
+            <div className="flex-1 px-5 pb-4">
+              <div className="max-w-4xl mx-auto w-full">
+                <div className="flex justify-between items-center mb-6">
+                  <p className="text-[rgba(235,235,245,0.6)] text-[15px]">Upload and manage documents for analysis.</p>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 flex flex-col items-center justify-center text-center border-dashed min-h-[200px]">
-                   <FileText size={40} className="text-zinc-700 mb-4" />
-                   <h3 className="font-semibold text-zinc-300">No active files selected</h3>
-                   <p className="text-xs text-zinc-500 mt-1 max-w-[200px]">Uploaded files will appear here once indexed by the GraphRAG engine.</p>
+                  <label className="flex items-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] px-4 py-2 rounded-full text-[15px] font-semibold cursor-pointer transition-colors active:scale-95">
+                    <Upload size={16} />
+                    Upload PDF
+                    <input type="file" className="hidden" onChange={handleUpload} />
+                  </label>
                 </div>
-                
-                <div className="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6">
-                   <h3 className="font-semibold mb-4 text-sm flex items-center gap-2">
-                     <SettingsIcon size={16} className="text-zinc-500" />
-                     Indexing Configuration
-                   </h3>
-                   <div className="space-y-4">
-                     <div>
-                       <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-2">Chunk Size</label>
-                       <div className="h-1.5 w-full bg-zinc-800 rounded-full">
-                         <div className="h-full w-[60%] bg-blue-600 rounded-full" />
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-6 flex flex-col items-center justify-center text-center border-dashed min-h-[200px]">
+                     <FileText size={40} className="text-[rgba(235,235,245,0.3)] mb-4" />
+                     <h3 className="font-semibold text-white text-[15px]">No active files selected</h3>
+                     <p className="text-[13px] text-[rgba(235,235,245,0.3)] mt-1 max-w-[200px]">Uploaded files will appear here once indexed by the GraphRAG engine.</p>
+                  </div>
+
+                  <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-6">
+                     <h3 className="font-semibold mb-4 text-[15px] flex items-center gap-2 text-white">
+                       <SettingsIcon size={16} className="text-[rgba(235,235,245,0.3)]" />
+                       Indexing Configuration
+                     </h3>
+                     <div className="space-y-4">
+                       <div>
+                         <label className="text-[13px] font-medium text-[rgba(235,235,245,0.6)] block mb-2">Chunk Size</label>
+                         <div className="h-1.5 w-full bg-[#3A3A3C] rounded-full">
+                           <div className="h-full w-[60%] bg-[#007AFF] rounded-full" />
+                         </div>
+                       </div>
+                       <div>
+                         <label className="text-[13px] font-medium text-[rgba(235,235,245,0.6)] block mb-2">Confidence Threshold</label>
+                         <div className="h-1.5 w-full bg-[#3A3A3C] rounded-full">
+                           <div className="h-full w-[85%] bg-[#007AFF] rounded-full" />
+                         </div>
                        </div>
                      </div>
-                     <div>
-                       <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-2">Confidence Threshold</label>
-                       <div className="h-1.5 w-full bg-zinc-800 rounded-full">
-                         <div className="h-full w-[85%] bg-blue-600 rounded-full" />
-                       </div>
-                     </div>
-                   </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Evidence Panel (overlay, works across views) */}
+        {/* Evidence Panel (bottom sheet, works across views) */}
         <EvidencePanel
           selectedNode={selectedNode}
           selectedEdge={selectedEdge}
@@ -436,6 +383,27 @@ function App() {
           onClose={closePanel}
         />
       </main>
+
+      {/* iOS Bottom Tab Bar */}
+      <nav className="ios-tab-bar-blur bg-[rgba(28,28,30,0.88)] border-t border-[rgba(84,84,88,0.65)] shrink-0 pb-[env(safe-area-inset-bottom)]">
+        <div className="flex items-center justify-around h-[50px]">
+          {tabs.map(({ id, label, icon: Icon }) => {
+            const isActive = activeView === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveView(id)}
+                className="flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors"
+              >
+                <Icon size={22} className={isActive ? 'text-[#007AFF]' : 'text-[rgba(235,235,245,0.3)]'} />
+                <span className={`text-[10px] font-medium ${isActive ? 'text-[#007AFF]' : 'text-[rgba(235,235,245,0.3)]'}`}>
+                  {label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }
