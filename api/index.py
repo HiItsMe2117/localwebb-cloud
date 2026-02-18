@@ -342,12 +342,18 @@ async def get_insights():
         # Run community detection if available
         try:
             from api.graph_ops import compute_communities
+        except ImportError:
+            try:
+                from graph_ops import compute_communities
+            except ImportError as e:
+                print(f"DEBUG: graph_ops unavailable: {e}")
+                compute_communities = None
+
+        if compute_communities:
             graph_data = graph_store.load()
             graph_data = compute_communities(graph_data)
             graph_store.save(graph_data)
             return graph_data
-        except ImportError:
-            pass
 
         return graph_store.load()
     except Exception as e:
@@ -415,7 +421,13 @@ def _build_query_context(request):
     # 5. Cross-encoder reranking
     try:
         from api.reranker import rerank
-        if len(candidates) > top_k:
+    except ImportError:
+        try:
+            from reranker import rerank
+        except ImportError:
+            rerank = None
+    try:
+        if rerank and len(candidates) > top_k:
             print(f"DEBUG: Reranking {len(candidates)} candidates down to {min(top_k, 8)}...")
             candidates = rerank(request.query, candidates, top_n=min(top_k, 8))
     except Exception as e:
@@ -454,6 +466,15 @@ async def query_index(request: FilteredQueryRequest):
         graph_context = ""
         try:
             from api.graph_ops import detect_connection_query, find_paths_narrative
+        except ImportError:
+            try:
+                from graph_ops import detect_connection_query, find_paths_narrative
+            except ImportError as e:
+                print(f"DEBUG: graph_ops unavailable: {e}")
+                detect_connection_query = None
+                find_paths_narrative = None
+
+        if detect_connection_query and find_paths_narrative:
             conn_match = detect_connection_query(request.query)
             if conn_match:
                 entity_a, entity_b = conn_match
@@ -462,8 +483,6 @@ async def query_index(request: FilteredQueryRequest):
                 graph_context = find_paths_narrative(graph_data, entity_a, entity_b)
                 if graph_context:
                     graph_context = f"\n\nGRAPH CONNECTIONS FOUND:\n{graph_context}\n"
-        except ImportError:
-            pass
 
         context, sources = _build_query_context(request)
 
@@ -662,12 +681,17 @@ def process_upload(file_path, filename):
 async def detect_communities():
     try:
         from api.graph_ops import compute_communities
+    except ImportError:
+        try:
+            from graph_ops import compute_communities
+        except ImportError as e:
+            print(f"DEBUG: graph_ops unavailable: {e}")
+            return {"error": f"networkx not installed: {e}"}
+    try:
         graph_data = graph_store.load()
         graph_data = compute_communities(graph_data)
         graph_store.save(graph_data)
         return graph_data
-    except ImportError:
-        return {"error": "networkx not installed"}
     except Exception as e:
         print(f"Community detection failed: {e}")
         return graph_store.load()
