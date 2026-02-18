@@ -1,10 +1,9 @@
 import NexusCanvas from './NexusCanvas';
 import type { Node, Edge } from 'reactflow';
 import type { Community } from '../types';
+import { Network } from 'lucide-react';
 
 interface GraphPanelProps {
-  open: boolean;
-  onClose: () => void;
   nodes: Node[];
   edges: Edge[];
   onNodesChange: any;
@@ -12,89 +11,56 @@ interface GraphPanelProps {
   onNodeDragStop: (event: any, node: Node) => void;
   onNodeClick: (node: Node) => void;
   onEdgeClick: (edge: Edge) => void;
+  communities: Community[];
+  // The following props are no longer used in the new layout, but kept for type consistency if needed elsewhere.
+  // We can remove them if this becomes the only implementation.
+  open: boolean;
+  onClose: () => void;
   yearFilter: number;
   onYearFilterChange: (v: number) => void;
   onLayout: (direction: string) => void;
-  communities: Community[];
 }
 
 export default function GraphPanel({
-  open, onClose,
   nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop,
-  onNodeClick, onEdgeClick,
-  yearFilter, onYearFilterChange,
-  onLayout, communities,
+  onNodeClick, onEdgeClick, communities
 }: GraphPanelProps) {
-  
-  if (!open) return null;
 
   return (
-    <div className="fixed inset-x-2 bottom-2 top-[140px] z-40 bg-[#050510] border-2 border-[#4169E1] flex flex-col shadow-[0_0_20px_rgba(65,105,225,0.2)]">
-        {/* Terminal Header */}
-        <div className="flex items-center justify-between px-4 py-2 bg-[#4169E1] text-[#050510] font-mono text-xs font-bold shrink-0">
-            <span>:: NEXUS_VISUALIZER :: {nodes.length}_NODES :: {edges.length}_LINKS</span>
-            <button onClick={onClose} className="hover:bg-[#050510] hover:text-[#4169E1] px-2">
-                [X]
-            </button>
+    <div className="flex-1 h-full relative flex flex-col bg-zinc-950">
+      {/* Canvas Area */}
+      <div className="flex-1 relative overflow-hidden">
+        <NexusCanvas
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeDragStop={onNodeDragStop}
+          onNodeClick={onNodeClick}
+          onEdgeClick={onEdgeClick}
+          height="100%"
+        />
+      </div>
+
+      {/* Modern Footer / Legend */}
+      {communities.length > 0 && (
+        <div className="flex items-center gap-4 px-6 py-3 border-t border-zinc-800 bg-[#09090b] shrink-0">
+          <div className="flex items-center gap-2 text-zinc-500">
+            <Network size={16} />
+            <span className="text-xs font-bold uppercase tracking-wider">Detected Clusters:</span>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {communities.map((c) => (
+              <div key={c.id} className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full border border-white/10" style={{ background: c.color }} />
+                <span className="text-xs text-zinc-400 font-mono">
+                  {c.size} <span className="text-zinc-500">nodes</span>
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
-
-        {/* Toolbar */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-[#4169E1] font-mono text-xs bg-[#050510]">
-            <div className="flex items-center gap-4 text-[#4169E1]">
-                <div className="flex items-center gap-2">
-                    <span>FILTER_YEAR: {yearFilter}</span>
-                    <input
-                        type="range" min="1980" max="2026" value={yearFilter}
-                        onChange={(e) => onYearFilterChange(parseInt(e.target.value))}
-                        className="w-24 h-1 accent-[#4169E1] bg-[#2b4a9c]"
-                    />
-                </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-                <button
-                    onClick={() => onLayout('TB')}
-                    className="text-[#4169E1] hover:text-[#00ffff] hover:underline"
-                >
-                    [ AUTO_LAYOUT ]
-                </button>
-            </div>
-        </div>
-
-        {/* Canvas Area */}
-        <div className="flex-1 relative overflow-hidden bg-[#050510]">
-             {/* Grid Background */}
-            <div className="absolute inset-0 pointer-events-none" 
-                 style={{ 
-                     backgroundImage: 'linear-gradient(rgba(43, 74, 156, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(43, 74, 156, 0.1) 1px, transparent 1px)',
-                     backgroundSize: '20px 20px'
-                 }} 
-            />
-            
-            <NexusCanvas
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onNodeDragStop={onNodeDragStop}
-                onNodeClick={onNodeClick}
-                onEdgeClick={onEdgeClick}
-                height="100%"
-            />
-        </div>
-
-        {/* Footer / Legend */}
-        {communities.length > 0 && (
-            <div className="px-4 py-1 border-t border-[#4169E1] bg-[#050510] font-mono text-[10px] text-[#2b4a9c] flex gap-4 overflow-x-auto">
-                <span className="font-bold shrink-0">CLUSTERS_DETECTED:</span>
-                {communities.map((c, i) => (
-                    <span key={i} className="whitespace-nowrap flex items-center gap-1">
-                        <span className="w-2 h-2 block" style={{ backgroundColor: c.color }}></span>
-                        ID_{c.id} ({c.size})
-                    </span>
-                ))}
-            </div>
-        )}
+      )}
     </div>
   );
 }

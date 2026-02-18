@@ -3,14 +3,28 @@ import ChatArea from './components/ChatArea';
 import InputBar from './components/InputBar';
 import GraphPanel from './components/GraphPanel';
 import EvidencePanel from './components/EvidencePanel';
-import { Upload, RefreshCw, Shield, Network } from 'lucide-react';
+import { 
+  Upload, 
+  RefreshCw, 
+  Shield, 
+  Network, 
+  MessageSquare, 
+  Database,
+  Settings as SettingsIcon,
+  ChevronRight,
+  FileText
+} from 'lucide-react';
 import { useNodesState, useEdgesState } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
 import axios from 'axios';
 import { getLayoutedElements } from './utils/layout';
 import type { ChatMessage, Community } from './types';
 
+type View = 'chat' | 'graph' | 'docs';
+
 function App() {
+  const [activeView, setActiveView] = useState<View>('chat');
+  
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -20,7 +34,6 @@ function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [communities, setCommunities] = useState<Community[]>([]);
-  const [graphOpen, setGraphOpen] = useState(false);
   const [yearFilter, setYearFilter] = useState(2026);
 
   // Filter state
@@ -222,110 +235,207 @@ function App() {
   const handleSuggestedQuery = (query: string) => sendQuery(query);
 
   return (
-    <div className="h-screen flex flex-col bg-[#050510] text-[#a4b9ef] font-mono selection:bg-[#4169E1] selection:text-white crt overflow-hidden">
-      {/* Terminal Header / Status Bar */}
-      <header className="flex justify-between items-center px-4 py-2 border-b border-[#4169E1] bg-[#050510] shrink-0 z-50">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center justify-center border border-[#4169E1] px-2 py-1">
-            <Shield size={16} className="text-[#4169E1]" />
+    <div className="h-screen flex bg-[#09090b] text-zinc-100 font-sans overflow-hidden">
+      {/* Sidebar Navigation */}
+      <aside className="w-64 border-r border-zinc-800 flex flex-col bg-[#09090b] z-50">
+        <div className="p-6 flex items-center gap-3">
+          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <Shield size={18} className="text-white" />
           </div>
-          <div>
-            <h1 className="text-sm font-bold tracking-widest text-[#4169E1] leading-none">
-              LOCALWEBB_CLOUD <span className="text-[#a4b9ef] animate-pulse">v2.0</span>
-            </h1>
-            <p className="text-[10px] text-[#2b4a9c] uppercase tracking-wider">
-              :: INTELLIGENCE_OS :: READY
-            </p>
-          </div>
+          <span className="font-bold tracking-tight text-lg">LocalWebb</span>
         </div>
 
-        <div className="flex items-center gap-4 text-xs">
-          {/* Stats Line */}
-          <div className="hidden sm:flex items-center gap-4 text-[#2b4a9c]">
-            <span>ENTITIES: <span className="text-[#a4b9ef]">{nodes.length}</span></span>
-            <span>LINKS: <span className="text-[#a4b9ef]">{edges.length}</span></span>
-            <span>CLUSTERS: <span className="text-[#a4b9ef]">{communities.length}</span></span>
-            <div className="w-2 h-2 bg-[#4169E1] animate-pulse" />
-          </div>
-
-          <div className="h-4 w-px bg-[#2b4a9c]" />
-
-          {/* Controls */}
+        <nav className="flex-1 px-3 space-y-1">
           <button
-            onClick={() => setGraphOpen(!graphOpen)}
-            className={`flex items-center gap-2 px-2 py-1 transition-colors border ${
-              graphOpen
-                ? 'bg-[#4169E1] text-[#050510] border-[#4169E1]'
-                : 'bg-transparent text-[#4169E1] border-[#4169E1] hover:bg-[#4169E1]/10'
+            onClick={() => setActiveView('chat')}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              activeView === 'chat' 
+                ? 'bg-zinc-800 text-white' 
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
             }`}
           >
-            <Network size={14} />
-            <span className="hidden sm:inline">[ GRAPH: {graphOpen ? 'ON' : 'OFF'} ]</span>
+            <MessageSquare size={18} />
+            Investigation Chat
           </button>
-
           <button
-            onClick={triggerInsights}
-            disabled={isSyncing}
-            className="flex items-center gap-2 text-[#4169E1] hover:text-[#a4b9ef] disabled:text-[#2b4a9c] transition-colors"
+            onClick={() => setActiveView('graph')}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              activeView === 'graph' 
+                ? 'bg-zinc-800 text-white' 
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+            }`}
           >
-            <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-            <span className="hidden sm:inline">
-              {isSyncing ? "[ SYNCING... ]" : "[ SYNC ]"}
-            </span>
+            <Network size={18} />
+            Connection Map
           </button>
+          <button
+            onClick={() => setActiveView('docs')}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              activeView === 'docs' 
+                ? 'bg-zinc-800 text-white' 
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+            }`}
+          >
+            <Database size={18} />
+            Knowledge Base
+          </button>
+        </nav>
 
-          <label className="flex items-center gap-2 text-[#4169E1] hover:text-[#a4b9ef] cursor-pointer transition-colors">
-            <Upload size={14} />
-            <span className="hidden sm:inline">[ UPLOAD_PDF ]</span>
-            <input type="file" className="hidden" onChange={handleUpload} />
-          </label>
+        <div className="p-4 border-t border-zinc-800">
+           <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800/50">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">System Status</span>
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] text-zinc-400 flex justify-between">
+                  <span>Entities:</span> <span>{nodes.length}</span>
+                </p>
+                <p className="text-[11px] text-zinc-400 flex justify-between">
+                  <span>Links:</span> <span>{edges.length}</span>
+                </p>
+              </div>
+           </div>
+           
+           <button
+             onClick={triggerInsights}
+             disabled={isSyncing}
+             className="w-full mt-4 flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-semibold transition-all"
+           >
+             <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
+             {isSyncing ? "Syncing Engine..." : "Sync Insights"}
+           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Chat Area */}
-      <ChatArea messages={messages} onSuggestedQuery={handleSuggestedQuery} />
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col relative overflow-hidden bg-[#09090b]">
+        
+        {activeView === 'chat' && (
+          <>
+            <header className="h-16 border-b border-zinc-800 flex items-center px-8 shrink-0">
+               <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                 Investigation <ChevronRight size={14} /> <span className="text-white">Active Case Analysis</span>
+               </h2>
+            </header>
+            
+            <ChatArea messages={messages} onSuggestedQuery={handleSuggestedQuery} />
+            
+            <InputBar
+              value={inputValue}
+              onChange={setInputValue}
+              onSend={handleSend}
+              isStreaming={isStreaming}
+              topK={topK}
+              onTopKChange={setTopK}
+              docTypeFilter={docTypeFilter}
+              onDocTypeFilterChange={setDocTypeFilter}
+              personFilter={personFilter}
+              onPersonFilterChange={setPersonFilter}
+              orgFilter={orgFilter}
+              onOrgFilterChange={setOrgFilter}
+            />
+          </>
+        )}
 
-      {/* Input Bar */}
-      <InputBar
-        value={inputValue}
-        onChange={setInputValue}
-        onSend={handleSend}
-        isStreaming={isStreaming}
-        topK={topK}
-        onTopKChange={setTopK}
-        docTypeFilter={docTypeFilter}
-        onDocTypeFilterChange={setDocTypeFilter}
-        personFilter={personFilter}
-        onPersonFilterChange={setPersonFilter}
-        orgFilter={orgFilter}
-        onOrgFilterChange={setOrgFilter}
-      />
+        {activeView === 'graph' && (
+          <div className="flex-1 flex flex-col h-full relative">
+            <header className="h-16 border-b border-zinc-800 flex items-center justify-between px-8 shrink-0 bg-[#09090b]">
+               <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest">Nexus Map</h2>
+               <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3 bg-zinc-900/50 px-3 py-1.5 rounded-lg border border-zinc-800">
+                    <span className="text-[11px] font-mono text-zinc-400">{yearFilter}</span>
+                    <input
+                      type="range" min="1980" max="2026" value={yearFilter}
+                      onChange={(e) => setYearFilter(parseInt(e.target.value))} // Corrected: setYearFilter
+                      className="w-24 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                  </div>
+                  <button
+                    onClick={() => onLayout('TB')}
+                    className="flex items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border border-zinc-700 text-zinc-300"
+                  >
+                    Auto-Layout
+                  </button>
+               </div>
+            </header>
+            <div className="flex-1">
+              <GraphPanel
+                open={true}
+                onClose={() => {}}
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onNodeDragStop={onNodeDragStop}
+                onNodeClick={handleNodeClick}
+                onEdgeClick={handleEdgeClick}
+                yearFilter={yearFilter}
+                onYearFilterChange={setYearFilter}
+                onLayout={onLayout}
+                communities={communities}
+              />
+            </div>
+          </div>
+        )}
 
-      {/* Graph Panel */}
-      <GraphPanel
-        open={graphOpen}
-        onClose={() => setGraphOpen(false)}
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeDragStop={onNodeDragStop}
-        onNodeClick={handleNodeClick}
-        onEdgeClick={handleEdgeClick}
-        yearFilter={yearFilter}
-        onYearFilterChange={setYearFilter}
-        onLayout={onLayout}
-        communities={communities}
-      />
+        {activeView === 'docs' && (
+          <div className="flex-1 flex flex-col p-8 overflow-y-auto">
+            <div className="max-w-4xl mx-auto w-full">
+              <div className="flex justify-between items-center mb-8">
+                <div>
+                  <h2 className="text-2xl font-bold mb-1">Knowledge Base</h2>
+                  <p className="text-zinc-500 text-sm">Upload and manage documents for analysis.</p>
+                </div>
+                
+                <label className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-all shadow-lg shadow-blue-500/20 active:scale-95">
+                  <Upload size={16} />
+                  Upload PDF
+                  <input type="file" className="hidden" onChange={handleUpload} />
+                </label>
+              </div>
 
-      {/* Evidence Panel */}
-      <EvidencePanel
-        selectedNode={selectedNode}
-        selectedEdge={selectedEdge}
-        allEdges={edges}
-        allNodes={nodes}
-        onClose={closePanel}
-      />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 flex flex-col items-center justify-center text-center border-dashed min-h-[200px]">
+                   <FileText size={40} className="text-zinc-700 mb-4" />
+                   <h3 className="font-semibold text-zinc-300">No active files selected</h3>
+                   <p className="text-xs text-zinc-500 mt-1 max-w-[200px]">Uploaded files will appear here once indexed by the GraphRAG engine.</p>
+                </div>
+                
+                <div className="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6">
+                   <h3 className="font-semibold mb-4 text-sm flex items-center gap-2">
+                     <SettingsIcon size={16} className="text-zinc-500" />
+                     Indexing Configuration
+                   </h3>
+                   <div className="space-y-4">
+                     <div>
+                       <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-2">Chunk Size</label>
+                       <div className="h-1.5 w-full bg-zinc-800 rounded-full">
+                         <div className="h-full w-[60%] bg-blue-600 rounded-full" />
+                       </div>
+                     </div>
+                     <div>
+                       <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-2">Confidence Threshold</label>
+                       <div className="h-1.5 w-full bg-zinc-800 rounded-full">
+                         <div className="h-full w-[85%] bg-blue-600 rounded-full" />
+                       </div>
+                     </div>
+                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Evidence Panel (overlay, works across views) */}
+        <EvidencePanel
+          selectedNode={selectedNode}
+          selectedEdge={selectedEdge}
+          allEdges={edges}
+          allNodes={nodes}
+          onClose={closePanel}
+        />
+      </main>
     </div>
   );
 }
