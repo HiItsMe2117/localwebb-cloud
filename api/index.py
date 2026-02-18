@@ -5,7 +5,7 @@ import tempfile
 import uuid
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -144,10 +144,10 @@ class GraphStore:
         existing_ids = {n["id"] for n in data["nodes"]}
         for node in new_nodes:
             if node["id"] not in existing_ids: data["nodes"].append(node)
-        
-        existing_edges = {(e["source"], e["target"]) for e in data["edges"]}
+
+        existing_edge_ids = {e["id"] for e in data["edges"] if "id" in e}
         for edge in new_edges:
-            if (edge["source"], edge["target"]) not in existing_edges: data["edges"].append(edge)
+            if edge.get("id") not in existing_edge_ids: data["edges"].append(edge)
         self.save(data)
 
 graph_store = GraphStore()
@@ -155,6 +155,8 @@ graph_store = GraphStore()
 # --- Models ---
 class QueryRequest(BaseModel):
     query: str
+    top_k: int = 15
+    stream: bool = False
 
 class PositionUpdate(BaseModel):
     id: str
@@ -164,17 +166,31 @@ class PositionUpdate(BaseModel):
 class Entity(BaseModel):
     id: str
     label: str
-    type: str
+    type: str  # PERSON, ORGANIZATION, LOCATION, EVENT, DOCUMENT, FINANCIAL_ENTITY
     description: str
+    aliases: List[str] = []
 
-class Connection(BaseModel):
-    source_id: str
-    target_id: str
-    label: str
+class Triple(BaseModel):
+    subject_id: str
+    predicate: str           # "flew_with", "employed_by", "transferred_funds_to"
+    object_id: str
+    evidence_text: str       # exact quote from the document
+    source_filename: str
+    source_page: int = 0
+    confidence: str = "STATED"  # STATED | INFERRED
+    date_mentioned: Optional[str] = None
 
 class CaseMap(BaseModel):
     entities: List[Entity]
-    connections: List[Connection]
+    triples: List[Triple]
+
+class FilteredQueryRequest(BaseModel):
+    query: str
+    top_k: int = 15
+    stream: bool = False
+    doc_type: Optional[str] = None
+    person_filter: Optional[str] = None
+    org_filter: Optional[str] = None
 
 # --- Endpoints ---
 
@@ -200,34 +216,77 @@ async def get_insights():
         if not client:
             return {"error": "GenAI client not initialized. Please check environment variables."}
 
-        print("DEBUG: Fetching sampling vectors from Pinecone...")
-        # 1. Get sample data for extraction
-        results = index.query(
-            vector=[0.0] * 3072, 
-            top_k=20, 
-            include_metadata=True
-        )
-        print(f"DEBUG: Pinecone returned {len(results.matches)} matches for insights")
-        def extract_text(metadata):
+        print("DEBUG: Fetching sampling vectors from Pinecone using topic-based queries...")
+        insight_topics = [
+            "people persons individuals names",
+            "organizations companies institutions",
+            "locations places addresses travel",
+            "financial transactions money payments",
+            "events meetings dates timeline",
+        ]
+
+        def extract_chunk_with_meta(metadata):
+            text = ""
             if '_node_content' in metadata:
                 try:
-                    return json.loads(metadata['_node_content']).get('text', '')
+                    text = json.loads(metadata['_node_content']).get('text', '')
                 except (json.JSONDecodeError, TypeError):
                     pass
-            return metadata.get('text', '')
-        context = "\n".join([extract_text(r.metadata) for r in results.matches if r.metadata])
-        
+            if not text:
+                text = metadata.get('text', '')
+            filename = metadata.get('filename', 'unknown')
+            page = metadata.get('page', metadata.get('chunk_index', 0))
+            return {"text": text, "filename": filename, "page": page}
+
+        all_chunks = {}
+        for topic in insight_topics:
+            try:
+                topic_emb = client.models.embed_content(
+                    model="gemini-embedding-001", contents=[topic]
+                )
+                topic_results = index.query(
+                    vector=topic_emb.embeddings[0].values,
+                    top_k=10,
+                    include_metadata=True
+                )
+                for r in topic_results.matches:
+                    if r.metadata and r.id not in all_chunks:
+                        all_chunks[r.id] = extract_chunk_with_meta(r.metadata)
+            except Exception as e:
+                print(f"DEBUG: Topic query '{topic}' failed: {e}")
+
+        print(f"DEBUG: Topic sampling collected {len(all_chunks)} unique chunks")
+
+        context_parts = []
+        for chunk in all_chunks.values():
+            if chunk["text"]:
+                context_parts.append(
+                    f"[Source: {chunk['filename']}, Page: {chunk['page']}]\n{chunk['text']}"
+                )
+        context = "\n\n---\n\n".join(context_parts)
+
         if not context:
             print("DEBUG: No context found in metadata!")
             return graph_store.load()
 
-        # 2. Structured Extraction with Gemini
         prompt = (
-            "Extract entities (PERSON, ORGANIZATION, LOCATION, EVENT) and their connections from these investigative documents.\n"
-            f"DOCUMENTS:\n{context}\n"
-            "Return JSON with 'entities' and 'connections' keys."
+            "You are an investigative intelligence analyst. Extract entities and their relationships from these documents.\n\n"
+            "RULES:\n"
+            "1. Every entity needs an id (lowercase_snake_case), a label (display name), a type (PERSON, ORGANIZATION, LOCATION, EVENT, DOCUMENT, FINANCIAL_ENTITY), a description, and aliases (alternate names).\n"
+            "2. Every relationship (triple) MUST include:\n"
+            "   - subject_id and object_id referencing entity ids\n"
+            "   - predicate: a lowercase_snake_case verb phrase (e.g. 'flew_with', 'employed_by', 'transferred_funds_to', 'visited', 'owns')\n"
+            "   - evidence_text: the EXACT verbatim quote from the document that proves this relationship\n"
+            "   - source_filename: the filename from the [Source: ...] header\n"
+            "   - source_page: the page number from the [Source: ...] header\n"
+            "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
+            "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, null otherwise\n"
+            "3. Do NOT invent relationships that aren't supported by the text.\n"
+            "4. Extract as many entities and relationships as the documents support.\n\n"
+            f"DOCUMENTS:\n{context}\n\n"
+            "Return JSON with 'entities' and 'triples' keys."
         )
-        
+
         print("DEBUG: Sending extraction prompt to Gemini...")
         res = client.models.generate_content(
             model="gemini-2.5-pro",
@@ -237,111 +296,220 @@ async def get_insights():
                 response_schema=CaseMap
             )
         )
-        
-        output = res.parsed 
-        print(f"DEBUG: Gemini extracted {len(output.entities)} entities")
-        
+
+        output = res.parsed
+        print(f"DEBUG: Gemini extracted {len(output.entities)} entities, {len(output.triples)} triples")
+
+        entity_map = {ent.id: ent for ent in output.entities}
+
         new_nodes = []
-        type_colors = {
-            "PERSON": "#1e40af", "ORGANIZATION": "#92400e", "LOCATION": "#065f46",
-            "CASE_ID": "#991b1b", "EVENT": "#374151"
-        }
-        
         for ent in output.entities:
             ent_type = ent.type.upper()
             new_nodes.append({
                 "id": ent.id,
+                "type": "entityNode",
                 "data": {
-                    "label": ent.label, 
-                    "type": ent_type, 
-                    "description": ent.description
+                    "label": ent.label,
+                    "entityType": ent_type,
+                    "description": ent.description,
+                    "aliases": ent.aliases,
                 },
                 "position": {"x": 100 + (len(new_nodes) * 20), "y": 100},
-                "style": { "background": type_colors.get(ent_type, "#3f3f46"), "color": "white", "padding": "10px", "borderRadius": "5px" }
             })
-            
+
         new_edges = []
-        for conn in output.connections:
+        for triple in output.triples:
+            edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
             new_edges.append({
-                "id": f"e-{conn.source_id}-{conn.target_id}",
-                "source": conn.source_id, "target": conn.target_id,
-                "label": conn.label
+                "id": edge_id,
+                "source": triple.subject_id,
+                "target": triple.object_id,
+                "label": triple.predicate.replace("_", " "),
+                "animated": triple.confidence == "INFERRED",
+                "style": {"strokeDasharray": "5 5"} if triple.confidence == "INFERRED" else {},
+                "data": {
+                    "predicate": triple.predicate,
+                    "evidence_text": triple.evidence_text,
+                    "source_filename": triple.source_filename,
+                    "source_page": triple.source_page,
+                    "confidence": triple.confidence,
+                    "date_mentioned": triple.date_mentioned,
+                },
             })
-            
+
         graph_store.add_elements(new_nodes, new_edges)
+
+        # Run community detection if available
+        try:
+            from api.graph_ops import compute_communities
+            graph_data = graph_store.load()
+            graph_data = compute_communities(graph_data)
+            graph_store.save(graph_data)
+            return graph_data
+        except ImportError:
+            pass
+
         return graph_store.load()
     except Exception as e:
         print(f"Insights failed: {e}")
+        import traceback; traceback.print_exc()
         return graph_store.load()
 
+def _build_query_context(request):
+    """Shared logic: embed query, search Pinecone (with optional filters + reranking), build context + sources."""
+    if not index:
+        raise ValueError("Pinecone index not initialized. Please check environment variables.")
+    if not client:
+        raise ValueError("GenAI client not initialized. Please check environment variables.")
+
+    top_k = max(1, min(request.top_k, 50))
+
+    # 1. Embed query
+    print(f"DEBUG: Embedding query (top_k={top_k})...")
+    res = client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=[request.query]
+    )
+    embedding = res.embeddings[0].values
+
+    # 2. Build metadata filter for filtered queries
+    pinecone_filter = {}
+    if hasattr(request, 'doc_type') and request.doc_type:
+        pinecone_filter["doc_type"] = {"$eq": request.doc_type}
+    if hasattr(request, 'person_filter') and request.person_filter:
+        pinecone_filter["people"] = {"$in": [request.person_filter]}
+    if hasattr(request, 'org_filter') and request.org_filter:
+        pinecone_filter["organizations"] = {"$in": [request.org_filter]}
+
+    # 3. Over-fetch for reranking (40 if reranker available, else top_k)
+    fetch_k = 40 if top_k <= 20 else top_k
+    print("DEBUG: Querying Pinecone...")
+    query_kwargs = dict(vector=embedding, top_k=fetch_k, include_metadata=True)
+    if pinecone_filter:
+        query_kwargs["filter"] = pinecone_filter
+        print(f"DEBUG: Applying filter: {pinecone_filter}")
+    results = index.query(**query_kwargs)
+
+    # 4. Extract text + metadata from results
+    candidates = []
+    for r in results.matches:
+        if not r.metadata:
+            continue
+        text = ""
+        if '_node_content' in r.metadata:
+            try:
+                node = json.loads(r.metadata['_node_content'])
+                text = node.get('text', '')
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if not text:
+            text = r.metadata.get('text', '')
+        if text:
+            filename = r.metadata.get('filename', 'unknown')
+            page = r.metadata.get('page', r.metadata.get('chunk_index', ''))
+            candidates.append({
+                "text": text, "filename": filename, "page": page,
+                "score": r.score,
+            })
+
+    # 5. Cross-encoder reranking
+    try:
+        from api.reranker import rerank
+        if len(candidates) > top_k:
+            print(f"DEBUG: Reranking {len(candidates)} candidates down to {min(top_k, 8)}...")
+            candidates = rerank(request.query, candidates, top_n=min(top_k, 8))
+    except Exception as e:
+        print(f"DEBUG: Reranker unavailable, using Pinecone ordering: {e}")
+        candidates = candidates[:top_k]
+
+    # 6. Build context string and sources
+    context_parts = []
+    sources = []
+    seen_files = set()
+    for c in candidates:
+        context_parts.append(f"[Source: {c['filename']}, Page: {c['page']}]\n{c['text'][:1200]}")
+        if c["filename"] not in seen_files:
+            seen_files.add(c["filename"])
+            sources.append({"filename": c["filename"], "page": c["page"], "score": round(c["score"], 3) if c["score"] else None})
+
+    context = "\n\n".join(context_parts)
+    return context, sources
+
+
+QUERY_PROMPT_TEMPLATE = (
+    "You are an investigative research assistant. Answer based ONLY on the provided context.\n"
+    "Cite your sources by referencing the [Source: filename] tags when making claims.\n\n"
+    "Context:\n{context}\n\n"
+    "Question: {query}\n\n"
+    "Provide a thorough but concise answer. At the end, list the source documents you referenced."
+)
+
+
 @app.post("/api/query")
-async def query_index(request: QueryRequest):
+async def query_index(request: FilteredQueryRequest):
     try:
         print(f"DEBUG: Starting query for: {request.query}")
-        if not index:
-            print("ERROR: Pinecone index not initialized")
-            return {"response": "Error: Pinecone index not initialized. Please check environment variables."}
-        if not client:
-            print("ERROR: GenAI client not initialized")
-            return {"response": "Error: GenAI client not initialized. Please check environment variables."}
 
-        # 1. Embed query
-        print("DEBUG: Embedding query...")
-        # Log available models to help debug 404s
+        # Check if this is a connection-style query
+        graph_context = ""
         try:
-            available_models = [m.name for m in client.models.list()]
-            print(f"DEBUG: Available models: {available_models}")
-        except:
+            from api.graph_ops import detect_connection_query, find_paths_narrative
+            conn_match = detect_connection_query(request.query)
+            if conn_match:
+                entity_a, entity_b = conn_match
+                print(f"DEBUG: Connection query detected: '{entity_a}' <-> '{entity_b}'")
+                graph_data = graph_store.load()
+                graph_context = find_paths_narrative(graph_data, entity_a, entity_b)
+                if graph_context:
+                    graph_context = f"\n\nGRAPH CONNECTIONS FOUND:\n{graph_context}\n"
+        except ImportError:
             pass
 
-        embedding_model = "gemini-embedding-001"
-        res = client.models.embed_content(
-            model=embedding_model,
-            contents=[request.query]
-        )
-        
-        embedding = res.embeddings[0].values
+        context, sources = _build_query_context(request)
 
-        # 2. Query Pinecone
-        print("DEBUG: Querying Pinecone...")
-        results = index.query(vector=embedding, top_k=5, include_metadata=True)
-        
-        context_parts = []
-        for r in results.matches:
-            if not r.metadata:
-                continue
-            text = ""
-            # Support LlamaIndex metadata format (text nested in _node_content JSON)
-            if '_node_content' in r.metadata:
-                try:
-                    node = json.loads(r.metadata['_node_content'])
-                    text = node.get('text', '')
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            # Also support simple format (top-level text key)
-            if not text:
-                text = r.metadata.get('text', '')
-            if text:
-                context_parts.append(text[:800])
-        
-        context = "\n\n".join(context_parts)
-        if not context:
+        if not context and not graph_context:
             print("DEBUG: No context found")
-            return {"response": "No relevant info found in the database."}
+            return {"response": "No relevant info found in the database.", "sources": []}
 
-        # 3. Generate response
+        full_context = context
+        if graph_context:
+            full_context = graph_context + "\n\nDOCUMENT CONTEXT:\n" + context
+
+        # Streaming path
+        if request.stream:
+            prompt = QUERY_PROMPT_TEMPLATE.format(context=full_context, query=request.query)
+
+            async def event_stream():
+                try:
+                    stream = client.models.generate_content_stream(
+                        model="gemini-2.5-pro",
+                        contents=prompt
+                    )
+                    for chunk in stream:
+                        if chunk.text:
+                            yield f"data: {json.dumps({'text': chunk.text})}\n\n"
+                    yield f"data: {json.dumps({'sources': sources, 'done': True})}\n\n"
+                except Exception as e:
+                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+        # Non-streaming path
         print("DEBUG: Generating Gemini response...")
-        prompt = f"Context: {context}\n\nQuestion: {request.query}\n\nAnswer briefly based ONLY on the context."
-        
+        prompt = QUERY_PROMPT_TEMPLATE.format(context=full_context, query=request.query)
+
         response = client.models.generate_content(
             model="gemini-2.5-pro",
             contents=prompt
         )
         print("DEBUG: Query successful")
-        return {"response": response.text}
+        return {"response": response.text, "sources": sources}
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        return {"response": f"Error: {e}", "sources": []}
     except Exception as e:
         print(f"CRITICAL ERROR in query_index: {str(e)}")
-        return {"response": f"Analysis failed: {str(e)}"}
+        return {"response": f"Analysis failed: {str(e)}", "sources": []}
 
 @app.post("/api/upload")
 async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
@@ -396,6 +564,35 @@ def extract_text_from_pdf(file_path, filename):
 
     return all_text
 
+def _extract_chunk_metadata(chunk_text):
+    """Use Gemini Flash to extract structured metadata from a text chunk."""
+    try:
+        res = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=(
+                "Extract metadata from this text. Return JSON with these keys:\n"
+                '- "people": list of person names mentioned (empty list if none)\n'
+                '- "organizations": list of organization names (empty list if none)\n'
+                '- "dates": list of dates in ISO format YYYY-MM-DD (empty list if none)\n'
+                '- "doc_type": one of "flight_log", "deposition", "financial_record", "correspondence", "legal_filing", "report", "other"\n\n'
+                f"TEXT:\n{chunk_text[:1500]}"
+            ),
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            )
+        )
+        meta = json.loads(res.text)
+        return {
+            "people": meta.get("people", [])[:20],
+            "organizations": meta.get("organizations", [])[:20],
+            "dates": meta.get("dates", [])[:10],
+            "doc_type": meta.get("doc_type", "other"),
+        }
+    except Exception as e:
+        print(f"DEBUG: Metadata extraction failed for chunk: {e}")
+        return {}
+
+
 def process_upload(file_path, filename):
     try:
         if not bucket:
@@ -414,23 +611,67 @@ def process_upload(file_path, filename):
         pages = extract_text_from_pdf(file_path, filename)
         print(f"DEBUG: Extracted {len(pages)} pages from {filename}")
 
+        UPLOAD_CHUNK_SIZE = 1500
+        UPLOAD_CHUNK_OVERLAP = 200
+        UPSERT_BATCH_SIZE = 100
+
+        batch = []
         for page_data in pages:
             text = page_data["text"]
             page_num = page_data["page"]
-            # Split long pages into chunks
-            chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
-            for i, chunk in enumerate(chunks):
-                vec_id = f"{filename}-p{page_num}-{i}"
-                res = client.models.embed_content(model="gemini-embedding-001", contents=[chunk])
-                index.upsert(vectors=[(
-                    vec_id,
-                    res.embeddings[0].values,
-                    {"text": chunk, "filename": filename, "page": page_num,
-                     "gcs_path": f"gs://{GCS_BUCKET}/uploads/{filename}"}
-                )])
+            start = 0
+            i = 0
+            while start < len(text):
+                chunk = text[start:start + UPLOAD_CHUNK_SIZE].strip()
+                if chunk:
+                    vec_id = f"{filename}-p{page_num}-{i}"
+
+                    # Extract enriched metadata
+                    enriched = _extract_chunk_metadata(chunk)
+
+                    for attempt in range(3):
+                        try:
+                            res = client.models.embed_content(model="gemini-embedding-001", contents=[chunk])
+                            meta = {
+                                "text": chunk, "filename": filename, "page": page_num,
+                                "gcs_path": f"gs://{GCS_BUCKET}/uploads/{filename}",
+                            }
+                            meta.update(enriched)
+                            batch.append((vec_id, res.embeddings[0].values, meta))
+                            break
+                        except Exception as e:
+                            if attempt < 2:
+                                wait = (attempt + 1) * 5
+                                print(f"    Embed retry {attempt+1} for {vec_id} (waiting {wait}s): {e}")
+                                import time; time.sleep(wait)
+                            else:
+                                print(f"    FAILED to embed {vec_id}: {e}")
+                    if len(batch) >= UPSERT_BATCH_SIZE:
+                        index.upsert(vectors=batch)
+                        batch = []
+                    i += 1
+                start += UPLOAD_CHUNK_SIZE - UPLOAD_CHUNK_OVERLAP
+
+        if batch:
+            index.upsert(vectors=batch)
         print(f"DEBUG: Finished indexing {filename}")
     finally:
         shutil.rmtree(os.path.dirname(file_path), ignore_errors=True)
+
+@app.post("/api/graph/communities")
+async def detect_communities():
+    try:
+        from api.graph_ops import compute_communities
+        graph_data = graph_store.load()
+        graph_data = compute_communities(graph_data)
+        graph_store.save(graph_data)
+        return graph_data
+    except ImportError:
+        return {"error": "networkx not installed"}
+    except Exception as e:
+        print(f"Community detection failed: {e}")
+        return graph_store.load()
+
 
 if __name__ == "__main__":
     import uvicorn

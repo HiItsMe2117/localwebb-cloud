@@ -5,3 +5,5 @@ google-cloud-storage
 pypdf
 python-multipart
 python-dotenv
+flashrank
+networkx
