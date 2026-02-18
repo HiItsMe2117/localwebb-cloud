@@ -26,9 +26,10 @@ interface NexusProps {
   onNodeDragStop: any;
   onNodeClick?: (node: Node) => void;
   onEdgeClick?: (edge: Edge) => void;
+  height?: string;
 }
 
-export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick }: NexusProps) {
+export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, height }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
 
   const onConnect = useCallback(
@@ -72,7 +73,7 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
   }, []);
 
   return (
-    <div style={{ width: '100%', height: '70vh', border: '1px solid #333', borderRadius: '8px', background: '#050505' }}>
+    <div style={{ width: '100%', height: height || '70vh', border: '1px solid #333', borderRadius: '8px', background: '#050505' }}>
       <ReactFlow
         nodes={nodes}
         edges={styledEdges}
