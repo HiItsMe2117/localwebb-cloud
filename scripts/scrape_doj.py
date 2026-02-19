@@ -90,7 +90,17 @@ def get_session():
     session = requests.Session()
     session.headers.update({
         "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
+        "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Upgrade-Insecure-Requests": "1",
     })
     # DOJ Epstein pages require an age verification cookie
     session.cookies.set(
@@ -125,6 +135,8 @@ def discover_dataset_urls(session, dataset_num):
 
     while True:
         page_url = f"{working_url}?page={page}" if page > 0 else working_url
+        # Set Referer to base URL so Akamai CDN allows paginated requests
+        session.headers["Referer"] = working_url
         print(f"  Fetching page {page}: {page_url}")
 
         try:
@@ -167,13 +179,18 @@ def discover_dataset_urls(session, dataset_num):
         if soup.find("a", {"rel": "next"}):
             has_next = True
         else:
-            # Check for pager nav with next page link
+            # Check for pager nav with next page link (class-based)
             for nav in soup.find_all(["nav", "ul", "div"]):
                 nav_class = " ".join(nav.get("class", []))
                 if "pager" in nav_class or "pagination" in nav_class:
                     if nav.find("a", href=lambda h: h and f"page={page+1}" in h if h else False):
                         has_next = True
                         break
+        # Fallback: search entire page for any link to page=N+1 (DOJ uses plain <ul> without classes)
+        if not has_next:
+            next_page_link = soup.find("a", href=lambda h: h and f"page={page+1}" in h if h else False)
+            if next_page_link:
+                has_next = True
 
         if not has_next:
             break
