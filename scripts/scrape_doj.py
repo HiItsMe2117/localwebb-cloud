@@ -44,8 +44,8 @@ PROGRESS_FILE = SCRIPT_DIR / "scrape_progress.json"
 BASE_URL = "https://www.justice.gov"
 LIBRARY_PATH = "/epstein"
 
-# Priority order (skip Data Set 10 — images/videos)
-PRIORITY_ORDER = [9, 11, 12, 1, 8, 2, 4, 5, 6, 7, 3]
+# Priority order (skip Data Set 9 — done, Data Set 10 — images/videos)
+PRIORITY_ORDER = [11, 12, 1, 8, 2, 4, 5, 6, 7, 3]
 
 # Rate limiting
 REQUEST_DELAY = 1.5  # seconds between DOJ page requests
@@ -188,11 +188,11 @@ def discover_dataset_urls(session, dataset_num):
     return pdf_urls
 
 
-def download_and_upload(session, pdf_url, bucket, progress):
+def download_and_upload(session, pdf_url, bucket, progress, dataset_num):
     """Download a PDF from DOJ and upload to GCS."""
     # Extract filename from URL
     filename = unquote(pdf_url.split("/")[-1])
-    gcs_path = f"uploads/{filename}"
+    gcs_path = f"uploads/dataset-{dataset_num}/{filename}"
 
     # Check if already downloaded
     if filename in progress["files_downloaded"]:
@@ -369,7 +369,7 @@ def main():
                 continue
 
             print(f"  [{i+1}/{len(pdf_urls)}] {filename}")
-            result = download_and_upload(session, url, bucket, progress)
+            result = download_and_upload(session, url, bucket, progress, ds_num)
 
             if result == "ok":
                 progress["files_downloaded"].append(filename)

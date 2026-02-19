@@ -37,7 +37,7 @@ PROJECT_DIR = SCRIPT_DIR.parent
 SCRAPE_PROGRESS = SCRIPT_DIR / "scrape_progress.json"
 REINDEX_PROGRESS = SCRIPT_DIR / "reindex_progress.json"
 
-PRIORITY_ORDER = [9, 11, 12, 1, 8, 2, 4, 5, 6, 7, 3]
+PRIORITY_ORDER = [11, 12, 1, 8, 2, 4, 5, 6, 7, 3]
 
 
 def run_command(cmd, description):
