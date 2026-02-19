@@ -1,12 +1,8 @@
 import { useState, useEffect } from 'react';
 import {
-  Database,
-  FileText,
-  CheckCircle,
   AlertCircle,
   RefreshCw,
   Loader2,
-  HardDrive,
 } from 'lucide-react';
 
 const DATASET_INFO: Record<string, { name: string; description: string }> = {
