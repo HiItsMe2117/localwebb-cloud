@@ -13,6 +13,12 @@ Usage:
 
     # Process a single file for testing:
     python3 scripts/reindex.py --test
+
+    # Process only files from specific data sets:
+    python3 scripts/reindex.py --resume --dataset 9,11
+
+    # Skip Gemini vision OCR fallback (faster, skips image-only files):
+    python3 scripts/reindex.py --resume --skip-ocr-fallback
 """
 
 import os
@@ -62,7 +68,7 @@ def save_progress(progress):
 
 
 def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    """Split text into overlapping chunks."""
+    """Split text into overlapping chunks (legacy, no page tracking)."""
     chunks = []
     start = 0
     while start < len(text):
@@ -74,8 +80,51 @@ def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     return chunks
 
 
+def chunk_text_with_pages(page_texts, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
+    """Split page-annotated text into overlapping chunks with page numbers.
+
+    Args:
+        page_texts: list of (page_number, text) tuples — one per PDF page.
+
+    Returns:
+        list of (chunk_text, page_number) tuples. Each chunk is tagged with
+        the page it starts on.  When a chunk spans a page boundary, it gets
+        the page where the majority of its content lives.
+    """
+    # Build a flat string and a parallel array mapping char offset -> page number
+    flat = ""
+    char_to_page = []
+    for page_num, page_text in page_texts:
+        start_offset = len(flat)
+        flat += page_text + "\n\n"
+        # Map every char in this page's text (plus separator) to page_num
+        char_to_page.extend([page_num] * (len(flat) - start_offset))
+
+    chunks = []
+    start = 0
+    while start < len(flat):
+        end = min(start + chunk_size, len(flat))
+        chunk = flat[start:end]
+        if chunk.strip():
+            # Determine the page for this chunk — use the page at the midpoint
+            mid = start + (end - start) // 2
+            mid = min(mid, len(char_to_page) - 1)
+            page = char_to_page[mid] if char_to_page else 1
+            chunks.append((chunk.strip(), page))
+        # Ensure start always advances forward (avoid infinite loop at end of text)
+        next_start = end - overlap
+        start = max(next_start, start + 1) if end < len(flat) else len(flat)
+    return chunks
+
+
 def extract_text_with_gemini(client, types, pdf_bytes, filename, page_count):
-    """Use Gemini 2.5 Pro vision to extract text from a PDF."""
+    """Use Gemini 2.5 Pro vision to extract text from a PDF.
+
+    Returns:
+        list of (page_number, text) tuples for page-tracked chunking.
+        For large PDFs processed in batches, each batch's text is assigned
+        to the first page of that batch (best effort without per-page splits).
+    """
     size_mb = len(pdf_bytes) / (1024 * 1024)
 
     # For large PDFs, split into page ranges
@@ -85,7 +134,7 @@ def extract_text_with_gemini(client, types, pdf_bytes, filename, page_count):
         import io
 
         reader = PdfReader(io.BytesIO(pdf_bytes))
-        all_text = []
+        page_texts = []
         pages_per_batch = 5 if size_mb > MAX_PDF_SIZE_MB else 10
 
         for batch_start in range(0, len(reader.pages), pages_per_batch):
@@ -110,9 +159,16 @@ def extract_text_with_gemini(client, types, pdf_bytes, filename, page_count):
                         ],
                         config={"http_options": {"timeout": GEMINI_TIMEOUT_MS}}
                     )
-                    if response.text:
-                        all_text.append(response.text.strip())
-                    print(f"    Pages {batch_start+1}-{batch_end}: {len(response.text or '')} chars")
+                    batch_text = (response.text or "").strip()
+                    if batch_text:
+                        # Distribute text evenly across the pages in this batch
+                        n_pages = batch_end - batch_start
+                        chars_per_page = max(1, len(batch_text) // n_pages)
+                        for p in range(n_pages):
+                            p_start = p * chars_per_page
+                            p_end = (p + 1) * chars_per_page if p < n_pages - 1 else len(batch_text)
+                            page_texts.append((batch_start + p + 1, batch_text[p_start:p_end]))
+                    print(f"    Pages {batch_start+1}-{batch_end}: {len(batch_text)} chars")
                     break
                 except Exception as e:
                     if attempt < MAX_RETRIES - 1:
@@ -122,9 +178,10 @@ def extract_text_with_gemini(client, types, pdf_bytes, filename, page_count):
                     else:
                         print(f"    FAILED pages {batch_start+1}-{batch_end}: {e}")
 
-        return "\n\n".join(all_text)
+        return page_texts
     else:
-        # Small enough to process in one go
+        # Small enough to process in one go — assign all text to page 1
+        # (best effort; Gemini doesn't provide per-page boundaries here)
         for attempt in range(MAX_RETRIES):
             try:
                 time.sleep(VISION_DELAY)
@@ -137,7 +194,17 @@ def extract_text_with_gemini(client, types, pdf_bytes, filename, page_count):
                     ],
                     config={"http_options": {"timeout": GEMINI_TIMEOUT_MS}}
                 )
-                return (response.text or "").strip()
+                text = (response.text or "").strip()
+                if text and page_count > 1:
+                    # Approximate page boundaries by splitting text evenly
+                    chars_per_page = max(1, len(text) // page_count)
+                    page_texts = []
+                    for p in range(page_count):
+                        p_start = p * chars_per_page
+                        p_end = (p + 1) * chars_per_page if p < page_count - 1 else len(text)
+                        page_texts.append((p + 1, text[p_start:p_end]))
+                    return page_texts
+                return [(1, text)]
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
                     wait = (attempt + 1) * 10
@@ -145,7 +212,7 @@ def extract_text_with_gemini(client, types, pdf_bytes, filename, page_count):
                     time.sleep(wait)
                 else:
                     raise
-        return ""
+        return []
 
 
 UPSERT_BATCH_SIZE = 100  # vectors per Pinecone upsert call
@@ -203,11 +270,15 @@ def extract_metadata_heuristic(text, filename):
     }
 
 
-def embed_and_upsert(client, index, chunks, filename, gcs_path):
-    """Embed text chunks and batch-upsert into Pinecone with enriched metadata."""
+def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path):
+    """Embed text chunks and batch-upsert into Pinecone with enriched metadata.
+
+    Args:
+        chunks_with_pages: list of (chunk_text, page_number) tuples.
+    """
     upserted = 0
     batch = []
-    for i, chunk in enumerate(chunks):
+    for i, (chunk, page) in enumerate(chunks_with_pages):
         for attempt in range(MAX_RETRIES):
             try:
                 time.sleep(EMBED_BATCH_DELAY)
@@ -221,6 +292,7 @@ def embed_and_upsert(client, index, chunks, filename, gcs_path):
                     "filename": filename,
                     "gcs_path": gcs_path,
                     "chunk_index": i,
+                    "page": page,
                 }
                 meta.update(extract_metadata_heuristic(chunk, filename))
                 batch.append((vec_id, res.embeddings[0].values, meta))
@@ -243,12 +315,43 @@ def embed_and_upsert(client, index, chunks, filename, gcs_path):
     return upserted
 
 
+def classify_dataset(filename):
+    """Attempt to classify which DOJ data set a file belongs to based on its name."""
+    fname = filename.lower()
+    # Files from the scraper often have "dataset" in their path or name
+    for i in range(1, 13):
+        if f"dataset{i}" in fname or f"data-set-{i}" in fname or f"dataset-{i}" in fname or f"data_set_{i}" in fname:
+            return str(i)
+    # Files in the uploads/ folder are from Data Set 9
+    if fname.startswith("uploads/"):
+        return "9"
+    return "unknown"
+
+
+def format_time(seconds):
+    """Format seconds into a human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        return f"{seconds // 60:.0f}m {seconds % 60:.0f}s"
+    else:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        return f"{h:.0f}h {m:.0f}m"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", action="store_true", help="Resume from progress file, skip completed files")
     parser.add_argument("--test", action="store_true", help="Process only 1 file as a test")
     parser.add_argument("--no-clear", action="store_true", help="Don't clear existing vectors first")
+    parser.add_argument("--dataset", type=str, help="Only process files from specific data set(s), comma-separated (e.g., 9 or 9,11)")
+    parser.add_argument("--skip-ocr-fallback", action="store_true", help="Skip Gemini vision OCR for files where PyPDF fails (faster)")
     args = parser.parse_args()
+
+    dataset_filter = None
+    if args.dataset:
+        dataset_filter = set(d.strip() for d in args.dataset.split(","))
 
     print("=" * 60)
     print("LocalWebb Cloud — Bulk Re-Index")
@@ -282,6 +385,16 @@ def main():
     blobs = [b for b in bucket.list_blobs() if b.name.lower().endswith(".pdf")]
     print(f"\nFound {len(blobs)} PDFs in GCS bucket '{env['GCS_BUCKET_NAME']}'")
 
+    # Filter by dataset if specified
+    if dataset_filter:
+        filtered = []
+        for b in blobs:
+            ds = classify_dataset(b.name)
+            if ds in dataset_filter:
+                filtered.append(b)
+        print(f"Filtered to {len(filtered)} PDFs from data set(s): {', '.join(sorted(dataset_filter))}")
+        blobs = filtered
+
     if args.test:
         blobs = blobs[:1]
         print("TEST MODE: processing 1 file only\n")
@@ -305,6 +418,10 @@ def main():
 
     # Process each PDF
     total = len(blobs)
+    processing_start = time.time()
+    files_processed_this_run = 0
+    per_dataset_stats = {}  # dataset -> {"completed": 0, "failed": 0, "vectors": 0}
+
     for idx, blob in enumerate(blobs):
         filename = blob.name.split("/")[-1]
 
@@ -312,8 +429,17 @@ def main():
             print(f"\n[{idx+1}/{total}] SKIP (already done): {filename}")
             continue
 
+        # Time estimate
+        eta_str = ""
+        if files_processed_this_run > 0:
+            elapsed = time.time() - processing_start
+            avg_per_file = elapsed / files_processed_this_run
+            remaining_count = sum(1 for b in blobs[idx:] if b.name.split("/")[-1] not in progress["completed"])
+            eta = avg_per_file * remaining_count
+            eta_str = f" | ETA: {format_time(eta)}"
+
         print(f"\n{'='*60}")
-        print(f"[{idx+1}/{total}] Processing: {filename} ({blob.size/(1024*1024):.1f} MB)")
+        print(f"[{idx+1}/{total}] Processing: {filename} ({blob.size/(1024*1024):.1f} MB){eta_str}")
         print(f"{'='*60}")
 
         try:
@@ -326,67 +452,102 @@ def main():
             page_count = len(reader.pages)
             print(f"  Pages: {page_count}")
 
-            # First try standard text extraction
+            # First try standard text extraction (with page tracking)
             print("  Trying standard text extraction...")
-            standard_text = ""
+            page_texts = []  # list of (page_number, text)
             good_pages = 0
-            for page in reader.pages:
+            for page_idx, page in enumerate(reader.pages):
                 page_text = (page.extract_text() or "").strip()
                 clean_words = [w for w in page_text.split() if len(w) > 2 and w.isalpha()]
                 if len(clean_words) >= 10:
                     good_pages += 1
-                    standard_text += page_text + "\n\n"
+                page_texts.append((page_idx + 1, page_text))
 
             quality_ratio = good_pages / max(page_count, 1)
+            total_standard_chars = sum(len(t) for _, t in page_texts)
             print(f"  Standard OCR: {good_pages}/{page_count} pages readable ({quality_ratio:.0%})")
 
             # Use standard text if quality is good enough, otherwise use Gemini vision
-            if quality_ratio >= 0.5 and len(standard_text) > 200:
-                text = standard_text
-                print(f"  Using standard extraction ({len(text)} chars)")
+            if quality_ratio >= 0.5 and total_standard_chars > 200:
+                print(f"  Using standard extraction ({total_standard_chars} chars)")
+            elif args.skip_ocr_fallback:
+                print(f"  Standard OCR insufficient, skipping (--skip-ocr-fallback)")
+                progress["failed"].append(filename)
+                save_progress(progress)
+                continue
             else:
                 print(f"  Using Gemini vision OCR...")
-                text = extract_text_with_gemini(genai_client, types, pdf_bytes, filename, page_count)
-                print(f"  Gemini extracted {len(text)} chars")
+                page_texts = extract_text_with_gemini(genai_client, types, pdf_bytes, filename, page_count)
+                total_chars = sum(len(t) for _, t in page_texts)
+                print(f"  Gemini extracted {total_chars} chars across {len(page_texts)} page segments")
 
-            if not text or len(text.strip()) < 50:
+            total_text = sum(len(t) for _, t in page_texts)
+            if not page_texts or total_text < 50:
                 print(f"  WARNING: No meaningful text extracted, skipping")
                 progress["failed"].append(filename)
                 save_progress(progress)
                 continue
 
-            # Chunk the text
-            chunks = chunk_text(text)
-            print(f"  Split into {len(chunks)} chunks")
+            # Chunk the text with page tracking
+            chunks_with_pages = chunk_text_with_pages(page_texts)
+            print(f"  Split into {len(chunks_with_pages)} chunks (with page numbers)")
 
             # Embed and upsert
             gcs_path = f"gs://{env['GCS_BUCKET_NAME']}/{blob.name}"
             print(f"  Embedding and upserting...")
-            upserted = embed_and_upsert(genai_client, pinecone_index, chunks, filename, gcs_path)
+            upserted = embed_and_upsert(genai_client, pinecone_index, chunks_with_pages, filename, gcs_path)
             print(f"  Upserted {upserted} vectors")
 
             progress["completed"].append(filename)
             progress["vectors_upserted"] += upserted
             save_progress(progress)
+            files_processed_this_run += 1
+
+            # Track per-dataset stats
+            ds = classify_dataset(filename)
+            if ds not in per_dataset_stats:
+                per_dataset_stats[ds] = {"completed": 0, "failed": 0, "vectors": 0}
+            per_dataset_stats[ds]["completed"] += 1
+            per_dataset_stats[ds]["vectors"] += upserted
 
         except Exception as e:
             print(f"  ERROR: {e}")
             progress["failed"].append(filename)
             save_progress(progress)
+            files_processed_this_run += 1
+
+            ds = classify_dataset(filename)
+            if ds not in per_dataset_stats:
+                per_dataset_stats[ds] = {"completed": 0, "failed": 0, "vectors": 0}
+            per_dataset_stats[ds]["failed"] += 1
+
             # Wait a bit after errors (might be rate limiting)
             time.sleep(10)
 
     # Summary
+    total_elapsed = time.time() - processing_start
     print(f"\n{'='*60}")
     print("RE-INDEX COMPLETE")
     print(f"{'='*60}")
-    print(f"  Completed: {len(progress['completed'])}/{total}")
-    print(f"  Failed:    {len(progress['failed'])}")
-    print(f"  Vectors:   {progress['vectors_upserted']}")
+    print(f"  Total time:  {format_time(total_elapsed)}")
+    print(f"  Completed:   {len(progress['completed'])}/{total}")
+    print(f"  Failed:      {len(progress['failed'])}")
+    print(f"  Vectors:     {progress['vectors_upserted']}")
+    print(f"  This run:    {files_processed_this_run} files processed")
+
+    if per_dataset_stats:
+        print(f"\n  Per-dataset stats (this run):")
+        for ds_key in sorted(per_dataset_stats.keys()):
+            ds = per_dataset_stats[ds_key]
+            label = f"Data Set {ds_key}" if ds_key != "unknown" else "Unknown"
+            print(f"    {label}: {ds['completed']} completed, {ds['failed']} failed, {ds['vectors']} vectors")
+
     if progress["failed"]:
         print(f"\n  Failed files:")
-        for f in progress["failed"]:
+        for f in progress["failed"][-20:]:
             print(f"    - {f}")
+        if len(progress["failed"]) > 20:
+            print(f"    ... and {len(progress['failed']) - 20} more")
     print(f"\nProgress saved to: {PROGRESS_FILE}")
 
 

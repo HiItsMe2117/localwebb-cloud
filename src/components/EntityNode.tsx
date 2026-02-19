@@ -13,6 +13,8 @@ const TYPE_CONFIG: Record<string, { color: string; icon: typeof User }> = {
   FINANCIAL_ENTITY: { color: '#f87171', icon: DollarSign },
 };
 
+const handleStyle = { background: '#3A3A3C', width: 8, height: 8, borderColor: '#1C1C1E', borderWidth: 2 };
+
 function EntityNode({ data, selected }: NodeProps) {
   const entityType = (data.entityType || 'PERSON').toUpperCase();
   const config = TYPE_CONFIG[entityType] || { color: '#9ca3af', icon: HelpCircle };
@@ -22,6 +24,10 @@ function EntityNode({ data, selected }: NodeProps) {
   const description = data.description || '';
   const truncatedDesc = description.length > 70 ? description.slice(0, 67) + '...' : description;
 
+  // Scale node by degree (connection count): 1.0x to 1.4x
+  const degree: number = data.degree || 0;
+  const scale = Math.min(1 + degree * 0.05, 1.4);
+
   return (
     <div
       className="bg-[#1C1C1E] shadow-lg rounded-xl overflow-hidden transition-all duration-150"
@@ -30,13 +36,15 @@ function EntityNode({ data, selected }: NodeProps) {
         boxShadow: selected ? `0 0 20px ${config.color}30` : `0 2px 10px rgba(0,0,0,0.3)`,
         minWidth: 220,
         maxWidth: 240,
+        transform: `scale(${scale})`,
+        transformOrigin: 'center center',
       }}
     >
-      <Handle
-        type="target"
-        position={Position.Top}
-        style={{ background: '#3A3A3C', width: 10, height: 10, borderColor: '#1C1C1E', borderWidth: 2 }}
-      />
+      {/* Handles on all four sides for radial spider-web layout */}
+      <Handle type="target" position={Position.Top} id="t-top" style={handleStyle} />
+      <Handle type="target" position={Position.Left} id="t-left" style={handleStyle} />
+      <Handle type="source" position={Position.Bottom} id="s-bottom" style={handleStyle} />
+      <Handle type="source" position={Position.Right} id="s-right" style={handleStyle} />
 
       {/* Header */}
       <div className="p-3 border-b border-[rgba(84,84,88,0.65)]" style={{ borderBottomColor: `${communityColor}20`}}>
@@ -70,12 +78,6 @@ function EntityNode({ data, selected }: NodeProps) {
           {truncatedDesc}
         </div>
       )}
-
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        style={{ background: '#3A3A3C', width: 10, height: 10, borderColor: '#1C1C1E', borderWidth: 2 }}
-      />
     </div>
   );
 }

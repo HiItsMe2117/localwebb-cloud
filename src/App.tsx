@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ChatArea from './components/ChatArea';
 import InputBar from './components/InputBar';
 import GraphPanel from './components/GraphPanel';
@@ -10,7 +10,8 @@ import {
   MessageSquare,
   Database,
   Settings as SettingsIcon,
-  FileText
+  FileText,
+  Loader2
 } from 'lucide-react';
 import { useNodesState, useEdgesState } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -46,14 +47,74 @@ function App() {
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isExtractingInsights, setIsExtractingInsights] = useState(false);
+  const hasAutoTriggered = useRef(false);
+
+  // --- Helpers ---
+
+  /** Apply force layout to raw nodes/edges and persist positions */
+  const applyForceLayout = useCallback((rawNodes: Node[], rawEdges: Edge[]) => {
+    if (rawNodes.length === 0) {
+      setNodes([]);
+      setEdges(rawEdges);
+      return;
+    }
+
+    // Enrich nodes with degree for sizing
+    const degree = new Map<string, number>();
+    for (const e of rawEdges) {
+      degree.set(e.source, (degree.get(e.source) || 0) + 1);
+      degree.set(e.target, (degree.get(e.target) || 0) + 1);
+    }
+    const enriched = rawNodes.map((n) => ({
+      ...n,
+      data: { ...n.data, degree: degree.get(n.id) || 0 },
+    }));
+
+    const { nodes: laid, edges: laidEdges } = getLayoutedElements(enriched, rawEdges);
+    setNodes(laid);
+    setEdges(laidEdges);
+
+    // Persist positions to backend
+    const updates = laid.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y }));
+    axios.post('/api/graph/positions', updates).catch(() => {});
+  }, [setNodes, setEdges]);
 
   const loadGraph = async () => {
     try {
       const res = await axios.get('/api/graph');
-      setNodes(res.data.nodes || []);
-      setEdges(res.data.edges || []);
+      const rawNodes: Node[] = res.data.nodes || [];
+      const rawEdges: Edge[] = res.data.edges || [];
       if (res.data.communities) {
         setCommunities(res.data.communities);
+      }
+
+      if (rawNodes.length > 0) {
+        // Enrich with degree
+        const degree = new Map<string, number>();
+        for (const e of rawEdges) {
+          degree.set(e.source, (degree.get(e.source) || 0) + 1);
+          degree.set(e.target, (degree.get(e.target) || 0) + 1);
+        }
+        const enriched = rawNodes.map((n) => ({
+          ...n,
+          data: { ...n.data, degree: degree.get(n.id) || 0 },
+        }));
+
+        // Check if nodes already have spread positions (not all stacked)
+        const positions = enriched.map((n) => `${Math.round(n.position.x)},${Math.round(n.position.y)}`);
+        const uniquePositions = new Set(positions);
+        const hasLayout = uniquePositions.size > Math.min(enriched.length * 0.5, 3);
+
+        if (hasLayout) {
+          setNodes(enriched);
+          setEdges(rawEdges);
+        } else {
+          applyForceLayout(enriched, rawEdges);
+        }
+      } else {
+        setNodes([]);
+        setEdges(rawEdges);
       }
     } catch (err: any) {
       console.error("Failed to load graph:", err);
@@ -74,32 +135,63 @@ function App() {
     }
   };
 
-  const onLayout = useCallback(
-    (direction: string) => {
-      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(nodes, edges, direction);
-      setNodes([...layoutedNodes]);
-      setEdges([...layoutedEdges]);
-      const updates = layoutedNodes.map(n => ({ id: n.id, x: n.position.x, y: n.position.y }));
-      axios.post('/api/graph/positions', updates);
-    },
-    [nodes, edges, setNodes, setEdges]
-  );
+  const onLayout = useCallback(() => {
+    applyForceLayout(nodes, edges);
+  }, [nodes, edges, applyForceLayout]);
 
   const triggerInsights = async () => {
     setIsSyncing(true);
+    setIsExtractingInsights(true);
     try {
       const res = await axios.get('/api/insights');
-      setNodes(res.data.nodes || []);
-      setEdges(res.data.edges || []);
+      const rawNodes: Node[] = res.data.nodes || [];
+      const rawEdges: Edge[] = res.data.edges || [];
       if (res.data.communities) {
         setCommunities(res.data.communities);
       }
+      applyForceLayout(rawNodes, rawEdges);
     } catch (err) {
       console.error("Sync failed:", err);
     } finally {
       setIsSyncing(false);
+      setIsExtractingInsights(false);
     }
   };
+
+  // Auto-trigger insights when Graph tab is opened and graph is empty
+  useEffect(() => {
+    if (activeView === 'graph' && nodes.length === 0 && !hasAutoTriggered.current && !isSyncing) {
+      hasAutoTriggered.current = true;
+      triggerInsights();
+    }
+  }, [activeView, nodes.length]);
+
+  // --- Year filter logic ---
+  const filteredEdges = useMemo(() => {
+    if (yearFilter >= 2026) return edges; // "All" — show everything
+    return edges.filter((e) => {
+      const dateMentioned = e.data?.date_mentioned;
+      if (!dateMentioned) return true; // edges without dates always visible
+      const year = parseInt(dateMentioned.slice(0, 4), 10);
+      return !isNaN(year) && year <= yearFilter;
+    });
+  }, [edges, yearFilter]);
+
+  const filteredNodes = useMemo(() => {
+    if (yearFilter >= 2026) return nodes; // "All"
+    const visibleNodeIds = new Set<string>();
+    for (const e of filteredEdges) {
+      visibleNodeIds.add(e.source);
+      visibleNodeIds.add(e.target);
+    }
+    // Also show nodes with no edges (orphans) so they don't vanish
+    const connectedNodeIds = new Set<string>();
+    for (const e of edges) {
+      connectedNodeIds.add(e.source);
+      connectedNodeIds.add(e.target);
+    }
+    return nodes.filter((n) => visibleNodeIds.has(n.id) || !connectedNodeIds.has(n.id));
+  }, [nodes, edges, filteredEdges, yearFilter]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -289,7 +381,9 @@ function App() {
               <h1 className="text-[28px] font-bold tracking-tight text-white">Graph</h1>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
-                  <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">{yearFilter}</span>
+                  <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
+                    {yearFilter >= 2026 ? 'All' : yearFilter}
+                  </span>
                   <input
                     type="range" min="1980" max="2026" value={yearFilter}
                     onChange={(e) => setYearFilter(parseInt(e.target.value))}
@@ -297,19 +391,37 @@ function App() {
                   />
                 </div>
                 <button
-                  onClick={() => onLayout('TB')}
+                  onClick={onLayout}
                   className="flex items-center gap-1.5 bg-[#1C1C1E] hover:bg-[#2C2C2E] px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)]"
                 >
-                  Auto-Layout
+                  Web Layout
                 </button>
               </div>
             </header>
-            <div className="flex-1">
+            <div className="flex-1 relative">
+              {/* Loading overlay */}
+              {isExtractingInsights && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
+                  <Loader2 size={40} className="text-[#007AFF] animate-spin mb-4" />
+                  <p className="text-[15px] font-medium text-white">Extracting entities from your documents...</p>
+                  <p className="text-[13px] text-[rgba(235,235,245,0.4)] mt-1">This may take a moment</p>
+                </div>
+              )}
+
+              {/* Empty state */}
+              {!isExtractingInsights && nodes.length === 0 && (
+                <div className="absolute inset-0 z-40 flex flex-col items-center justify-center">
+                  <Network size={48} className="text-[rgba(235,235,245,0.2)] mb-4" />
+                  <p className="text-[15px] font-medium text-[rgba(235,235,245,0.6)]">No entities found</p>
+                  <p className="text-[13px] text-[rgba(235,235,245,0.3)] mt-1">Upload PDFs in the Docs tab to build the graph</p>
+                </div>
+              )}
+
               <GraphPanel
                 open={true}
                 onClose={() => {}}
-                nodes={nodes}
-                edges={edges}
+                nodes={filteredNodes}
+                edges={filteredEdges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onNodeDragStop={onNodeDragStop}

@@ -94,7 +94,7 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
         minZoom={0.1}
         maxZoom={2}
         defaultEdgeOptions={{
-          type: 'smoothstep',
+          type: 'default',
           animated: false,
         }}
       >

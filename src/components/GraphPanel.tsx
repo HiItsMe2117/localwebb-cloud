@@ -16,7 +16,7 @@ interface GraphPanelProps {
   onClose: () => void;
   yearFilter: number;
   onYearFilterChange: (v: number) => void;
-  onLayout: (direction: string) => void;
+  onLayout: () => void;
 }
 
 export default function GraphPanel({

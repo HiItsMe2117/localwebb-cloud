@@ -302,9 +302,14 @@ async def get_insights():
 
         entity_map = {ent.id: ent for ent in output.entities}
 
+        import math
         new_nodes = []
-        for ent in output.entities:
+        total = len(output.entities)
+        cx, cy = 400, 400
+        radius = max(200, total * 30)
+        for i, ent in enumerate(output.entities):
             ent_type = ent.type.upper()
+            angle = (2 * math.pi * i) / max(total, 1)
             new_nodes.append({
                 "id": ent.id,
                 "type": "entityNode",
@@ -314,7 +319,10 @@ async def get_insights():
                     "description": ent.description,
                     "aliases": ent.aliases,
                 },
-                "position": {"x": 100 + (len(new_nodes) * 20), "y": 100},
+                "position": {
+                    "x": cx + radius * math.cos(angle),
+                    "y": cy + radius * math.sin(angle),
+                },
             })
 
         new_edges = []
@@ -412,7 +420,11 @@ def _build_query_context(request):
             text = r.metadata.get('text', '')
         if text:
             filename = r.metadata.get('filename', 'unknown')
-            page = r.metadata.get('page', r.metadata.get('chunk_index', ''))
+            page = r.metadata.get('page', '')
+            if not page and page != 0:
+                # Legacy vectors without page numbers — show chunk index
+                chunk_idx = r.metadata.get('chunk_index', '')
+                page = f"Chunk {chunk_idx}" if chunk_idx != '' else ''
             candidates.append({
                 "text": text, "filename": filename, "page": page,
                 "score": r.score,
