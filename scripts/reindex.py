@@ -318,10 +318,16 @@ def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path):
 def classify_dataset(filename):
     """Attempt to classify which DOJ data set a file belongs to based on its name."""
     fname = filename.lower()
-    # Files from the scraper often have "dataset" in their path or name
-    for i in range(1, 13):
-        if f"dataset{i}" in fname or f"data-set-{i}" in fname or f"dataset-{i}" in fname or f"data_set_{i}" in fname:
-            return str(i)
+    # Files from the scraper often have "dataset" in their path or name.
+    # Check longer numbers first (12, 11, 10) to avoid "dataset-1" matching "dataset-11".
+    for i in [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]:
+        for pattern in [f"dataset{i}", f"data-set-{i}", f"dataset-{i}", f"data_set_{i}", f"dataset {i}", f"dataset%20{i}"]:
+            idx = fname.find(pattern)
+            if idx >= 0:
+                # Ensure the match isn't a prefix of a longer number
+                end_pos = idx + len(pattern)
+                if end_pos >= len(fname) or not fname[end_pos].isdigit():
+                    return str(i)
     # Files in the uploads/ folder are from Data Set 9
     if fname.startswith("uploads/"):
         return "9"
