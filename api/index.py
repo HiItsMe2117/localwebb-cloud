@@ -689,6 +689,22 @@ def process_upload(file_path, filename):
     finally:
         shutil.rmtree(os.path.dirname(file_path), ignore_errors=True)
 
+@app.get("/api/datasets")
+async def get_datasets():
+    """Return per-dataset pipeline stats from pipeline_status.json in GCS."""
+    try:
+        if not bucket:
+            return JSONResponse(status_code=503, content={"error": "GCS bucket not initialized"})
+        blob = bucket.blob("pipeline_status.json")
+        if not blob.exists():
+            return {"datasets": {}, "totals": {}, "last_updated": None}
+        data = json.loads(blob.download_as_text())
+        return data
+    except Exception as e:
+        print(f"Error reading pipeline status: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/api/graph/communities")
 async def detect_communities():
     try:

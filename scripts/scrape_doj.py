@@ -417,6 +417,16 @@ def main():
             print(f"    ... and {len(progress['files_failed']) - 20} more")
     print(f"\nProgress saved to: {PROGRESS_FILE}")
 
+    # Update pipeline status in GCS
+    if not args.dry_run:
+        try:
+            from generate_pipeline_status import generate_status, upload_to_gcs
+            print("\nUpdating pipeline status in GCS...")
+            status = generate_status()
+            upload_to_gcs(status)
+        except Exception as e:
+            print(f"Warning: Could not update pipeline status: {e}")
+
 
 if __name__ == "__main__":
     main()

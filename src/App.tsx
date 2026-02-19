@@ -3,6 +3,7 @@ import ChatArea from './components/ChatArea';
 import InputBar from './components/InputBar';
 import GraphPanel from './components/GraphPanel';
 import EvidencePanel from './components/EvidencePanel';
+import DatasetPanel from './components/DatasetPanel';
 import {
   Upload,
   RefreshCw,
@@ -11,7 +12,8 @@ import {
   Database,
   Settings as SettingsIcon,
   FileText,
-  Loader2
+  Loader2,
+  HardDrive
 } from 'lucide-react';
 import { useNodesState, useEdgesState } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -19,7 +21,7 @@ import axios from 'axios';
 import { getLayoutedElements } from './utils/layout';
 import type { ChatMessage, Community } from './types';
 
-type View = 'chat' | 'graph' | 'docs';
+type View = 'chat' | 'graph' | 'docs' | 'data';
 
 function App() {
   const [activeView, setActiveView] = useState<View>('chat');
@@ -328,6 +330,7 @@ function App() {
     { id: 'chat', label: 'Chat', icon: MessageSquare },
     { id: 'graph', label: 'Graph', icon: Network },
     { id: 'docs', label: 'Docs', icon: Database },
+    { id: 'data', label: 'Data', icon: HardDrive },
   ];
 
   return (
@@ -484,6 +487,10 @@ function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {activeView === 'data' && (
+          <DatasetPanel />
         )}
 
         {/* Evidence Panel (bottom sheet, works across views) */}
