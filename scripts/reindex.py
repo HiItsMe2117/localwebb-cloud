@@ -509,8 +509,8 @@ def main():
             save_progress(progress)
             files_processed_this_run += 1
 
-            # Track per-dataset stats
-            ds = classify_dataset(filename)
+            # Track per-dataset stats (use full blob path for classification)
+            ds = classify_dataset(blob.name)
             if ds not in per_dataset_stats:
                 per_dataset_stats[ds] = {"completed": 0, "failed": 0, "vectors": 0}
             per_dataset_stats[ds]["completed"] += 1
@@ -522,7 +522,7 @@ def main():
             save_progress(progress)
             files_processed_this_run += 1
 
-            ds = classify_dataset(filename)
+            ds = classify_dataset(blob.name)
             if ds not in per_dataset_stats:
                 per_dataset_stats[ds] = {"completed": 0, "failed": 0, "vectors": 0}
             per_dataset_stats[ds]["failed"] += 1
