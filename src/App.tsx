@@ -15,7 +15,7 @@ import {
   Loader2,
   HardDrive
 } from 'lucide-react';
-import { useNodesState, useEdgesState } from 'reactflow';
+import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
 import axios from 'axios';
 import { getLayoutedElements, computeDegreeMap } from './utils/layout';
@@ -462,23 +462,25 @@ function App() {
                 </div>
               )}
 
-              <GraphPanel
-                open={true}
-                onClose={() => {}}
-                nodes={filteredNodes}
-                edges={filteredEdges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onNodeDragStop={onNodeDragStop}
-                onNodeClick={handleNodeClick}
-                onEdgeClick={handleEdgeClick}
-                yearFilter={yearFilter}
-                onYearFilterChange={setYearFilter}
-                onLayout={onLayout}
-                communities={communities}
-                minDegree={minDegree}
-                onMinDegreeChange={setMinDegree}
-              />
+              <ReactFlowProvider>
+                <GraphPanel
+                  open={true}
+                  onClose={() => {}}
+                  nodes={filteredNodes}
+                  edges={filteredEdges}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onNodeDragStop={onNodeDragStop}
+                  onNodeClick={handleNodeClick}
+                  onEdgeClick={handleEdgeClick}
+                  yearFilter={yearFilter}
+                  onYearFilterChange={setYearFilter}
+                  onLayout={onLayout}
+                  communities={communities}
+                  minDegree={minDegree}
+                  onMinDegreeChange={setMinDegree}
+                />
+              </ReactFlowProvider>
             </div>
           </div>
         )}
