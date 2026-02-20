@@ -23,7 +23,7 @@ interface GraphPanelProps {
 
 export default function GraphPanel({
   nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop,
-  onNodeClick, onEdgeClick, communities, minDegree, onMinDegreeChange
+  onNodeClick, onEdgeClick, communities, minDegree: _minDegree, onMinDegreeChange: _onMinDegreeChange
 }: GraphPanelProps) {
 
   return (
