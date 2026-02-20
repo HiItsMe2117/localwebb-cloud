@@ -375,7 +375,7 @@ function App() {
               <div className="flex items-center justify-between">
                 <h1 className="text-[28px] font-bold tracking-tight text-white">Chat</h1>
                 <button
-                  onClick={triggerInsights}
+                  onClick={() => triggerInsights('standard')}
                   disabled={isSyncing}
                   className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)]"
                 >
