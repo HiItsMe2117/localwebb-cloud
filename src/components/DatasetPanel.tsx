@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-// Force fresh build to clear cache
+// Build ID: FIX-TS-6133-V3
 import {
   AlertCircle,
   RefreshCw,
@@ -91,7 +91,6 @@ function DatasetCard({ num, stats }: { num: string; stats: DatasetStats }) {
         )}
       </div>
 
-      {/* Scraped progress */}
       <div className="mb-2">
         <div className="flex justify-between items-center mb-1">
           <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Scraped</span>
@@ -102,7 +101,6 @@ function DatasetCard({ num, stats }: { num: string; stats: DatasetStats }) {
         <ProgressBar value={stats.scraped} max={scrapeMax} color="#007AFF" />
       </div>
 
-      {/* Vectorized progress */}
       <div>
         <div className="flex justify-between items-center mb-1">
           <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Vectorized</span>
@@ -113,7 +111,6 @@ function DatasetCard({ num, stats }: { num: string; stats: DatasetStats }) {
         <ProgressBar value={stats.vectorized} max={vectorMax} color="#30D158" />
       </div>
 
-      {/* Size */}
       {stats.size_mb > 0 && (
         <p className="text-[11px] text-[rgba(235,235,245,0.3)] mt-2 text-right">{stats.size_mb} MB</p>
       )}
@@ -164,7 +161,6 @@ export default function DatasetPanel() {
       <div className="flex-1 px-5 pb-4">
         <div className="max-w-4xl mx-auto w-full">
 
-          {/* Totals banner */}
           {status?.totals && (
             <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 mb-4">
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
@@ -197,7 +193,6 @@ export default function DatasetPanel() {
             </div>
           )}
 
-          {/* Loading state */}
           {loading && !status && (
             <div className="flex flex-col items-center justify-center py-20">
               <Loader2 size={32} className="text-[#007AFF] animate-spin mb-3" />
@@ -205,7 +200,6 @@ export default function DatasetPanel() {
             </div>
           )}
 
-          {/* Error state */}
           {error && !status && (
             <div className="flex flex-col items-center justify-center py-20">
               <AlertCircle size={32} className="text-[#FF453A] mb-3" />
@@ -220,7 +214,6 @@ export default function DatasetPanel() {
             </div>
           )}
 
-          {/* Dataset grid */}
           {status && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {datasetNums.map((num) => {
