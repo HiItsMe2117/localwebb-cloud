@@ -3,7 +3,7 @@ import ChatArea from './components/ChatArea';
 import InputBar from './components/InputBar';
 import GraphPanel from './components/GraphPanel';
 import EvidencePanel from './components/EvidencePanel';
-import DatasetPanel from './components/DatasetPanel';
+import DataPanel from './components/DataPanel';
 import {
   Upload,
   RefreshCw,
@@ -537,7 +537,7 @@ function App() {
         )}
 
         {activeView === 'data' && (
-          <DatasetPanel />
+          <DataPanel />
         )}
 
         {/* Evidence Panel (bottom sheet, works across views) */}

@@ -118,7 +118,7 @@ function DatasetCard({ num, stats }: { num: string; stats: DatasetStats }) {
   );
 }
 
-export default function DatasetPanel() {
+export default function DataPanel() {
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
