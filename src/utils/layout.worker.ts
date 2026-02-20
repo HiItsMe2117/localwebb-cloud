@@ -67,12 +67,12 @@ self.onmessage = (e: MessageEvent) => {
     .force(
       'charge',
       forceManyBody<SimNode>()
-        .strength(-80) // Less repulsion
-        .distanceMax(300)
+        .strength(-50) // Reduced magnetism further from -80
+        .distanceMax(250)
     )
     .force(
       'center',
-      forceCenter(cx, cy).strength(0.2) // Stronger center pull
+      forceCenter(cx, cy).strength(0.4) // Stronger center pull from 0.2
     )
     .force(
       'collide',
