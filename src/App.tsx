@@ -91,30 +91,31 @@ function App() {
 
   const loadGraph = async () => {
     try {
+      console.log("Fetching graph data from /api/graph...");
       const res = await axios.get('/api/graph');
       const rawNodes: Node[] = res.data.nodes || [];
       const rawEdges: Edge[] = res.data.edges || [];
+      console.log(`Loaded ${rawNodes.length} nodes and ${rawEdges.length} edges.`);
+      
       if (res.data.communities) {
         setCommunities(res.data.communities);
       }
 
       if (rawNodes.length > 0) {
-        // Enrich with degree
         const degree = computeDegreeMap(rawEdges);
         const enriched = rawNodes.map((n) => ({
           ...n,
           data: { ...n.data, degree: degree.get(n.id) || 0 },
         }));
 
-        // Check if nodes already have spread positions (not all stacked)
-        const positions = enriched.map((n) => `${Math.round(n.position.x)},${Math.round(n.position.y)}`);
-        const uniquePositions = new Set(positions);
+        const uniquePositions = new Set(enriched.map((n) => `${Math.round(n.position.x)},${Math.round(n.position.y)}`));
         const hasLayout = uniquePositions.size > Math.min(enriched.length * 0.5, 3);
 
         if (hasLayout) {
           setNodes(enriched);
           setEdges(rawEdges);
         } else {
+          console.log("No layout detected, running auto-layout...");
           await applyForceLayout(enriched, rawEdges);
         }
       } else {

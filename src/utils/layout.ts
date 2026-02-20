@@ -40,8 +40,22 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]): Promise
   }));
 
   return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      console.warn("Layout worker timed out. Falling back to raw nodes.");
+      layoutWorker.removeEventListener('message', handleMessage);
+      resolve({ nodes, edges });
+    }, 10000); // 10 second safety limit
+
     const handleMessage = (e: MessageEvent) => {
+      clearTimeout(timeout);
       const { positions } = e.data;
+      
+      if (!positions) {
+        console.error("Worker returned no positions");
+        resolve({ nodes, edges });
+        return;
+      }
+
       const posMap = new Map<string, { x: number; y: number }>(
         positions.map((p: any) => [p.id, { x: p.x, y: p.y }])
       );
