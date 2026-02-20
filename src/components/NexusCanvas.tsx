@@ -61,8 +61,10 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
   );
 
   const styledEdges = useMemo(() => {
+    const isHeavy = edges.length > 500;
     return edges.map(e => ({
       ...e,
+      label: isHeavy ? undefined : e.label,
       labelStyle: EDGE_LABEL_STYLE,
       labelBgStyle: EDGE_LABEL_BG_STYLE,
       labelBgPadding: EDGE_LABEL_BG_PADDING,
@@ -71,6 +73,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
         stroke: e.selected ? '#007AFF' : (e.data?.confidence === 'INFERRED' ? 'rgba(235,235,245,0.3)' : 'rgba(84,84,88,0.65)'),
         strokeWidth: e.selected ? 2.5 : 1.5,
         strokeDasharray: e.data?.confidence === 'INFERRED' ? '4 4' : undefined,
+        pointerEvents: 'none', // Optimization: Edges don't intercept mouse
         ...(e.style || {}),
       },
       markerEnd: EDGE_MARKER_END
@@ -83,7 +86,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
   }, []);
 
   return (
-    <div style={{ width: '100%', height: height || '100%', background: '#000000' }}>
+    <div style={{ width: '100%', height: height || '100%', background: '#000000', willChange: 'transform' }}>
       <ReactFlow
         nodes={nodes}
         edges={styledEdges}
@@ -101,6 +104,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
         elevateNodesOnSelect={false}
         elevateEdgesOnSelect={false}
         onlyRenderVisibleElements={true}
+        zoomOnDoubleClick={false}
       >
         <Background
           color="rgba(84,84,88,0.3)"

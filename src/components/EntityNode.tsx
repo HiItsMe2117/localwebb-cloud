@@ -1,6 +1,6 @@
 import { memo } from 'react';
-import { Handle, Position } from 'reactflow';
-import type { NodeProps } from 'reactflow';
+import { Handle, Position, useStore } from 'reactflow';
+import type { NodeProps, ReactFlowState } from 'reactflow';
 import { User, Building2, MapPin, Calendar, FileText, DollarSign, HelpCircle } from 'lucide-react';
 
 // Modern Type Configuration
@@ -13,7 +13,7 @@ const TYPE_CONFIG: Record<string, { color: string; icon: typeof User }> = {
   FINANCIAL_ENTITY: { color: '#f87171', icon: DollarSign },
 };
 
-const handleStyle = { background: '#3A3A3C', width: 8, height: 8, borderColor: '#1C1C1E', borderWidth: 2 };
+const handleStyle = { background: '#3A3A3C', width: 8, height: 8, borderColor: '#1C1C1E', borderWidth: 2, opacity: 0 };
 
 type Tier = 'hub' | 'medium' | 'leaf';
 
@@ -25,7 +25,6 @@ function getTier(degree: number): Tier {
 
 function getScale(degree: number, tier: Tier): number {
   if (tier === 'leaf') return 0.7;
-  // sqrt-based scaling for hub and medium: sqrt(degree) * 0.2 + 0.8
   return Math.sqrt(degree) * 0.2 + 0.8;
 }
 
@@ -45,7 +44,11 @@ const fullHandles = (
   </>
 );
 
+// Selector to get zoom without re-rendering on every pan
+const zoomSelector = (s: ReactFlowState) => s.transform[2];
+
 function EntityNode({ data, selected }: NodeProps) {
+  const zoom = useStore(zoomSelector);
   const entityType = (data.entityType || 'PERSON').toUpperCase();
   const config = TYPE_CONFIG[entityType] || { color: '#9ca3af', icon: HelpCircle };
   const Icon = config.icon;
@@ -55,18 +58,39 @@ function EntityNode({ data, selected }: NodeProps) {
   const tier = getTier(degree);
   const scale = getScale(degree, tier);
 
+  // --- LOD: Extreme Performance Mode (Zoomed Out) ---
+  // When zoomed out, render a simple colored dot. No icons, no text, no borders.
+  if (zoom < 0.6) {
+    return (
+      <div
+        style={{
+          width: 24,
+          height: 24,
+          borderRadius: '50%',
+          backgroundColor: selected ? config.color : communityColor,
+          border: selected ? '4px solid white' : 'none',
+          transform: `scale(${scale * 1.5})`,
+          boxShadow: selected ? `0 0 20px ${config.color}` : 'none',
+        }}
+      >
+        {tier === 'leaf' ? leafHandles : fullHandles}
+      </div>
+    );
+  }
+
   // --- Leaf: compact pill ---
   if (tier === 'leaf') {
     const truncLabel = data.label?.length > 20 ? data.label.slice(0, 18) + '...' : data.label;
     return (
       <div
-        className="bg-[#1C1C1E] rounded-lg flex items-center gap-2 px-2.5 py-1.5 transition-all duration-150"
+        className="bg-[#1C1C1E] rounded-lg flex items-center gap-2 px-2.5 py-1.5"
         style={{
           border: `1.5px solid ${selected ? config.color : communityColor}40`,
           boxShadow: selected ? `0 0 12px ${config.color}30` : 'none',
           maxWidth: 140,
           transform: `scale(${scale})`,
           transformOrigin: 'center center',
+          willChange: 'transform',
         }}
       >
         {leafHandles}
@@ -76,12 +100,7 @@ function EntityNode({ data, selected }: NodeProps) {
         >
           <Icon size={11} style={{ color: config.color }} />
         </div>
-        <p
-          className="text-[11px] font-medium text-[rgba(235,235,245,0.7)] truncate"
-          title={data.label}
-        >
-          {truncLabel}
-        </p>
+        <p className="text-[11px] font-medium text-[rgba(235,235,245,0.7)] truncate">{truncLabel}</p>
       </div>
     );
   }
