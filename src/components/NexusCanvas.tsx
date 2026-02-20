@@ -20,6 +20,13 @@ const TYPE_COLORS: Record<string, string> = {
   FINANCIAL_ENTITY: '#f87171',
 };
 
+const EDGE_LABEL_STYLE = { fill: 'rgba(235,235,245,0.6)', fontSize: 11, fontWeight: 600 };
+const EDGE_LABEL_BG_STYLE = { fill: '#1C1C1E', fillOpacity: 0.9 };
+const EDGE_LABEL_BG_PADDING: [number, number] = [8, 4];
+const EDGE_LABEL_BG_BORDER_RADIUS = 6;
+const EDGE_MARKER_END = { type: MarkerType.Arrow, color: 'rgba(84,84,88,0.65)' };
+const DEFAULT_EDGE_OPTIONS = { type: 'default', animated: false };
+
 interface NexusProps {
   nodes: Node[];
   edges: Edge[];
@@ -56,20 +63,17 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
   const styledEdges = useMemo(() => {
     return edges.map(e => ({
       ...e,
-      labelStyle: { fill: 'rgba(235,235,245,0.6)', fontSize: 11, fontWeight: 600 },
-      labelBgStyle: { fill: '#1C1C1E', fillOpacity: 0.9 },
-      labelBgPadding: [8, 4] as [number, number],
-      labelBgBorderRadius: 6,
+      labelStyle: EDGE_LABEL_STYLE,
+      labelBgStyle: EDGE_LABEL_BG_STYLE,
+      labelBgPadding: EDGE_LABEL_BG_PADDING,
+      labelBgBorderRadius: EDGE_LABEL_BG_BORDER_RADIUS,
       style: {
         stroke: e.selected ? '#007AFF' : (e.data?.confidence === 'INFERRED' ? 'rgba(235,235,245,0.3)' : 'rgba(84,84,88,0.65)'),
         strokeWidth: e.selected ? 2.5 : 1.5,
         strokeDasharray: e.data?.confidence === 'INFERRED' ? '4 4' : undefined,
         ...(e.style || {}),
       },
-      markerEnd: {
-        type: MarkerType.Arrow,
-        color: 'rgba(84,84,88,0.65)',
-      }
+      markerEnd: EDGE_MARKER_END
     }));
   }, [edges]);
 
@@ -93,10 +97,9 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
         fitView
         minZoom={0.1}
         maxZoom={2}
-        defaultEdgeOptions={{
-          type: 'default',
-          animated: false,
-        }}
+        defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+        elevateNodesOnSelect={false}
+        elevateEdgesOnSelect={false}
       >
         <Background
           color="rgba(84,84,88,0.3)"
@@ -105,11 +108,13 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
           size={1}
         />
         <Controls showInteractive={false} />
-        <MiniMap
-          nodeColor={miniMapNodeColor}
-          nodeStrokeWidth={2}
-          maskColor="rgba(0, 0, 0, 0.6)"
-        />
+        {nodes.length < 1000 && (
+          <MiniMap
+            nodeColor={miniMapNodeColor}
+            nodeStrokeWidth={2}
+            maskColor="rgba(0, 0, 0, 0.6)"
+          />
+        )}
       </ReactFlow>
     </div>
   );

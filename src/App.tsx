@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
 import ChatArea from './components/ChatArea';
 import InputBar from './components/InputBar';
 import GraphPanel from './components/GraphPanel';
@@ -18,7 +18,7 @@ import {
 import { useNodesState, useEdgesState } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
 import axios from 'axios';
-import { getLayoutedElements } from './utils/layout';
+import { getLayoutedElements, computeDegreeMap } from './utils/layout';
 import type { ChatMessage, Community } from './types';
 
 type View = 'chat' | 'graph' | 'docs' | 'data';
@@ -36,7 +36,12 @@ function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [yearFilter, setYearFilter] = useState(2026);
-  const [minDegree, setMinDegree] = useState(1);
+  const [minDegree, setMinDegree] = useState(3);
+  const [isLayouting, setIsLayouting] = useState(false);
+
+  // Deferred filters for performance
+  const deferredYearFilter = useDeferredValue(yearFilter);
+  const deferredMinDegree = useDeferredValue(minDegree);
 
   // Filter state
   const [topK, setTopK] = useState(15);
@@ -56,31 +61,32 @@ function App() {
   // --- Helpers ---
 
   /** Apply force layout to raw nodes/edges and persist positions */
-  const applyForceLayout = useCallback((rawNodes: Node[], rawEdges: Edge[]) => {
+  const applyForceLayout = useCallback(async (rawNodes: Node[], rawEdges: Edge[]) => {
     if (rawNodes.length === 0) {
       setNodes([]);
       setEdges(rawEdges);
       return;
     }
 
-    // Enrich nodes with degree for sizing
-    const degree = new Map<string, number>();
-    for (const e of rawEdges) {
-      degree.set(e.source, (degree.get(e.source) || 0) + 1);
-      degree.set(e.target, (degree.get(e.target) || 0) + 1);
+    setIsLayouting(true);
+    try {
+      // Enrich nodes with degree for sizing
+      const degree = computeDegreeMap(rawEdges);
+      const enriched = rawNodes.map((n) => ({
+        ...n,
+        data: { ...n.data, degree: degree.get(n.id) || 0 },
+      }));
+
+      const { nodes: laid, edges: laidEdges } = await getLayoutedElements(enriched, rawEdges);
+      setNodes(laid);
+      setEdges(laidEdges);
+
+      // Persist positions to backend
+      const updates = laid.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y }));
+      axios.post('/api/graph/positions', updates).catch(() => {});
+    } finally {
+      setIsLayouting(false);
     }
-    const enriched = rawNodes.map((n) => ({
-      ...n,
-      data: { ...n.data, degree: degree.get(n.id) || 0 },
-    }));
-
-    const { nodes: laid, edges: laidEdges } = getLayoutedElements(enriched, rawEdges);
-    setNodes(laid);
-    setEdges(laidEdges);
-
-    // Persist positions to backend
-    const updates = laid.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y }));
-    axios.post('/api/graph/positions', updates).catch(() => {});
   }, [setNodes, setEdges]);
 
   const loadGraph = async () => {
@@ -94,11 +100,7 @@ function App() {
 
       if (rawNodes.length > 0) {
         // Enrich with degree
-        const degree = new Map<string, number>();
-        for (const e of rawEdges) {
-          degree.set(e.source, (degree.get(e.source) || 0) + 1);
-          degree.set(e.target, (degree.get(e.target) || 0) + 1);
-        }
+        const degree = computeDegreeMap(rawEdges);
         const enriched = rawNodes.map((n) => ({
           ...n,
           data: { ...n.data, degree: degree.get(n.id) || 0 },
@@ -113,7 +115,7 @@ function App() {
           setNodes(enriched);
           setEdges(rawEdges);
         } else {
-          applyForceLayout(enriched, rawEdges);
+          await applyForceLayout(enriched, rawEdges);
         }
       } else {
         setNodes([]);
@@ -138,8 +140,8 @@ function App() {
     }
   };
 
-  const onLayout = useCallback(() => {
-    applyForceLayout(nodes, edges);
+  const onLayout = useCallback(async () => {
+    await applyForceLayout(nodes, edges);
   }, [nodes, edges, applyForceLayout]);
 
   const triggerInsights = async () => {
@@ -152,7 +154,7 @@ function App() {
       if (res.data.communities) {
         setCommunities(res.data.communities);
       }
-      applyForceLayout(rawNodes, rawEdges);
+      await applyForceLayout(rawNodes, rawEdges);
     } catch (err) {
       console.error("Sync failed:", err);
     } finally {
@@ -171,25 +173,18 @@ function App() {
 
   // --- Filtering pipeline ---
   // 1. Compute degreeMap from ALL edges (stable hub status regardless of filters)
-  const degreeMap = useMemo(() => {
-    const dm = new Map<string, number>();
-    for (const e of edges) {
-      dm.set(e.source, (dm.get(e.source) || 0) + 1);
-      dm.set(e.target, (dm.get(e.target) || 0) + 1);
-    }
-    return dm;
-  }, [edges]);
+  const degreeMap = useMemo(() => computeDegreeMap(edges), [edges]);
 
   // 2. Year-filter edges
   const yearFilteredEdges = useMemo(() => {
-    if (yearFilter >= 2026) return edges;
+    if (deferredYearFilter >= 2026) return edges;
     return edges.filter((e) => {
       const dateMentioned = e.data?.date_mentioned;
       if (!dateMentioned) return true;
       const year = parseInt(dateMentioned.slice(0, 4), 10);
-      return !isNaN(year) && year <= yearFilter;
+      return !isNaN(year) && year <= deferredYearFilter;
     });
-  }, [edges, yearFilter]);
+  }, [edges, deferredYearFilter]);
 
   // 3. Degree-filter nodes, then prune edges to visible nodes
   const { filteredNodes, filteredEdges } = useMemo(() => {
@@ -197,12 +192,12 @@ function App() {
     const degreeFiltered = new Set<string>();
     for (const n of nodes) {
       const deg = degreeMap.get(n.id) || 0;
-      if (deg >= minDegree) degreeFiltered.add(n.id);
+      if (deg >= deferredMinDegree) degreeFiltered.add(n.id);
     }
 
     // If year filter is active, also restrict to nodes touched by year-filtered edges
     let visibleIds: Set<string>;
-    if (yearFilter >= 2026) {
+    if (deferredYearFilter >= 2026) {
       visibleIds = degreeFiltered;
     } else {
       const yearVisible = new Set<string>();
@@ -226,7 +221,7 @@ function App() {
     const fNodes = nodes.filter((n) => visibleIds.has(n.id));
 
     return { filteredNodes: fNodes, filteredEdges: fEdges };
-  }, [nodes, edges, yearFilteredEdges, yearFilter, degreeMap, minDegree]);
+  }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, deferredMinDegree]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -438,24 +433,28 @@ function App() {
                 </div>
                 <button
                   onClick={onLayout}
-                  className="flex items-center gap-1.5 bg-[#1C1C1E] hover:bg-[#2C2C2E] px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)]"
+                  disabled={isLayouting}
+                  className="flex items-center gap-1.5 bg-[#1C1C1E] hover:bg-[#2C2C2E] px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)] disabled:opacity-50"
                 >
+                  {isLayouting && <Loader2 size={12} className="animate-spin" />}
                   Web Layout
                 </button>
               </div>
             </header>
             <div className="flex-1 relative">
               {/* Loading overlay */}
-              {isExtractingInsights && (
+              {(isExtractingInsights || isLayouting) && (
                 <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
                   <Loader2 size={40} className="text-[#007AFF] animate-spin mb-4" />
-                  <p className="text-[15px] font-medium text-white">Extracting entities from your documents...</p>
+                  <p className="text-[15px] font-medium text-white">
+                    {isExtractingInsights ? 'Extracting entities from your documents...' : 'Optimizing graph layout...'}
+                  </p>
                   <p className="text-[13px] text-[rgba(235,235,245,0.4)] mt-1">This may take a moment</p>
                 </div>
               )}
 
               {/* Empty state */}
-              {!isExtractingInsights && nodes.length === 0 && (
+              {!isExtractingInsights && !isLayouting && nodes.length === 0 && (
                 <div className="absolute inset-0 z-40 flex flex-col items-center justify-center">
                   <Network size={48} className="text-[rgba(235,235,245,0.2)] mb-4" />
                   <p className="text-[15px] font-medium text-[rgba(235,235,245,0.6)]">No entities found</p>

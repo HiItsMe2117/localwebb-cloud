@@ -29,7 +29,14 @@ function getScale(degree: number, tier: Tier): number {
   return Math.sqrt(degree) * 0.2 + 0.8;
 }
 
-const handles = (
+const leafHandles = (
+  <>
+    <Handle type="target" position={Position.Top} id="t-top" style={handleStyle} />
+    <Handle type="source" position={Position.Bottom} id="s-bottom" style={handleStyle} />
+  </>
+);
+
+const fullHandles = (
   <>
     <Handle type="target" position={Position.Top} id="t-top" style={handleStyle} />
     <Handle type="target" position={Position.Left} id="t-left" style={handleStyle} />
@@ -62,7 +69,7 @@ function EntityNode({ data, selected }: NodeProps) {
           transformOrigin: 'center center',
         }}
       >
-        {handles}
+        {leafHandles}
         <div
           className="w-5 h-5 rounded flex items-center justify-center shrink-0"
           style={{ backgroundColor: `${config.color}20` }}
@@ -93,7 +100,7 @@ function EntityNode({ data, selected }: NodeProps) {
           transformOrigin: 'center center',
         }}
       >
-        {handles}
+        {fullHandles}
         <div className="p-3" style={{ borderBottom: 'none' }}>
           <div className="flex items-center gap-3">
             <div
@@ -140,7 +147,7 @@ function EntityNode({ data, selected }: NodeProps) {
         transformOrigin: 'center center',
       }}
     >
-      {handles}
+      {fullHandles}
 
       {/* Header */}
       <div className="p-3 border-b border-[rgba(84,84,88,0.65)]" style={{ borderBottomColor: `${communityColor}20` }}>
