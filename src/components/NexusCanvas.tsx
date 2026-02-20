@@ -22,7 +22,7 @@ const TYPE_COLORS: Record<string, string> = {
 
 const EDGE_LABEL_STYLE = { fill: 'rgba(235,235,245,0.6)', fontSize: 11, fontWeight: 600 };
 const EDGE_LABEL_BG_STYLE = { fill: '#1C1C1E', fillOpacity: 0.9 };
-const EDGE_LABEL_BG_PADDING: [number, number] = [8, 4];
+const EDGE_LABEL_BG_PADDING: [number, number] = [8, 4] as [number, number];
 const EDGE_LABEL_BG_BORDER_RADIUS = 6;
 const EDGE_MARKER_END = { type: MarkerType.Arrow, color: 'rgba(84,84,88,0.65)' };
 const DEFAULT_EDGE_OPTIONS = { type: 'default', animated: false };
@@ -60,7 +60,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
     [onEdgeClick]
   );
 
-  const styledEdges = useMemo(() => {
+  const styledEdges = useMemo<Edge[]>(() => {
     const isHeavy = edges.length > 500;
     return edges.map(e => ({
       ...e,
@@ -73,7 +73,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
         stroke: e.selected ? '#007AFF' : (e.data?.confidence === 'INFERRED' ? 'rgba(235,235,245,0.3)' : 'rgba(84,84,88,0.65)'),
         strokeWidth: e.selected ? 2.5 : 1.5,
         strokeDasharray: e.data?.confidence === 'INFERRED' ? '4 4' : undefined,
-        pointerEvents: 'none', // Optimization: Edges don't intercept mouse
+        pointerEvents: 'none' as const, // Optimization: Edges don't intercept mouse
         ...(e.style || {}),
       },
       markerEnd: EDGE_MARKER_END
