@@ -38,6 +38,8 @@ function App() {
   const [yearFilter, setYearFilter] = useState(2026);
   const [minDegree, setMinDegree] = useState(1);
   const [isLayouting, setIsLayouting] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(0);
+  const [syncStatus, setSyncStatus] = useState('');
 
   // Deferred filters for performance
   const deferredYearFilter = useDeferredValue(yearFilter);
@@ -148,8 +150,23 @@ function App() {
   const triggerInsights = async (depth: string = 'standard') => {
     setIsSyncing(true);
     setIsExtractingInsights(true);
+    setSyncProgress(5);
+    setSyncStatus('Connecting to Pinecone...');
+
+    const interval = setInterval(() => {
+      setSyncProgress(prev => (prev < 90 ? prev + Math.random() * 2 : prev));
+    }, 1500);
+
     try {
+      if (depth === 'standard') setSyncStatus('Sampling core investigative topics...');
+      if (depth === 'deep') setSyncStatus('Performing deep theme sampling...');
+      if (depth === 'full') setSyncStatus('Initiating exhaustive reconstruction sweep...');
+
       const res = await axios.get(`/api/insights?depth=${depth}`);
+      
+      setSyncStatus('Gemini analysis complete. Finalizing graph store...');
+      setSyncProgress(95);
+
       const rawNodes: Node[] = res.data.nodes || [];
       const rawEdges: Edge[] = res.data.edges || [];
       if (res.data.communities) {
@@ -158,9 +175,16 @@ function App() {
       await applyForceLayout(rawNodes, rawEdges);
     } catch (err) {
       console.error("Sync failed:", err);
+      setSyncStatus('Sync failed. Please try again.');
     } finally {
-      setIsSyncing(false);
-      setIsExtractingInsights(false);
+      clearInterval(interval);
+      setSyncProgress(100);
+      setTimeout(() => {
+        setIsSyncing(false);
+        setIsExtractingInsights(false);
+        setSyncProgress(0);
+        setSyncStatus('');
+      }, 1000);
     }
   };
 
@@ -362,6 +386,22 @@ function App() {
     { id: 'data', label: 'Data', icon: HardDrive },
   ];
 
+  const SyncOverlay = () => (
+    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm px-10 text-center">
+      <Loader2 size={40} className="text-[#007AFF] animate-spin mb-6" />
+      <p className="text-[17px] font-bold text-white mb-2">{syncStatus || 'Processing...'}</p>
+      <p className="text-[13px] text-[rgba(235,235,245,0.4)] mb-8">This involves deep AI analysis and may take a moment</p>
+      
+      <div className="w-full max-w-md h-1.5 bg-[#1C1C1E] rounded-full overflow-hidden border border-white/5">
+        <div 
+          className="h-full bg-[#007AFF] transition-all duration-500 ease-out shadow-[0_0_10px_#007AFF]"
+          style={{ width: `${syncProgress}%` }}
+        />
+      </div>
+      <p className="mt-3 text-[11px] font-mono text-[#007AFF] uppercase tracking-widest">{Math.round(syncProgress)}% Complete</p>
+    </div>
+  );
+
   return (
     <div className="h-screen flex flex-col bg-black text-white font-sans overflow-hidden">
 
@@ -445,13 +485,7 @@ function App() {
             <div className="flex-1 relative">
               {/* Loading overlay */}
               {(isExtractingInsights || isLayouting) && (
-                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
-                  <Loader2 size={40} className="text-[#007AFF] animate-spin mb-4" />
-                  <p className="text-[15px] font-medium text-white">
-                    {isExtractingInsights ? 'Extracting entities from your documents...' : 'Optimizing graph layout...'}
-                  </p>
-                  <p className="text-[13px] text-[rgba(235,235,245,0.4)] mt-1">This may take a moment</p>
-                </div>
+                <SyncOverlay />
               )}
 
               {/* Empty state */}
@@ -487,7 +521,8 @@ function App() {
         )}
 
         {activeView === 'docs' && (
-          <div className="flex-1 flex flex-col overflow-y-auto">
+          <div className="flex-1 flex flex-col overflow-y-auto relative">
+            {isExtractingInsights && <SyncOverlay />}
             <header className="shrink-0 px-5 pt-4 pb-2 bg-black">
               <h1 className="text-[28px] font-bold tracking-tight text-white">Docs</h1>
             </header>
