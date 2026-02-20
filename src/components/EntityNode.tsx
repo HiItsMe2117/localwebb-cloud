@@ -60,19 +60,38 @@ function EntityNode({ data, selected }: NodeProps) {
 
   // --- LOD: Extreme Performance Mode (Zoomed Out) ---
   if (isZoomedOut) {
+    const showLabel = tier === 'hub'; // Show Hub names even when far away
+    const dotSize = tier === 'hub' ? 32 : (tier === 'medium' ? 24 : 16);
+    
     return (
       <div
-        style={{
-          width: 16,
-          height: 16,
-          borderRadius: '50%',
-          backgroundColor: selected ? config.color : communityColor,
-          border: selected ? '3px solid white' : 'none',
-          transform: `scale(${scale * 2})`,
-          boxShadow: selected ? `0 0 15px ${config.color}` : 'none',
-        }}
+        className="flex flex-col items-center justify-center pointer-events-none"
+        style={{ transform: `scale(${scale})` }}
       >
-        {tier === 'leaf' ? leafHandles : fullHandles}
+        <div
+          style={{
+            width: dotSize,
+            height: dotSize,
+            borderRadius: '50%',
+            backgroundColor: selected ? '#ffffff' : communityColor,
+            border: selected ? '4px solid white' : `2px solid ${config.color}`,
+            boxShadow: selected ? `0 0 30px ${config.color}` : `0 0 15px ${communityColor}40`,
+            pointerEvents: 'auto',
+          }}
+        >
+          {tier === 'leaf' ? leafHandles : fullHandles}
+        </div>
+        
+        {showLabel && (
+          <div 
+            className="mt-2 px-3 py-1 bg-black/60 backdrop-blur-md rounded-full border border-white/20"
+            style={{ width: 'max-content', pointerEvents: 'none' }}
+          >
+            <p className="text-[12px] font-bold text-white tracking-wide">
+              {data.label}
+            </p>
+          </div>
+        )}
       </div>
     );
   }

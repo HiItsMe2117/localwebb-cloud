@@ -1,4 +1,4 @@
-import { useCallback, useMemo, memo } from 'react';
+import { useCallback, useMemo, memo, useEffect } from 'react';
 import ReactFlow, {
   addEdge,
   Background,
@@ -7,6 +7,7 @@ import ReactFlow, {
   MiniMap,
   MarkerType,
   useStore,
+  useReactFlow,
   type ReactFlowState,
 } from 'reactflow';
 import type { Connection, Edge, Node } from 'reactflow';
@@ -43,6 +44,14 @@ interface NexusProps {
 function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, height }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
+  const { fitView } = useReactFlow();
+
+  // Auto-fit whenever nodes are updated (like after a layout)
+  useEffect(() => {
+    if (nodes.length > 0) {
+      fitView({ padding: 0.2, duration: 800 });
+    }
+  }, [nodes.length, fitView]);
 
   const onConnect = useCallback(
     (params: Connection) => onEdgesChange((eds: Edge[]) => addEdge(params, eds)),
