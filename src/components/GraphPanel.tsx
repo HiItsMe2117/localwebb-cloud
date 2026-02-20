@@ -17,11 +17,13 @@ interface GraphPanelProps {
   yearFilter: number;
   onYearFilterChange: (v: number) => void;
   onLayout: () => void;
+  minDegree: number;
+  onMinDegreeChange: (v: number) => void;
 }
 
 export default function GraphPanel({
   nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop,
-  onNodeClick, onEdgeClick, communities
+  onNodeClick, onEdgeClick, communities, minDegree, onMinDegreeChange
 }: GraphPanelProps) {
 
   return (

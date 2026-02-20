@@ -36,6 +36,7 @@ function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [yearFilter, setYearFilter] = useState(2026);
+  const [minDegree, setMinDegree] = useState(1);
 
   // Filter state
   const [topK, setTopK] = useState(15);
@@ -168,32 +169,64 @@ function App() {
     }
   }, [activeView, nodes.length]);
 
-  // --- Year filter logic ---
-  const filteredEdges = useMemo(() => {
-    if (yearFilter >= 2026) return edges; // "All" — show everything
+  // --- Filtering pipeline ---
+  // 1. Compute degreeMap from ALL edges (stable hub status regardless of filters)
+  const degreeMap = useMemo(() => {
+    const dm = new Map<string, number>();
+    for (const e of edges) {
+      dm.set(e.source, (dm.get(e.source) || 0) + 1);
+      dm.set(e.target, (dm.get(e.target) || 0) + 1);
+    }
+    return dm;
+  }, [edges]);
+
+  // 2. Year-filter edges
+  const yearFilteredEdges = useMemo(() => {
+    if (yearFilter >= 2026) return edges;
     return edges.filter((e) => {
       const dateMentioned = e.data?.date_mentioned;
-      if (!dateMentioned) return true; // edges without dates always visible
+      if (!dateMentioned) return true;
       const year = parseInt(dateMentioned.slice(0, 4), 10);
       return !isNaN(year) && year <= yearFilter;
     });
   }, [edges, yearFilter]);
 
-  const filteredNodes = useMemo(() => {
-    if (yearFilter >= 2026) return nodes; // "All"
-    const visibleNodeIds = new Set<string>();
-    for (const e of filteredEdges) {
-      visibleNodeIds.add(e.source);
-      visibleNodeIds.add(e.target);
+  // 3. Degree-filter nodes, then prune edges to visible nodes
+  const { filteredNodes, filteredEdges } = useMemo(() => {
+    // Nodes that pass the degree threshold
+    const degreeFiltered = new Set<string>();
+    for (const n of nodes) {
+      const deg = degreeMap.get(n.id) || 0;
+      if (deg >= minDegree) degreeFiltered.add(n.id);
     }
-    // Also show nodes with no edges (orphans) so they don't vanish
-    const connectedNodeIds = new Set<string>();
-    for (const e of edges) {
-      connectedNodeIds.add(e.source);
-      connectedNodeIds.add(e.target);
+
+    // If year filter is active, also restrict to nodes touched by year-filtered edges
+    let visibleIds: Set<string>;
+    if (yearFilter >= 2026) {
+      visibleIds = degreeFiltered;
+    } else {
+      const yearVisible = new Set<string>();
+      for (const e of yearFilteredEdges) {
+        yearVisible.add(e.source);
+        yearVisible.add(e.target);
+      }
+      // Intersection: must pass both degree AND year visibility
+      visibleIds = new Set<string>();
+      for (const id of degreeFiltered) {
+        if (yearVisible.has(id)) visibleIds.add(id);
+      }
     }
-    return nodes.filter((n) => visibleNodeIds.has(n.id) || !connectedNodeIds.has(n.id));
-  }, [nodes, edges, filteredEdges, yearFilter]);
+
+    // Remove edges where either endpoint was filtered out
+    const fEdges = yearFilteredEdges.filter(
+      (e) => visibleIds.has(e.source) && visibleIds.has(e.target)
+    );
+
+    // Final nodes: only those in visibleIds that still exist in node list
+    const fNodes = nodes.filter((n) => visibleIds.has(n.id));
+
+    return { filteredNodes: fNodes, filteredEdges: fEdges };
+  }, [nodes, edges, yearFilteredEdges, yearFilter, degreeMap, minDegree]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -393,6 +426,16 @@ function App() {
                     className="w-20 h-1 bg-[#3A3A3C] rounded-lg appearance-none cursor-pointer accent-[#007AFF]"
                   />
                 </div>
+                <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
+                  <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
+                    {minDegree === 0 ? 'All' : `${minDegree}+`}
+                  </span>
+                  <input
+                    type="range" min="0" max="20" value={minDegree}
+                    onChange={(e) => setMinDegree(parseInt(e.target.value))}
+                    className="w-20 h-1 bg-[#3A3A3C] rounded-lg appearance-none cursor-pointer accent-[#007AFF]"
+                  />
+                </div>
                 <button
                   onClick={onLayout}
                   className="flex items-center gap-1.5 bg-[#1C1C1E] hover:bg-[#2C2C2E] px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)]"
@@ -434,6 +477,8 @@ function App() {
                 onYearFilterChange={setYearFilter}
                 onLayout={onLayout}
                 communities={communities}
+                minDegree={minDegree}
+                onMinDegreeChange={setMinDegree}
               />
             </div>
           </div>
