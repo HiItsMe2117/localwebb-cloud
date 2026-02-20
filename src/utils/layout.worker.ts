@@ -23,7 +23,7 @@ self.onmessage = (e: MessageEvent) => {
   }
 
   const maxDegree = Math.max(1, ...nodes.map((n: any) => n.degree));
-  const baseRadius = Math.sqrt(nodes.length) * 25; // Increased from 18
+  const baseRadius = Math.sqrt(nodes.length) * 60; // Massive increase from 25
   const goldenAngle = Math.PI * (3 - Math.sqrt(5));
   const cx = 0;
   const cy = 0;
@@ -51,9 +51,9 @@ self.onmessage = (e: MessageEvent) => {
   };
 
   const collisionRadius = (d: SimNode) => {
-    if (d.degree >= 50) return 45;
-    if (d.degree >= 5) return 25;
-    return 16;
+    if (d.degree >= 50) return 80; // Increased
+    if (d.degree >= 5) return 50;  // Increased
+    return 30;                    // Increased
   };
 
   const simulation = forceSimulation<SimNode>(simNodes)
@@ -61,18 +61,18 @@ self.onmessage = (e: MessageEvent) => {
       'link',
       forceLink<SimNode, SimulationLinkDatum<SimNode>>(simLinks)
         .id((d) => d.id)
-        .distance(65) // Increased from 50
+        .distance(150) // Doubled from 65
         .strength(0.8)
     )
     .force(
       'charge',
       forceManyBody<SimNode>()
-        .strength(-250) // Doubled repulsion from -120
-        .distanceMax(600) // Nodes repel each other from further away
+        .strength(-800) // Quadrupled magnetism from -250
+        .distanceMax(1200) // Increased range
     )
     .force(
       'center',
-      forceCenter(cx, cy).strength(0.15) // Slightly less center gravity
+      forceCenter(cx, cy).strength(0.05) // Nearly zero gravity
     )
     .force(
       'collide',
@@ -82,7 +82,7 @@ self.onmessage = (e: MessageEvent) => {
     .force(
       'radial',
       forceRadial<SimNode>(radialTarget, cx, cy)
-        .strength(0.3) // Relaxed radial rings to let repulsion work
+        .strength(0.1) // Let them spread freely
     )
     .stop();
 
