@@ -63,7 +63,7 @@ function EntityNode({ data, selected }: NodeProps) {
         className="bg-[#1C1C1E] rounded-lg flex items-center gap-2 px-2.5 py-1.5 transition-all duration-150"
         style={{
           border: `1.5px solid ${selected ? config.color : communityColor}40`,
-          boxShadow: selected ? `0 0 12px ${config.color}30` : '0 1px 4px rgba(0,0,0,0.3)',
+          boxShadow: selected ? `0 0 12px ${config.color}30` : 'none',
           maxWidth: 140,
           transform: `scale(${scale})`,
           transformOrigin: 'center center',
@@ -93,7 +93,7 @@ function EntityNode({ data, selected }: NodeProps) {
         className="bg-[#1C1C1E] shadow-lg rounded-xl overflow-hidden transition-all duration-150"
         style={{
           border: `2px solid ${selected ? config.color : communityColor}`,
-          boxShadow: selected ? `0 0 20px ${config.color}30` : '0 2px 10px rgba(0,0,0,0.3)',
+          boxShadow: selected ? `0 0 20px ${config.color}30` : 'none',
           minWidth: 180,
           maxWidth: 220,
           transform: `scale(${scale})`,

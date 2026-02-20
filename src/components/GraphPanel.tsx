@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import NexusCanvas from './NexusCanvas';
 import type { Node, Edge } from 'reactflow';
 import type { Community } from '../types';
@@ -20,7 +21,7 @@ interface GraphPanelProps {
   onMinDegreeChange: (v: number) => void;
 }
 
-export default function GraphPanel({
+function GraphPanel({
   nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop,
   onNodeClick, onEdgeClick, communities: _communities, minDegree: _minDegree, onMinDegreeChange: _onMinDegreeChange
 }: GraphPanelProps) {
@@ -43,3 +44,5 @@ export default function GraphPanel({
     </div>
   );
 }
+
+export default memo(GraphPanel);

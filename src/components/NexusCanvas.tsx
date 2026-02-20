@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, memo } from 'react';
 import ReactFlow, {
   addEdge,
   Background,
@@ -38,7 +38,7 @@ interface NexusProps {
   height?: string;
 }
 
-export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, height }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, height }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
 
   const onConnect = useCallback(
@@ -100,6 +100,7 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
         elevateNodesOnSelect={false}
         elevateEdgesOnSelect={false}
+        onlyRenderVisibleElements={true}
       >
         <Background
           color="rgba(84,84,88,0.3)"
@@ -119,3 +120,5 @@ export default function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange
     </div>
   );
 }
+
+export default memo(NexusCanvas);
