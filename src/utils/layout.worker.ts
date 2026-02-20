@@ -23,7 +23,7 @@ self.onmessage = (e: MessageEvent) => {
   }
 
   const maxDegree = Math.max(1, ...nodes.map((n: any) => n.degree));
-  const baseRadius = Math.sqrt(nodes.length) * 40;
+  const baseRadius = Math.sqrt(nodes.length) * 20; // Tightened from 40
   const goldenAngle = Math.PI * (3 - Math.sqrt(5));
   const cx = 0;
   const cy = 0;
@@ -51,9 +51,9 @@ self.onmessage = (e: MessageEvent) => {
   };
 
   const collisionRadius = (d: SimNode) => {
-    if (d.degree >= 50) return 45;
-    if (d.degree >= 5) return 25;
-    return 15;
+    if (d.degree >= 50) return 40;
+    if (d.degree >= 5) return 20;
+    return 12;
   };
 
   const simulation = forceSimulation<SimNode>(simNodes)
@@ -61,18 +61,18 @@ self.onmessage = (e: MessageEvent) => {
       'link',
       forceLink<SimNode, SimulationLinkDatum<SimNode>>(simLinks)
         .id((d) => d.id)
-        .distance(70)
+        .distance(45) // Shortened from 70
         .strength(0.8)
     )
     .force(
       'charge',
       forceManyBody<SimNode>()
-        .strength(-150)
-        .distanceMax(500)
+        .strength(-100) // Reduced repulsion
+        .distanceMax(400)
     )
     .force(
       'center',
-      forceCenter(cx, cy).strength(0.05)
+      forceCenter(cx, cy).strength(0.1)
     )
     .force(
       'collide',
@@ -82,7 +82,7 @@ self.onmessage = (e: MessageEvent) => {
     .force(
       'radial',
       forceRadial<SimNode>(radialTarget, cx, cy)
-        .strength(0.3)
+        .strength(0.5) // Stronger pull to rings
     )
     .stop();
 

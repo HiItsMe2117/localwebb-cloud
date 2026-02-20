@@ -44,11 +44,11 @@ const fullHandles = (
   </>
 );
 
-// Selector to get zoom without re-rendering on every pan
-const zoomSelector = (s: ReactFlowState) => s.transform[2];
+// Selector to only re-render when CROSSING the threshold
+const isZoomedOutSelector = (s: ReactFlowState) => s.transform[2] < 0.6;
 
 function EntityNode({ data, selected }: NodeProps) {
-  const zoom = useStore(zoomSelector);
+  const isZoomedOut = useStore(isZoomedOutSelector);
   const entityType = (data.entityType || 'PERSON').toUpperCase();
   const config = TYPE_CONFIG[entityType] || { color: '#9ca3af', icon: HelpCircle };
   const Icon = config.icon;
@@ -59,18 +59,17 @@ function EntityNode({ data, selected }: NodeProps) {
   const scale = getScale(degree, tier);
 
   // --- LOD: Extreme Performance Mode (Zoomed Out) ---
-  // When zoomed out, render a simple colored dot. No icons, no text, no borders.
-  if (zoom < 0.6) {
+  if (isZoomedOut) {
     return (
       <div
         style={{
-          width: 24,
-          height: 24,
+          width: 16,
+          height: 16,
           borderRadius: '50%',
           backgroundColor: selected ? config.color : communityColor,
-          border: selected ? '4px solid white' : 'none',
-          transform: `scale(${scale * 1.5})`,
-          boxShadow: selected ? `0 0 20px ${config.color}` : 'none',
+          border: selected ? '3px solid white' : 'none',
+          transform: `scale(${scale * 2})`,
+          boxShadow: selected ? `0 0 15px ${config.color}` : 'none',
         }}
       >
         {tier === 'leaf' ? leafHandles : fullHandles}

@@ -40,6 +40,7 @@ interface NexusProps {
 
 function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, height }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
+  const zoom = useStore((s) => s.transform[2]);
 
   const onConnect = useCallback(
     (params: Connection) => onEdgesChange((eds: Edge[]) => addEdge(params, eds)),
@@ -61,6 +62,9 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
   );
 
   const styledEdges = useMemo<Edge[]>(() => {
+    // LOD: Hide edges completely when very zoomed out for ultimate panning speed
+    if (zoom < 0.4) return [];
+    
     const isHeavy = edges.length > 500;
     return edges.map(e => ({
       ...e,
@@ -73,12 +77,12 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
         stroke: e.selected ? '#007AFF' : (e.data?.confidence === 'INFERRED' ? 'rgba(235,235,245,0.3)' : 'rgba(84,84,88,0.65)'),
         strokeWidth: e.selected ? 2.5 : 1.5,
         strokeDasharray: e.data?.confidence === 'INFERRED' ? '4 4' : undefined,
-        pointerEvents: 'none' as const, // Optimization: Edges don't intercept mouse
+        pointerEvents: 'none' as const,
         ...(e.style || {}),
       },
       markerEnd: EDGE_MARKER_END
     }));
-  }, [edges]);
+  }, [edges, zoom]);
 
   const miniMapNodeColor = useCallback((node: Node) => {
     const entityType = (node.data?.entityType || node.data?.type || '').toUpperCase();
