@@ -46,10 +46,10 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
 
-  // Auto-fit whenever nodes are updated (like after a layout)
+  // Auto-fit whenever nodes are updated (like after a layout or filter change)
   useEffect(() => {
     if (nodes.length > 0) {
-      fitView({ padding: 0.2, duration: 800 });
+      fitView({ padding: 0.3, duration: 800 });
     }
   }, [nodes.length, fitView]);
 

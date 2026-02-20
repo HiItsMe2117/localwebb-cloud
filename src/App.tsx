@@ -36,7 +36,7 @@ function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [yearFilter, setYearFilter] = useState(2026);
-  const [minDegree, setMinDegree] = useState(3);
+  const [minDegree, setMinDegree] = useState(1);
   const [isLayouting, setIsLayouting] = useState(false);
 
   // Deferred filters for performance
