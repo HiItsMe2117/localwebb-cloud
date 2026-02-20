@@ -6,6 +6,8 @@ import ReactFlow, {
   Controls,
   MiniMap,
   MarkerType,
+  useStore,
+  type ReactFlowState,
 } from 'reactflow';
 import type { Connection, Edge, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -40,7 +42,7 @@ interface NexusProps {
 
 function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, height }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
-  const zoom = useStore((s) => s.transform[2]);
+  const zoom = useStore((s: ReactFlowState) => s.transform[2]);
 
   const onConnect = useCallback(
     (params: Connection) => onEdgesChange((eds: Edge[]) => addEdge(params, eds)),
