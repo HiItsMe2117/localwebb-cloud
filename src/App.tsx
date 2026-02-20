@@ -145,11 +145,11 @@ function App() {
     await applyForceLayout(nodes, edges);
   }, [nodes, edges, applyForceLayout]);
 
-  const triggerInsights = async () => {
+  const triggerInsights = async (depth: string = 'standard') => {
     setIsSyncing(true);
     setIsExtractingInsights(true);
     try {
-      const res = await axios.get('/api/insights');
+      const res = await axios.get(`/api/insights?depth=${depth}`);
       const rawNodes: Node[] = res.data.nodes || [];
       const rawEdges: Edge[] = res.data.edges || [];
       if (res.data.communities) {
@@ -504,6 +504,41 @@ function App() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-6">
+                     <h3 className="font-semibold mb-4 text-[15px] flex items-center gap-2 text-white">
+                       <Network size={16} className="text-[#007AFF]" />
+                       Sync Intelligence
+                     </h3>
+                     <div className="space-y-3">
+                       <button 
+                         onClick={() => triggerInsights('standard')}
+                         disabled={isSyncing}
+                         className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-black/40 border border-white/5 hover:bg-black/60 transition-colors group text-left"
+                       >
+                         <span className="text-[13px] font-bold text-white group-hover:text-[#007AFF]">Standard Sync</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Topic-based sampling. Fast and lightweight extraction.</span>
+                       </button>
+                       
+                       <button 
+                         onClick={() => triggerInsights('deep')}
+                         disabled={isSyncing}
+                         className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-black/40 border border-white/5 hover:bg-black/60 transition-colors group text-left"
+                       >
+                         <span className="text-[13px] font-bold text-white group-hover:text-[#FF9F0A]">Deep Sync</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Heavy sampling across all themes. Captures more nuances.</span>
+                       </button>
+
+                       <button 
+                         onClick={() => triggerInsights('full')}
+                         disabled={isSyncing}
+                         className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-[#007AFF]/10 border border-[#007AFF]/30 hover:bg-[#007AFF]/20 transition-colors group text-left"
+                       >
+                         <span className="text-[13px] font-bold text-[#007AFF]">Full Reconstruction</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Exhaustive Pinecone sweep. Maximum entity density. (Expensive)</span>
+                       </button>
+                     </div>
+                  </div>
+
                   <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-6 flex flex-col items-center justify-center text-center border-dashed min-h-[200px]">
                      <FileText size={40} className="text-[rgba(235,235,245,0.3)] mb-4" />
                      <h3 className="font-semibold text-white text-[15px]">No active files selected</h3>

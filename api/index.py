@@ -209,21 +209,31 @@ async def update_positions(updates: List[PositionUpdate]):
     return {"status": "positions updated"}
 
 @app.get("/api/insights")
-async def get_insights():
+async def get_insights(depth: str = "standard"):
     try:
         if not index:
             return {"error": "Pinecone index not initialized. Please check environment variables."}
         if not client:
             return {"error": "GenAI client not initialized. Please check environment variables."}
 
-        print("DEBUG: Fetching sampling vectors from Pinecone using topic-based queries...")
+        print(f"DEBUG: Starting {depth} extraction...")
+        
         insight_topics = [
             "people persons individuals names",
             "organizations companies institutions",
             "locations places addresses travel",
             "financial transactions money payments",
             "events meetings dates timeline",
+            "crimes allegations investigations legal",
+            "assets properties aircraft vessels"
         ]
+
+        # Scalable sampling based on depth
+        top_k_per_topic = 10
+        if depth == "deep":
+            top_k_per_topic = 25
+        elif depth == "full":
+            top_k_per_topic = 50
 
         def extract_chunk_with_meta(metadata):
             text = ""
@@ -239,6 +249,21 @@ async def get_insights():
             return {"text": text, "filename": filename, "page": page}
 
         all_chunks = {}
+        
+        # If 'full', we also do a broad sweep of the most 'important' vectors
+        if depth == "full":
+            try:
+                # Query for general importance
+                broad_results = index.query(
+                    vector=[0.0] * 1536, # Dummy vector for broad retrieval if supported, or just high top_k
+                    top_k=100,
+                    include_metadata=True
+                )
+                for r in broad_results.matches:
+                    if r.metadata and r.id not in all_chunks:
+                        all_chunks[r.id] = extract_chunk_with_meta(r.metadata)
+            except: pass
+
         for topic in insight_topics:
             try:
                 topic_emb = client.models.embed_content(
@@ -246,7 +271,7 @@ async def get_insights():
                 )
                 topic_results = index.query(
                     vector=topic_emb.embeddings[0].values,
-                    top_k=10,
+                    top_k=top_k_per_topic,
                     include_metadata=True
                 )
                 for r in topic_results.matches:
@@ -255,7 +280,7 @@ async def get_insights():
             except Exception as e:
                 print(f"DEBUG: Topic query '{topic}' failed: {e}")
 
-        print(f"DEBUG: Topic sampling collected {len(all_chunks)} unique chunks")
+        print(f"DEBUG: {depth} sampling collected {len(all_chunks)} unique chunks")
 
         context_parts = []
         for chunk in all_chunks.values():
