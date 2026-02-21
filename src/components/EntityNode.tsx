@@ -25,7 +25,8 @@ function getTier(degree: number): Tier {
 
 function getScale(degree: number, tier: Tier): number {
   if (tier === 'leaf') return 0.7;
-  return Math.sqrt(degree) * 0.2 + 0.8;
+  // Cap the scale at 1.8x so mega-hubs don't get too big
+  return Math.min(Math.sqrt(degree) * 0.12 + 0.8, 1.8);
 }
 
 const leafHandles = (
@@ -61,7 +62,7 @@ function EntityNode({ data, selected }: NodeProps) {
   // --- LOD: Extreme Performance Mode (Zoomed Out) ---
   if (isZoomedOut) {
     const showLabel = tier === 'hub'; // Show Hub names even when far away
-    const dotSize = tier === 'hub' ? 64 : (tier === 'medium' ? 40 : 24); // Enlarged from 32/24/16
+    const dotSize = tier === 'hub' ? 48 : (tier === 'medium' ? 32 : 20); // Reduced from 64/40/24
     
     return (
       <div
