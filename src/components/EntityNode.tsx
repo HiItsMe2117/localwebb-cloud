@@ -25,8 +25,8 @@ function getTier(degree: number): Tier {
 
 function getScale(degree: number, tier: Tier): number {
   if (tier === 'leaf') return 0.7;
-  // Cap the scale at 1.8x so mega-hubs don't get too big
-  return Math.min(Math.sqrt(degree) * 0.12 + 0.8, 1.8);
+  // Very subtle scaling: cap at 1.3x instead of 1.8x
+  return Math.min(Math.sqrt(degree) * 0.05 + 0.9, 1.3);
 }
 
 const leafHandles = (
@@ -134,8 +134,8 @@ function EntityNode({ data, selected }: NodeProps) {
         style={{
           border: `2px solid ${selected ? config.color : communityColor}`,
           boxShadow: selected ? `0 0 20px ${config.color}30` : 'none',
-          minWidth: 180,
-          maxWidth: 220,
+          minWidth: 140,
+          maxWidth: 180,
           transform: `scale(${scale})`,
           transformOrigin: 'center center',
         }}
@@ -181,8 +181,8 @@ function EntityNode({ data, selected }: NodeProps) {
         boxShadow: selected
           ? `0 0 30px ${config.color}40`
           : `0 0 20px ${communityColor}15, 0 2px 10px rgba(0,0,0,0.3)`,
-        minWidth: 240,
-        maxWidth: 280,
+        minWidth: 200,
+        maxWidth: 240,
         transform: `scale(${scale})`,
         transformOrigin: 'center center',
       }}
@@ -200,13 +200,13 @@ function EntityNode({ data, selected }: NodeProps) {
           </div>
           <div className="flex-1 overflow-hidden">
             <p
-              className="text-[15px] font-bold text-white truncate"
+              className="text-[14px] font-bold text-white truncate"
               title={data.label}
             >
               {data.label}
             </p>
             <span
-              className="text-[10px] font-bold uppercase tracking-wider"
+              className="text-[9px] font-bold uppercase tracking-wider"
               style={{ color: config.color }}
             >
               {entityType}
@@ -217,7 +217,7 @@ function EntityNode({ data, selected }: NodeProps) {
 
       {/* Body */}
       {truncatedDesc && (
-        <div className="px-4 py-2.5 text-xs text-[rgba(235,235,245,0.6)] leading-relaxed">
+        <div className="px-4 py-2 text-[11px] text-[rgba(235,235,245,0.6)] leading-relaxed">
           {truncatedDesc}
         </div>
       )}
