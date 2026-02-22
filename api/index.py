@@ -382,7 +382,12 @@ class FilteredQueryRequest(BaseModel):
 
 @app.get("/api")
 async def api_health():
-    return {"status": "LocalWebb Cloud API is active"}
+    return {
+        "status": "LocalWebb Cloud API is active",
+        "supabase": bool(supabase),
+        "pinecone": bool(index),
+        "genai": bool(client),
+    }
 
 @app.get("/api/graph")
 async def get_graph():
