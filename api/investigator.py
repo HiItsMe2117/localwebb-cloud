@@ -62,11 +62,19 @@ async def run_investigation(
 
     try:
         analysis_prompt = (
-            "You are an investigative intelligence analyst. Analyze this query and extract:\n"
-            '1. "primary_entity": the main person/org/entity being asked about (string)\n'
-            '2. "secondary_entities": other entities mentioned or implied (list of strings)\n'
-            '3. "key_terms": important search terms and phrases for document retrieval (list of strings)\n'
-            '4. "reformulated_queries": 2-3 alternative phrasings to find relevant documents (list of strings)\n\n'
+            "You are an investigative intelligence analyst. Analyze this query and extract structured information.\n\n"
+            "RULES:\n"
+            '- "primary_entity" MUST be a specific named person, organization, or location mentioned in the query. '
+            "Generic words like 'network', 'individuals', 'transactions', 'documents' are NOT entities. "
+            "If the query does not mention a specific named entity, set primary_entity to an empty string.\n"
+            '- "secondary_entities": other specific named entities mentioned or implied (list of strings, empty if none)\n'
+            '- "key_terms": important search terms and phrases for document retrieval (list of strings)\n'
+            '- "reformulated_queries": 2-3 alternative phrasings to find relevant documents (list of strings)\n\n'
+            "EXAMPLES:\n"
+            'Query: "What can you tell me about Jeffrey Epstein?" → primary_entity: "Jeffrey Epstein"\n'
+            'Query: "Who are the key individuals connected to this network?" → primary_entity: "" (no specific named entity)\n'
+            'Query: "What is the connection between Israel and the Clinton Foundation?" → primary_entity: "Israel", secondary_entities: ["Clinton Foundation"]\n'
+            'Query: "What financial transactions appear suspicious?" → primary_entity: "" (no specific named entity)\n\n'
             f"Query: {query}\n\n"
             "Return JSON only."
         )
@@ -76,34 +84,44 @@ async def run_investigation(
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
         analysis = json.loads(analysis_res.text)
-        primary_entity = analysis.get("primary_entity", "")
+        primary_entity = analysis.get("primary_entity", "").strip()
         secondary_entities = analysis.get("secondary_entities", [])
         key_terms = analysis.get("key_terms", [])
         reformulated_queries = analysis.get("reformulated_queries", [])
     except Exception as e:
         print(f"DEBUG: Query analysis failed: {e}")
-        primary_entity = query.strip()
+        primary_entity = ""
         secondary_entities = []
-        key_terms = []
+        key_terms = [query.strip()]
         reformulated_queries = []
+
+    detail_parts = []
+    if primary_entity:
+        detail_parts.append(f"Primary: {primary_entity}")
+    if secondary_entities:
+        detail_parts.append(f"+{len(secondary_entities)} entities")
+    if not detail_parts:
+        detail_parts.append("General query — using semantic search")
 
     yield _sse("step_status", {
         "step": "query_analysis", "label": "Analyzing Query", "status": "done",
-        "detail": f"Primary: {primary_entity}" + (f", +{len(secondary_entities)} entities" if secondary_entities else ""),
+        "detail": ", ".join(detail_parts),
     })
 
     # ---------------------------------------------------------------
     # Phase B: Entity Intel (~0.5s)
     # ---------------------------------------------------------------
-    yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "running"})
+    has_entity = bool(primary_entity)
 
-    try:
-        from api.graph_ops import lookup_entity_intel
-    except ImportError:
-        from graph_ops import lookup_entity_intel
+    if has_entity:
+        yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "running"})
 
-    try:
-        if primary_entity and supabase_client:
+        try:
+            from api.graph_ops import lookup_entity_intel
+        except ImportError:
+            from graph_ops import lookup_entity_intel
+
+        try:
             entity_intel = lookup_entity_intel(supabase_client, primary_entity)
             if entity_intel.get("found"):
                 discovered_entities = [
@@ -113,102 +131,108 @@ async def run_investigation(
                 detail = f"{entity_intel['edge_count']} connections, {len(discovered_entities)} linked entities"
             else:
                 detail = "Not found in knowledge graph"
-        else:
-            detail = "Skipped"
-    except Exception as e:
-        print(f"DEBUG: Entity intel failed: {e}")
-        detail = f"Error: {e}"
+        except Exception as e:
+            print(f"DEBUG: Entity intel failed: {e}")
+            detail = f"Error: {e}"
 
-    yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "done", "detail": detail})
+        yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "done", "detail": detail})
+    else:
+        yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "done", "detail": "Skipped — no named entity"})
 
     # ---------------------------------------------------------------
     # Phase C: Graph Traversal (~0.5s)
     # ---------------------------------------------------------------
-    yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "running"})
+    if entity_intel.get("found"):
+        yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "running"})
 
-    try:
-        from api.graph_ops import bfs_collect_evidence
-    except ImportError:
-        from graph_ops import bfs_collect_evidence
+        try:
+            from api.graph_ops import bfs_collect_evidence
+        except ImportError:
+            from graph_ops import bfs_collect_evidence
 
-    try:
-        if entity_intel.get("found") and supabase_client:
+        try:
             graph_evidence = bfs_collect_evidence(supabase_client, entity_intel["entity_id"], max_hops=2, max_edges=50)
             detail = f"Collected {len(graph_evidence)} edges across 2 hops"
-        else:
-            detail = "No entity to traverse from"
-    except Exception as e:
-        print(f"DEBUG: Graph traversal failed: {e}")
-        graph_evidence = []
-        detail = f"Error: {e}"
+        except Exception as e:
+            print(f"DEBUG: Graph traversal failed: {e}")
+            graph_evidence = []
+            detail = f"Error: {e}"
 
-    yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "done", "detail": detail})
+        yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "done", "detail": detail})
+    else:
+        yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "done", "detail": "Skipped"})
 
     # ---------------------------------------------------------------
-    # Phase D: Multi-Pass Semantic Search (~4-6s)
+    # Phase D: Multi-Pass Semantic Search (~2-4s)
     # ---------------------------------------------------------------
-    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running"})
+    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running", "detail": "Pass 1..."})
 
     pass_count = 0
-    total_found = 0
 
+    # Pass 1: Original query
     try:
-        # Pass 1: Original query
         pass1 = semantic_search_fn(
             query_text=query,
             genai_client=genai_client,
             pinecone_index=pinecone_index,
             rerank_fn=rerank_fn,
-            fetch_k=200,
+            fetch_k=50,
             rerank_top_n=5,
         )
         _add_chunks(pass1)
         pass_count += 1
-        total_found += len(pass1)
+    except Exception as e:
+        print(f"DEBUG: Semantic search pass 1 failed: {e}")
 
-        # Pass 2: Reformulated with discovered context
-        if reformulated_queries:
-            reformulated = reformulated_queries[0]
-        elif discovered_entities:
-            reformulated = f"{query} {' '.join(discovered_entities[:3])}"
-        else:
-            reformulated = None
+    # Heartbeat between passes
+    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running", "detail": f"Pass 1 done ({len(all_context_chunks)} chunks). Pass 2..."})
 
-        if reformulated:
+    # Pass 2: Reformulated with discovered context
+    reformulated = None
+    if reformulated_queries:
+        reformulated = reformulated_queries[0]
+    elif discovered_entities:
+        reformulated = f"{query} {' '.join(discovered_entities[:3])}"
+
+    if reformulated:
+        try:
             pass2 = semantic_search_fn(
                 query_text=reformulated,
                 genai_client=genai_client,
                 pinecone_index=pinecone_index,
                 rerank_fn=rerank_fn,
-                fetch_k=200,
+                fetch_k=50,
                 rerank_top_n=5,
             )
             _add_chunks(pass2)
             pass_count += 1
-            total_found += len(pass2)
+        except Exception as e:
+            print(f"DEBUG: Semantic search pass 2 failed: {e}")
 
-        # Pass 3 (conditional): Focused on most important connected entity
-        top_connected = None
-        if discovered_entities:
-            top_connected = discovered_entities[0]
-        elif secondary_entities:
-            top_connected = secondary_entities[0]
+    # Heartbeat
+    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running", "detail": f"{pass_count} passes ({len(all_context_chunks)} chunks)"})
 
-        if top_connected:
+    # Pass 3 (conditional): Focused on most important connected entity
+    top_connected = None
+    if discovered_entities:
+        top_connected = discovered_entities[0]
+    elif secondary_entities:
+        top_connected = secondary_entities[0]
+
+    if top_connected and primary_entity:
+        try:
             pass3 = semantic_search_fn(
                 query_text=f"{primary_entity} {top_connected}",
                 genai_client=genai_client,
                 pinecone_index=pinecone_index,
                 rerank_fn=rerank_fn,
-                fetch_k=150,
+                fetch_k=40,
                 rerank_top_n=5,
             )
             _add_chunks(pass3)
             pass_count += 1
-            total_found += len(pass3)
-
-    except Exception as e:
-        print(f"DEBUG: Semantic search failed: {e}")
+        except Exception as e:
+            print(f"DEBUG: Semantic search pass 3 failed: {e}")
 
     yield _sse("step_status", {
         "step": "semantic_search", "label": "Research", "status": "done",
@@ -222,10 +246,15 @@ async def run_investigation(
 
     keyword_results = []
     try:
-        # Pinecone metadata filter search for key entity names
-        search_names = [primary_entity] + secondary_entities[:2] + discovered_entities[:2]
-        search_names = [n for n in search_names if n and len(n) > 1]
+        # Build search names from discovered entities
+        search_names = []
+        if primary_entity:
+            search_names.append(primary_entity)
+        search_names.extend(secondary_entities[:2])
+        search_names.extend(discovered_entities[:2])
+        search_names = [n for n in search_names if n and len(n) > 2]
 
+        # Pinecone metadata filter search for key entity names
         for name in search_names[:3]:
             try:
                 pc_filter = {"people": {"$in": [name]}}
@@ -234,7 +263,7 @@ async def run_investigation(
                     genai_client=genai_client,
                     pinecone_index=pinecone_index,
                     rerank_fn=None,
-                    fetch_k=20,
+                    fetch_k=10,
                     rerank_top_n=5,
                     pinecone_filter=pc_filter,
                 )
@@ -304,8 +333,8 @@ async def run_investigation(
     full_context = "\n\n---\n\n".join(context_parts)
 
     if not full_context.strip():
-        yield _sse("text", {"text": "No relevant information was found in the database for this query."})
-        yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "done"})
+        yield _sse("text", {"text": "No relevant information was found in the database for this query. Try uploading documents first, or rephrase your query with more specific terms."})
+        yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "done", "detail": "No context available"})
         yield _sse("done", {})
         return
 
