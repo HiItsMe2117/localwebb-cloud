@@ -20,3 +20,8 @@ tmp_extract_4/
 .vercel
 .env*.local
 .env.prod
+scripts/*_progress.json
+scripts/audit_results.json
+scripts/pipeline_status.json
+supabase/.temp/
+*.png

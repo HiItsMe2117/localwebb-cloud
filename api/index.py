@@ -127,19 +127,32 @@ class SupabaseStore:
             except Exception as e:
                 print(f"Error initializing GCS blob for SupabaseStore: {e}")
 
+    def _fetch_all(self, table_name):
+        """Fetch all rows from a Supabase table, paginating past the 1000-row default limit."""
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            res = supabase.table(table_name).select("*").range(offset, offset + page_size - 1).execute()
+            all_rows.extend(res.data)
+            if len(res.data) < page_size:
+                break
+            offset += page_size
+        return all_rows
+
     def load(self):
         """Load full graph from Supabase for ReactFlow compatibility."""
         if not supabase:
             print("ERROR: Supabase client not initialized. Cannot load graph.")
             return {"nodes": [], "edges": []}
-        
+
         try:
-            nodes_res = supabase.table("nodes").select("*").execute()
-            edges_res = supabase.table("edges").select("*").execute()
+            nodes_data = self._fetch_all("nodes")
+            edges_data = self._fetch_all("edges")
             
             # Format nodes for ReactFlow
             nodes = []
-            for n in nodes_res.data:
+            for n in nodes_data:
                 # Ensure 'data' and 'position' are always present
                 node_data = n.get("metadata", {})
                 position = n.get("position", {"x": 0, "y": 0}) 
@@ -160,7 +173,7 @@ class SupabaseStore:
             
             # Format edges for ReactFlow
             edges = []
-            for e in edges_res.data:
+            for e in edges_data:
                 edges.append({
                     "id": e["id"],
                     "source": e["source"],
@@ -548,9 +561,13 @@ async def get_insights(depth: str = "standard", focus: Optional[str] = None, str
                 },
             })
 
+        seen_edge_ids = set()
         new_edges = []
         for triple in output.triples:
             edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
+            if edge_id in seen_edge_ids:
+                continue
+            seen_edge_ids.add(edge_id)
             new_edges.append({
                 "id": edge_id,
                 "source": triple.subject_id,

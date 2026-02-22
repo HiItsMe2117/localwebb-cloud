@@ -19,11 +19,13 @@ interface GraphPanelProps {
   onLayout: () => void;
   minDegree: number;
   onMinDegreeChange: (v: number) => void;
+  showEdgeLabels: boolean;
 }
 
 function GraphPanel({
   nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop,
-  onNodeClick, onEdgeClick, communities: _communities, minDegree: _minDegree, onMinDegreeChange: _onMinDegreeChange
+  onNodeClick, onEdgeClick, communities: _communities, minDegree: _minDegree, onMinDegreeChange: _onMinDegreeChange,
+  showEdgeLabels
 }: GraphPanelProps) {
 
   return (
@@ -39,6 +41,7 @@ function GraphPanel({
           onNodeClick={onNodeClick}
           onEdgeClick={onEdgeClick}
           height="100%"
+          showEdgeLabels={showEdgeLabels}
         />
       </div>
     </div>

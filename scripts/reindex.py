@@ -28,6 +28,7 @@ import time
 import tempfile
 import argparse
 from pathlib import Path
+from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
 # Config
@@ -353,11 +354,42 @@ def main():
     parser.add_argument("--no-clear", action="store_true", help="Don't clear existing vectors first")
     parser.add_argument("--dataset", type=str, help="Only process files from specific data set(s), comma-separated (e.g., 9 or 9,11)")
     parser.add_argument("--skip-ocr-fallback", action="store_true", help="Skip Gemini vision OCR for files where PyPDF fails (faster)")
+    parser.add_argument("--retry-failed", action="store_true", help="Only process previously-failed files (implies --resume)")
+    parser.add_argument("--clean-progress", action="store_true", help="Deduplicate failed list, remove completed from failed, then exit")
     args = parser.parse_args()
+
+    # --retry-failed implies --resume
+    if args.retry_failed:
+        args.resume = True
 
     dataset_filter = None
     if args.dataset:
         dataset_filter = set(d.strip() for d in args.dataset.split(","))
+
+    # --clean-progress: deduplicate and clean the progress file, then exit
+    if args.clean_progress:
+        progress = load_progress()
+        orig_failed = len(progress["failed"])
+        orig_completed = len(progress["completed"])
+
+        # Deduplicate both lists
+        progress["completed"] = list(dict.fromkeys(progress["completed"]))
+        progress["failed"] = list(dict.fromkeys(progress["failed"]))
+        deduped_failed = len(progress["failed"])
+        deduped_completed = len(progress["completed"])
+
+        # Remove any files from failed that are already in completed
+        completed_set = set(progress["completed"])
+        progress["failed"] = [f for f in progress["failed"] if f not in completed_set]
+        cleaned_failed = len(progress["failed"])
+
+        save_progress(progress)
+        print("Progress file cleaned:")
+        print(f"  Completed: {orig_completed} -> {deduped_completed} (removed {orig_completed - deduped_completed} dupes)")
+        print(f"  Failed:    {orig_failed} -> {deduped_failed} (removed {orig_failed - deduped_failed} dupes)")
+        print(f"             {deduped_failed} -> {cleaned_failed} (removed {deduped_failed - cleaned_failed} already-completed)")
+        print(f"\nSaved to: {PROGRESS_FILE}")
+        return
 
     print("=" * 60)
     print("LocalWebb Cloud — Bulk Re-Index")
@@ -422,30 +454,32 @@ def main():
         except Exception as e:
             print(f"Warning: Could not clear vectors: {e}")
 
-    # Process each PDF
+    # Pre-filter blobs: skip already-completed, optionally limit to failed-only
+    completed_set = set(progress["completed"])
+    failed_set = set(progress["failed"])
+
+    if args.retry_failed:
+        to_process = [b for b in blobs if b.name.split("/")[-1] in failed_set and b.name.split("/")[-1] not in completed_set]
+        print(f"Retry-failed mode: {len(to_process)} previously-failed files to retry")
+    else:
+        to_process = [b for b in blobs if b.name.split("/")[-1] not in completed_set]
+        skipped = len(blobs) - len(to_process)
+        if skipped:
+            print(f"Skipping {skipped} already-completed files")
+
     total = len(blobs)
     processing_start = time.time()
     files_processed_this_run = 0
     per_dataset_stats = {}  # dataset -> {"completed": 0, "failed": 0, "vectors": 0}
 
-    for idx, blob in enumerate(blobs):
+    # Process each PDF with tqdm progress bar
+    pbar = tqdm(to_process, desc="Vectorizing", unit="file", dynamic_ncols=True)
+    for blob in pbar:
         filename = blob.name.split("/")[-1]
-
-        if filename in progress["completed"]:
-            print(f"\n[{idx+1}/{total}] SKIP (already done): {filename}")
-            continue
-
-        # Time estimate
-        eta_str = ""
-        if files_processed_this_run > 0:
-            elapsed = time.time() - processing_start
-            avg_per_file = elapsed / files_processed_this_run
-            remaining_count = sum(1 for b in blobs[idx:] if b.name.split("/")[-1] not in progress["completed"])
-            eta = avg_per_file * remaining_count
-            eta_str = f" | ETA: {format_time(eta)}"
+        pbar.set_postfix_str(filename[:40], refresh=True)
 
         print(f"\n{'='*60}")
-        print(f"[{idx+1}/{total}] Processing: {filename} ({blob.size/(1024*1024):.1f} MB){eta_str}")
+        print(f"Processing: {filename} ({blob.size/(1024*1024):.1f} MB)")
         print(f"{'='*60}")
 
         try:
@@ -478,8 +512,10 @@ def main():
                 print(f"  Using standard extraction ({total_standard_chars} chars)")
             elif args.skip_ocr_fallback:
                 print(f"  Standard OCR insufficient, skipping (--skip-ocr-fallback)")
-                progress["failed"].append(filename)
+                if filename not in progress["failed"]:
+                    progress["failed"].append(filename)
                 save_progress(progress)
+                pbar.set_postfix_str(f"{filename[:30]} SKIP", refresh=True)
                 continue
             else:
                 print(f"  Using Gemini vision OCR...")
@@ -490,8 +526,10 @@ def main():
             total_text = sum(len(t) for _, t in page_texts)
             if not page_texts or total_text < 50:
                 print(f"  WARNING: No meaningful text extracted, skipping")
-                progress["failed"].append(filename)
+                if filename not in progress["failed"]:
+                    progress["failed"].append(filename)
                 save_progress(progress)
+                pbar.set_postfix_str(f"{filename[:30]} FAIL", refresh=True)
                 continue
 
             # Chunk the text with page tracking
@@ -506,8 +544,12 @@ def main():
 
             progress["completed"].append(filename)
             progress["vectors_upserted"] += upserted
+            # Remove from failed list if previously failed
+            if filename in progress["failed"]:
+                progress["failed"].remove(filename)
             save_progress(progress)
             files_processed_this_run += 1
+            pbar.set_postfix_str(f"{filename[:30]} OK", refresh=True)
 
             # Track per-dataset stats (use full blob path for classification)
             ds = classify_dataset(blob.name)
@@ -518,9 +560,11 @@ def main():
 
         except Exception as e:
             print(f"  ERROR: {e}")
-            progress["failed"].append(filename)
+            if filename not in progress["failed"]:
+                progress["failed"].append(filename)
             save_progress(progress)
             files_processed_this_run += 1
+            pbar.set_postfix_str(f"{filename[:30]} ERR", refresh=True)
 
             ds = classify_dataset(blob.name)
             if ds not in per_dataset_stats:
@@ -529,6 +573,8 @@ def main():
 
             # Wait a bit after errors (might be rate limiting)
             time.sleep(10)
+
+    pbar.close()
 
     # Summary
     total_elapsed = time.time() - processing_start

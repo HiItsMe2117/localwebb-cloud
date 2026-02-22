@@ -13,9 +13,12 @@ import {
   Settings as SettingsIcon,
   FileText,
   Loader2,
-  HardDrive
+  HardDrive,
+  Plus,
+  Minus,
+  Type
 } from 'lucide-react';
-import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
+import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
 import axios from 'axios';
 import { getLayoutedElements, computeDegreeMap } from './utils/layout';
@@ -23,7 +26,7 @@ import type { ChatMessage, Community } from './types';
 
 type View = 'chat' | 'graph' | 'docs' | 'data';
 
-function App() {
+function AppContent() {
   const [activeView, setActiveView] = useState<View>('chat');
 
   // Chat state
@@ -37,9 +40,14 @@ function App() {
   const [communities, setCommunities] = useState<Community[]>([]);
   const [yearFilter, setYearFilter] = useState(2026);
   const [minDegree, setMinDegree] = useState(1);
+  const [showEdgeLabels, setShowEdgeLabels] = useState(true);
   const [isLayouting, setIsLayouting] = useState(false);
   const [syncProgress, setSyncProgress] = useState(0);
   const [syncStatus, setSyncStatus] = useState('');
+  const [focusTarget, setFocusTarget] = useState('');
+  const [strictMode, setStrictMode] = useState(false);
+
+  const { setCenter } = useReactFlow();
 
   // Deferred filters for performance
   const deferredYearFilter = useDeferredValue(yearFilter);
@@ -58,6 +66,7 @@ function App() {
   // Sync state
   const [isSyncing, setIsSyncing] = useState(false);
   const [isExtractingInsights, setIsExtractingInsights] = useState(false);
+  const hasAttemptedInitialLoad = useRef(false);
   const hasAutoTriggered = useRef(false);
 
   // --- Helpers ---
@@ -126,6 +135,8 @@ function App() {
       }
     } catch (err: any) {
       console.error("Failed to load graph:", err);
+    } finally {
+      hasAttemptedInitialLoad.current = true;
     }
   };
 
@@ -147,22 +158,30 @@ function App() {
     await applyForceLayout(nodes, edges);
   }, [nodes, edges, applyForceLayout]);
 
-  const triggerInsights = async (depth: string = 'standard') => {
+  const triggerInsights = async (depth: string = 'standard', focus?: string) => {
     setIsSyncing(true);
     setIsExtractingInsights(true);
     setSyncProgress(5);
-    setSyncStatus('Connecting to Pinecone...');
+    setSyncStatus(focus ? `Targeting: ${focus}...` : 'Connecting to Pinecone...');
 
     const interval = setInterval(() => {
       setSyncProgress(prev => (prev < 90 ? prev + Math.random() * 2 : prev));
     }, 1500);
 
     try {
-      if (depth === 'standard') setSyncStatus('Sampling core investigative topics...');
-      if (depth === 'deep') setSyncStatus('Performing deep theme sampling...');
-      if (depth === 'full') setSyncStatus('Initiating exhaustive reconstruction sweep...');
+      if (focus) {
+        setSyncStatus(`Extracting deep connections for "${focus}"...`);
+      } else {
+        if (depth === 'standard') setSyncStatus('Sampling core investigative topics...');
+        if (depth === 'deep') setSyncStatus('Performing deep theme sampling...');
+        if (depth === 'full') setSyncStatus('Initiating exhaustive reconstruction sweep...');
+      }
 
-      const res = await axios.get(`/api/insights?depth=${depth}`);
+      let url = `/api/insights?depth=${depth}`;
+      if (focus) url += `&focus=${encodeURIComponent(focus)}`;
+      if (strictMode) url += `&strict=true`;
+
+      const res = await axios.get(url);
       
       setSyncStatus('Gemini analysis complete. Finalizing graph store...');
       setSyncProgress(95);
@@ -188,13 +207,13 @@ function App() {
     }
   };
 
-  // Auto-trigger insights when Graph tab is opened and graph is empty
+  // Auto-trigger insights ONLY if graph is empty after a successful initial load attempt
   useEffect(() => {
-    if (activeView === 'graph' && nodes.length === 0 && !hasAutoTriggered.current && !isSyncing) {
+    if (activeView === 'graph' && hasAttemptedInitialLoad.current && nodes.length === 0 && !hasAutoTriggered.current && !isSyncing) {
       hasAutoTriggered.current = true;
       triggerInsights();
     }
-  }, [activeView, nodes.length]);
+  }, [activeView, nodes.length, isSyncing]);
 
   // --- Filtering pipeline ---
   // 1. Compute degreeMap from ALL edges (stable hub status regardless of filters)
@@ -265,6 +284,13 @@ function App() {
     setSelectedEdge(null);
     setSelectedNode(node);
   }, []);
+
+  const handleEvidenceNodeClick = useCallback((node: Node) => {
+    setSelectedNode(node);
+    setSelectedEdge(null);
+    // Center the map on this node
+    setCenter(node.position.x, node.position.y, { zoom: 1.2, duration: 800 });
+  }, [setCenter]);
 
   const handleEdgeClick = useCallback((edge: Edge) => {
     setSelectedNode(null);
@@ -462,16 +488,35 @@ function App() {
                     className="w-20 h-1 bg-[#3A3A3C] rounded-lg appearance-none cursor-pointer accent-[#007AFF]"
                   />
                 </div>
-                <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
-                  <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
+                <div className="flex items-center gap-1 bg-[#1C1C1E] px-2 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
+                  <button
+                    onClick={() => setMinDegree(Math.max(0, minDegree - 1))}
+                    className="p-1 hover:bg-[#2C2C2E] rounded-full transition-colors text-[rgba(235,235,245,0.6)]"
+                    title="Decrease connections threshold"
+                  >
+                    <Minus size={14} />
+                  </button>
+                  <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)] min-w-[40px] text-center">
                     {minDegree === 0 ? 'All' : `${minDegree}+`}
                   </span>
-                  <input
-                    type="range" min="0" max="20" value={minDegree}
-                    onChange={(e) => setMinDegree(parseInt(e.target.value))}
-                    className="w-20 h-1 bg-[#3A3A3C] rounded-lg appearance-none cursor-pointer accent-[#007AFF]"
-                  />
+                  <button
+                    onClick={() => setMinDegree(minDegree + 1)}
+                    className="p-1 hover:bg-[#2C2C2E] rounded-full transition-colors text-[rgba(235,235,245,0.6)]"
+                    title="Increase connections threshold"
+                  >
+                    <Plus size={14} />
+                  </button>
                 </div>
+                <button
+                  onClick={() => setShowEdgeLabels(!showEdgeLabels)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border border-[rgba(84,84,88,0.65)] ${
+                    showEdgeLabels ? 'bg-[#007AFF] text-white border-[#007AFF]' : 'bg-[#1C1C1E] text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E]'
+                  }`}
+                  title={showEdgeLabels ? "Hide Relationship Labels" : "Show Relationship Labels"}
+                >
+                  <Type size={14} />
+                  {showEdgeLabels ? 'Labels On' : 'Labels Off'}
+                </button>
                 <button
                   onClick={onLayout}
                   disabled={isLayouting}
@@ -497,25 +542,24 @@ function App() {
                 </div>
               )}
 
-              <ReactFlowProvider>
-                <GraphPanel
-                  open={true}
-                  onClose={() => {}}
-                  nodes={filteredNodes}
-                  edges={filteredEdges}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onNodeDragStop={onNodeDragStop}
-                  onNodeClick={handleNodeClick}
-                  onEdgeClick={handleEdgeClick}
-                  yearFilter={yearFilter}
-                  onYearFilterChange={setYearFilter}
-                  onLayout={onLayout}
-                  communities={communities}
-                  minDegree={minDegree}
-                  onMinDegreeChange={setMinDegree}
-                />
-              </ReactFlowProvider>
+              <GraphPanel
+                open={true}
+                onClose={() => {}}
+                nodes={filteredNodes}
+                edges={filteredEdges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onNodeDragStop={onNodeDragStop}
+                onNodeClick={handleNodeClick}
+                onEdgeClick={handleEdgeClick}
+                yearFilter={yearFilter}
+                onYearFilterChange={setYearFilter}
+                onLayout={onLayout}
+                communities={communities}
+                minDegree={minDegree}
+                onMinDegreeChange={setMinDegree}
+                showEdgeLabels={showEdgeLabels}
+              />
             </div>
           </div>
         )}
@@ -571,6 +615,40 @@ function App() {
                          <span className="text-[13px] font-bold text-[#007AFF]">Full Reconstruction</span>
                          <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Exhaustive Pinecone sweep. Maximum entity density. (Expensive)</span>
                        </button>
+
+                       <div className="pt-2 mt-2 border-t border-white/5">
+                          <label className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2 block">
+                            Targeted Extraction
+                          </label>
+                          <div className="flex gap-2 mb-2">
+                            <input 
+                              type="text" 
+                              value={focusTarget}
+                              onChange={(e) => setFocusTarget(e.target.value)}
+                              placeholder="e.g. Israel"
+                              className="flex-1 bg-black/40 border border-[rgba(84,84,88,0.65)] rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-white/20"
+                            />
+                            <button
+                              onClick={() => triggerInsights('deep', focusTarget)}
+                              disabled={!focusTarget.trim() || isSyncing}
+                              className="bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium text-[13px] transition-colors shadow-[0_0_10px_rgba(0,122,255,0.3)]"
+                            >
+                              Sync
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2 px-1">
+                            <input 
+                              type="checkbox" 
+                              id="strict-mode"
+                              checked={strictMode}
+                              onChange={(e) => setStrictMode(e.target.checked)}
+                              className="w-3 h-3 rounded bg-black border-[rgba(84,84,88,0.65)] text-[#007AFF] focus:ring-0"
+                            />
+                            <label htmlFor="strict-mode" className="text-[11px] text-[rgba(235,235,245,0.3)] font-medium cursor-pointer hover:text-[rgba(235,235,245,0.6)] transition-colors">
+                              Deep Clean (High-precision re-OCR for garbled text)
+                            </label>
+                          </div>
+                       </div>
                      </div>
                   </div>
 
@@ -617,6 +695,7 @@ function App() {
           allEdges={edges}
           allNodes={nodes}
           onClose={closePanel}
+          onNodeClick={handleEvidenceNodeClick}
         />
       </main>
 
@@ -644,4 +723,10 @@ function App() {
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <ReactFlowProvider>
+      <AppContent />
+    </ReactFlowProvider>
+  );
+}

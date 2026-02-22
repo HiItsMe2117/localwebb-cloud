@@ -7,9 +7,10 @@ interface EvidencePanelProps {
   allEdges: Edge[];
   allNodes: Node[];
   onClose: () => void;
+  onNodeClick: (node: Node) => void;
 }
 
-export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, allNodes, onClose }: EvidencePanelProps) {
+export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, allNodes, onClose, onNodeClick }: EvidencePanelProps) {
   const isOpen = !!selectedNode || !!selectedEdge;
   const nodeMap = Object.fromEntries(allNodes.map(n => [n.id, n]));
 
@@ -123,15 +124,27 @@ export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, al
                   const isOutgoing = edge.source === selectedNode.id;
 
                   return (
-                    <div key={edge.id} className="p-3 bg-[#2C2C2E] rounded-xl border border-[rgba(84,84,88,0.65)] hover:border-[rgba(84,84,88,1)] transition-colors">
-                      <div className="flex items-center gap-2 text-[13px] text-white mb-1">
-                        <span className={isOutgoing ? 'text-[#FF453A]' : 'text-[#30D158]'}>{isOutgoing ? '\u2192' : '\u2190'}</span>
-                        <span className="font-medium">{otherNode?.data?.label || otherId}</span>
+                    <button
+                      key={edge.id}
+                      onClick={() => otherNode && onNodeClick(otherNode)}
+                      className="w-full text-left p-3 bg-[#2C2C2E] rounded-xl border border-[rgba(84,84,88,0.65)] hover:bg-[#3A3A3C] hover:border-[#007AFF]/40 transition-all group"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-[13px] text-white">
+                          <span className={isOutgoing ? 'text-[#FF453A]' : 'text-[#30D158]'}>{isOutgoing ? '\u2192' : '\u2190'}</span>
+                          <span className="font-medium group-hover:text-[#007AFF] transition-colors">{otherNode?.data?.label || otherId}</span>
+                        </div>
+                        <ChevronRight size={14} className="text-[rgba(235,235,245,0.2)] group-hover:text-[#007AFF] transition-colors" />
                       </div>
-                      <span className="text-[11px] font-semibold text-[#007AFF] uppercase tracking-wider ml-5">
-                        {d.predicate || edge.label || 'related'}
-                      </span>
-                    </div>
+                      <div className="flex items-center gap-2 mt-1 ml-5">
+                        <span className="text-[11px] font-semibold text-[#007AFF] uppercase tracking-wider">
+                          {d.predicate || edge.label || 'related'}
+                        </span>
+                        {d.confidence === 'INFERRED' && (
+                          <span className="text-[10px] text-[#FF9F0A] font-bold tracking-tighter uppercase px-1.5 py-0.5 bg-[#FF9F0A]/10 rounded border border-[#FF9F0A]/20">Inferred</span>
+                        )}
+                      </div>
+                    </button>
                   );
                 })}
               </div>

@@ -24,9 +24,9 @@ function getTier(degree: number): Tier {
 }
 
 function getScale(degree: number, tier: Tier): number {
-  if (tier === 'leaf') return 0.7;
-  // Very subtle scaling: cap at 1.3x instead of 1.8x
-  return Math.min(Math.sqrt(degree) * 0.05 + 0.9, 1.3);
+  if (tier === 'leaf') return 0.6;
+  // Even more subtle scaling: cap at 1.1x instead of 1.3x
+  return Math.min(Math.sqrt(degree) * 0.03 + 0.8, 1.1);
 }
 
 const leafHandles = (
@@ -132,32 +132,32 @@ function EntityNode({ data, selected }: NodeProps) {
       <div
         className="bg-[#1C1C1E] shadow-lg rounded-xl overflow-hidden transition-all duration-150"
         style={{
-          border: `2px solid ${selected ? config.color : communityColor}`,
-          boxShadow: selected ? `0 0 20px ${config.color}30` : 'none',
-          minWidth: 140,
-          maxWidth: 180,
+          border: `1.5px solid ${selected ? config.color : communityColor}`,
+          boxShadow: selected ? `0 0 15px ${config.color}30` : 'none',
+          minWidth: 120,
+          maxWidth: 160,
           transform: `scale(${scale})`,
           transformOrigin: 'center center',
         }}
       >
         {fullHandles}
-        <div className="p-3" style={{ borderBottom: 'none' }}>
-          <div className="flex items-center gap-3">
+        <div className="p-2.5">
+          <div className="flex items-center gap-2.5">
             <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
               style={{ backgroundColor: `${config.color}20` }}
             >
-              <Icon size={16} style={{ color: config.color }} />
+              <Icon size={14} style={{ color: config.color }} />
             </div>
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 overflow-hidden text-left">
               <p
-                className="text-sm font-semibold text-white truncate"
+                className="text-xs font-bold text-white truncate leading-tight"
                 title={data.label}
               >
                 {data.label}
               </p>
               <span
-                className="text-[10px] font-bold uppercase tracking-wider"
+                className="text-[9px] font-bold uppercase tracking-wider"
                 style={{ color: config.color }}
               >
                 {entityType}
@@ -169,38 +169,35 @@ function EntityNode({ data, selected }: NodeProps) {
     );
   }
 
-  // --- Hub: full card + description + connections badge + glow ---
-  const description = data.description || '';
-  const truncatedDesc = description.length > 70 ? description.slice(0, 67) + '...' : description;
-
+  // --- Hub: more prominent card + glow, still compact ---
   return (
     <div
       className="bg-[#1C1C1E] shadow-lg rounded-xl overflow-hidden transition-all duration-150"
       style={{
         border: `2px solid ${selected ? config.color : communityColor}`,
         boxShadow: selected
-          ? `0 0 30px ${config.color}40`
-          : `0 0 20px ${communityColor}15, 0 2px 10px rgba(0,0,0,0.3)`,
-        minWidth: 200,
-        maxWidth: 240,
+          ? `0 0 25px ${config.color}40`
+          : `0 0 15px ${communityColor}15, 0 2px 8px rgba(0,0,0,0.3)`,
+        minWidth: 160,
+        maxWidth: 200,
         transform: `scale(${scale})`,
         transformOrigin: 'center center',
       }}
     >
       {fullHandles}
 
-      {/* Header */}
-      <div className="p-3 border-b border-[rgba(84,84,88,0.65)]" style={{ borderBottomColor: `${communityColor}20` }}>
+      {/* Header-only Hub card for compactness */}
+      <div className="p-3">
         <div className="flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
             style={{ backgroundColor: `${config.color}20` }}
           >
-            <Icon size={18} style={{ color: config.color }} />
+            <Icon size={16} style={{ color: config.color }} />
           </div>
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden text-left">
             <p
-              className="text-[14px] font-bold text-white truncate"
+              className="text-[14px] font-bold text-white truncate leading-tight"
               title={data.label}
             >
               {data.label}
@@ -213,23 +210,6 @@ function EntityNode({ data, selected }: NodeProps) {
             </span>
           </div>
         </div>
-      </div>
-
-      {/* Body */}
-      {truncatedDesc && (
-        <div className="px-4 py-2 text-[11px] text-[rgba(235,235,245,0.6)] leading-relaxed">
-          {truncatedDesc}
-        </div>
-      )}
-
-      {/* Connections badge */}
-      <div className="px-4 pb-3 pt-1">
-        <span
-          className="inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full"
-          style={{ backgroundColor: `${config.color}15`, color: config.color }}
-        >
-          {degree} connections
-        </span>
       </div>
     </div>
   );

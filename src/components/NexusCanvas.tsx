@@ -39,9 +39,10 @@ interface NexusProps {
   onNodeClick?: (node: Node) => void;
   onEdgeClick?: (edge: Edge) => void;
   height?: string;
+  showEdgeLabels?: boolean;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, height }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, height, showEdgeLabels = true }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
@@ -79,7 +80,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
     const isHeavy = edges.length > 500;
     return edges.map(e => ({
       ...e,
-      label: isHeavy ? undefined : e.label,
+      label: (isHeavy || !showEdgeLabels) ? undefined : e.label,
       labelStyle: EDGE_LABEL_STYLE,
       labelBgStyle: EDGE_LABEL_BG_STYLE,
       labelBgPadding: EDGE_LABEL_BG_PADDING,
@@ -93,7 +94,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
       },
       markerEnd: EDGE_MARKER_END
     }));
-  }, [edges, zoom]);
+  }, [edges, zoom, showEdgeLabels]);
 
   const miniMapNodeColor = useCallback((node: Node) => {
     const entityType = (node.data?.entityType || node.data?.type || '').toUpperCase();
