@@ -16,6 +16,7 @@ from google import genai
 from google.genai import types
 from google.cloud import storage
 from pypdf import PdfReader
+from supabase import create_client, Client
 
 load_dotenv()
 
@@ -42,6 +43,8 @@ GCS_BUCKET = os.getenv("GCS_BUCKET_NAME", "").strip()
 PINECONE_API_KEY = (os.getenv("PINECONE_API_KEY") or os.getenv("PINCONE_API_KEY") or "").strip()
 PINECONE_INDEX_NAME = (os.getenv("PINECONE_INDEX") or os.getenv("pinecone_index") or "").strip()
 GOOGLE_API_KEY = (os.getenv("GOOGLE_API_KEY") or "").strip()
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip() # Added Supabase URL
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip() # Added Supabase Key
 
 # --- GCP Credentials Handling ---
 gcp_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
@@ -102,55 +105,225 @@ def get_genai_client():
 
 client = get_genai_client()
 
-class GraphStore:
+def get_supabase_client():
+    try:
+        if SUPABASE_URL and SUPABASE_KEY:
+            return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print(f"Error initializing Supabase client: {e}")
+    return None
+
+supabase: Client = get_supabase_client()
+
+
+# New SupabaseStore class
+class SupabaseStore:
     def __init__(self):
-        self.blob = None
+        # Keep a reference to the GCS blob for migration/fallback
+        self.gcs_blob = None
         if bucket:
             try:
-                self.blob = bucket.blob("graph_store.json")
-                if not self.blob.exists():
-                    self.save({"nodes": [], "edges": []})
+                self.gcs_blob = bucket.blob("graph_store.json")
             except Exception as e:
-                print(f"Error initializing GraphStore blob: {e}")
+                print(f"Error initializing GCS blob for SupabaseStore: {e}")
 
     def load(self):
-        if not self.blob:
+        """Load full graph from Supabase for ReactFlow compatibility."""
+        if not supabase:
+            print("ERROR: Supabase client not initialized. Cannot load graph.")
             return {"nodes": [], "edges": []}
+        
         try:
-            if self.blob.exists():
-                return json.loads(self.blob.download_as_text())
+            nodes_res = supabase.table("nodes").select("*").execute()
+            edges_res = supabase.table("edges").select("*").execute()
+            
+            # Format nodes for ReactFlow
+            nodes = []
+            for n in nodes_res.data:
+                # Ensure 'data' and 'position' are always present
+                node_data = n.get("metadata", {})
+                position = n.get("position", {"x": 0, "y": 0}) 
+                nodes.append({
+                    "id": n["id"],
+                    "type": "entityNode",
+                    "data": {
+                        "label": n.get("label", n["id"]),
+                        "entityType": n.get("type", "UNKNOWN"),
+                        "description": n.get("description", ""),
+                        "aliases": n.get("aliases", []),
+                        "degree": node_data.get("degree", 0),
+                        "communityId": node_data.get("communityId"),
+                        "communityColor": node_data.get("communityColor"),
+                    },
+                    "position": position
+                })
+            
+            # Format edges for ReactFlow
+            edges = []
+            for e in edges_res.data:
+                edges.append({
+                    "id": e["id"],
+                    "source": e["source"],
+                    "target": e["target"],
+                    "label": e.get("label", e["predicate"]),
+                    "animated": e.get("confidence") == "INFERRED",
+                    "style": {"strokeDasharray": "5 5"} if e.get("confidence") == "INFERRED" else {},
+                    "data": {
+                        "predicate": e["predicate"],
+                        "evidence_text": e.get("evidence_text", ""),
+                        "source_filename": e.get("source_filename", ""),
+                        "source_page": e.get("source_page", 0),
+                        "confidence": e.get("confidence", "STATED"),
+                        "date_mentioned": e.get("date_mentioned"),
+                    }
+                })
+            
+            return {"nodes": nodes, "edges": edges}
         except Exception as e:
-            print(f"Error loading graph: {e}")
-        return {"nodes": [], "edges": []}
+            print(f"CRITICAL: Error loading graph from Supabase: {e}")
+            return {"nodes": [], "edges": []}
 
     def save(self, data):
-        if not self.blob:
-            return
-        try:
-            self.blob.upload_from_string(json.dumps(data, indent=2))
-        except Exception as e:
-            print(f"Error saving graph: {e}")
+        """This method is now primarily for GCS backup/migration if needed. 
+        Supabase updates happen in add_elements and update_node_position."""
+        if self.gcs_blob:
+            try:
+                self.gcs_blob.upload_from_string(json.dumps(data, indent=2))
+            except Exception as e:
+                print(f"Error saving graph to GCS backup: {e}")
 
     def update_node_position(self, node_id, x, y):
-        data = self.load()
-        for node in data["nodes"]:
-            if node["id"] == node_id:
-                node["position"] = {"x": x, "y": y}
-                break
-        self.save(data)
+        if not supabase: return
+        try:
+            # Update only the position field for the given node
+            supabase.table("nodes").update({"position": {"x": x, "y": y}}).eq("id", node_id).execute()
+        except Exception as e:
+            print(f"Failed to update node position in Supabase: {e}")
 
     def add_elements(self, new_nodes, new_edges):
-        data = self.load()
-        existing_ids = {n["id"] for n in data["nodes"]}
-        for node in new_nodes:
-            if node["id"] not in existing_ids: data["nodes"].append(node)
+        if not supabase:
+            print("ERROR: Supabase client not initialized. Cannot add elements.")
+            return
 
-        existing_edge_ids = {e["id"] for e in data["edges"] if "id" in e}
-        for edge in new_edges:
-            if edge.get("id") not in existing_edge_ids: data["edges"].append(edge)
-        self.save(data)
+        try:
+            # 1. Upsert Nodes
+            node_records = []
+            for n in new_nodes:
+                # Ensure all fields expected by Supabase schema are present
+                node_records.append({
+                    "id": n["id"],
+                    "label": n["data"].get("label", n["id"]),
+                    "type": n["data"].get("entityType", "UNKNOWN"),
+                    "description": n["data"].get("description", ""),
+                    "aliases": n["data"].get("aliases", []),
+                    "position": n.get("position", {"x": 0, "y": 0}),
+                    "metadata": { # Store additional ReactFlow data in metadata JSONB
+                        "degree": n["data"].get("degree", 0),
+                        "communityId": n["data"].get("communityId"),
+                        "communityColor": n["data"].get("communityColor"),
+                    }
+                })
+            if node_records:
+                # Using upsert to insert new nodes or update existing ones
+                supabase.table("nodes").upsert(node_records, on_conflict="id").execute()
 
-graph_store = GraphStore()
+            # 2. Upsert Edges
+            edge_records = []
+            for e in new_edges:
+                edge_records.append({
+                    "id": e["id"],
+                    "source": e["source"],
+                    "target": e["target"],
+                    "label": e.get("label", e["data"]["predicate"]),
+                    "predicate": e["data"]["predicate"],
+                    "evidence_text": e["data"].get("evidence_text", ""),
+                    "source_filename": e["data"].get("source_filename", ""),
+                    "source_page": e["data"].get("source_page", 0),
+                    "confidence": e["data"].get("confidence", "STATED"),
+                    "date_mentioned": e["data"].get("date_mentioned"),
+                })
+            if edge_records:
+                # Using upsert to insert new edges or update existing ones
+                supabase.table("edges").upsert(edge_records, on_conflict="id").execute()
+                
+        except Exception as e:
+            print(f"Failed to upsert elements to Supabase: {e}")
+
+graph_store = SupabaseStore()
+
+# Endpoint to migrate GCS graph to Supabase
+@app.post("/api/graph/migrate")
+async def migrate_graph_to_supabase():
+    if not supabase:
+        return JSONResponse(status_code=500, content={"message": "Supabase client not initialized."})
+
+    try:
+        # Load legacy data from GCS
+        temp_gcs_blob = None
+        if bucket:
+            try:
+                temp_gcs_blob = bucket.blob("graph_store.json")
+            except Exception as e:
+                print(f"Error initializing temporary GCS blob for migration: {e}")
+                return JSONResponse(status_code=500, content={"message": f"Migration failed: {e}"})
+
+        gcs_data = {"nodes": [], "edges": []}
+        if temp_gcs_blob and temp_gcs_blob.exists():
+            try:
+                content = temp_gcs_blob.download_as_text()
+                if content:
+                    gcs_data = json.loads(content)
+            except Exception as e:
+                print(f"Error loading GCS data for migration: {e}")
+                return JSONResponse(status_code=500, content={"message": f"Migration failed: {e}"})
+
+        if not gcs_data or (not gcs_data.get("nodes") and not gcs_data.get("edges")):
+            return JSONResponse(status_code=200, content={"message": "No existing graph data found in GCS to migrate."})
+
+        # Reformat GCS nodes for Supabase
+        node_records = []
+        for n in gcs_data.get("nodes", []):
+            node_records.append({
+                "id": n["id"],
+                "label": n["data"].get("label", n["id"]),
+                "type": n["data"].get("entityType", "UNKNOWN"),
+                "description": n["data"].get("description", ""),
+                "aliases": n["data"].get("aliases", []),
+                "position": n.get("position", {"x": 0, "y": 0}),
+                "metadata": {
+                    "degree": n["data"].get("degree", 0),
+                    "communityId": n["data"].get("communityId"),
+                    "communityColor": n["data"].get("communityColor"),
+                }
+            })
+
+        # Reformat GCS edges for Supabase
+        edge_records = []
+        for e in gcs_data.get("edges", []):
+            edge_records.append({
+                "id": e["id"],
+                "source": e["source"],
+                "target": e["target"],
+                "label": e.get("label", e["data"].get("predicate")),
+                "predicate": e["data"].get("predicate", "related_to"),
+                "evidence_text": e["data"].get("evidence_text", ""),
+                "source_filename": e["data"].get("source_filename", ""),
+                "source_page": e["data"].get("source_page", 0),
+                "confidence": e["data"].get("confidence", "STATED"),
+                "date_mentioned": e["data"].get("date_mentioned"),
+            })
+
+        if node_records:
+            supabase.table("nodes").upsert(node_records, on_conflict="id").execute()
+        if edge_records:
+            supabase.table("edges").upsert(edge_records, on_conflict="id").execute()
+
+        return JSONResponse(status_code=200, content={
+            "message": f"Migrated {len(node_records)} nodes and {len(edge_records)} edges to Supabase."
+        })
+    except Exception as e:
+        print(f"Error during migration: {e}")
+        return JSONResponse(status_code=500, content={"message": f"Migration failed: {e}"})
 
 # --- Models ---
 class QueryRequest(BaseModel):
@@ -172,12 +345,12 @@ class Entity(BaseModel):
 
 class Triple(BaseModel):
     subject_id: str
-    predicate: str           # "flew_with", "employed_by", "transferred_funds_to"
+    predicate: str
     object_id: str
-    evidence_text: str       # exact quote from the document
+    evidence_text: str
     source_filename: str
     source_page: int = 0
-    confidence: str = "STATED"  # STATED | INFERRED
+    confidence: str = "STATED"
     date_mentioned: Optional[str] = None
 
 class CaseMap(BaseModel):
@@ -209,14 +382,14 @@ async def update_positions(updates: List[PositionUpdate]):
     return {"status": "positions updated"}
 
 @app.get("/api/insights")
-async def get_insights(depth: str = "standard"):
+async def get_insights(depth: str = "standard", focus: Optional[str] = None, strict: bool = False):
     try:
         if not index:
             return {"error": "Pinecone index not initialized. Please check environment variables."}
         if not client:
             return {"error": "GenAI client not initialized. Please check environment variables."}
 
-        print(f"DEBUG: Starting {depth} extraction...")
+        print(f"DEBUG: Starting {depth} extraction (Focus: {focus}, Strict: {strict})...")
         
         insight_topics = [
             "people persons individuals names",
@@ -228,12 +401,22 @@ async def get_insights(depth: str = "standard"):
             "assets properties aircraft vessels"
         ]
 
+        if focus:
+            # If a focus is provided, we prioritize it by adding it to the list
+            # and potentially giving it its own dedicated high-recall pass
+            print(f"DEBUG: Running targeted extraction for: '{focus}'")
+            insight_topics.insert(0, focus)
+
         # Scalable sampling based on depth
         top_k_per_topic = 10
         if depth == "deep":
             top_k_per_topic = 25
         elif depth == "full":
             top_k_per_topic = 50
+        
+        # Boost recall for the focus topic if it exists
+        if focus:
+            top_k_per_topic = max(top_k_per_topic, 30)
 
         def extract_chunk_with_meta(metadata):
             text = ""
@@ -269,14 +452,29 @@ async def get_insights(depth: str = "standard"):
                 topic_emb = client.models.embed_content(
                     model="gemini-embedding-001", contents=[topic]
                 )
+                
+                # Boost recall specifically for the user's focus topic
+                current_top_k = top_k_per_topic
+                if focus and topic == focus:
+                    current_top_k = 60  # Significantly higher recall for the target entity
+                    print(f"DEBUG: Running high-recall query (top_k={current_top_k}) for focus: '{focus}'")
+
                 topic_results = index.query(
                     vector=topic_emb.embeddings[0].values,
-                    top_k=top_k_per_topic,
+                    top_k=current_top_k,
                     include_metadata=True
                 )
                 for r in topic_results.matches:
                     if r.metadata and r.id not in all_chunks:
-                        all_chunks[r.id] = extract_chunk_with_meta(r.metadata)
+                        chunk_data = extract_chunk_with_meta(r.metadata)
+                        
+                        # --- STRICT MODE: Denoise logic ---
+                        if strict and focus and focus.lower() in chunk_data["text"].lower():
+                            # If the text is garbled but contains our focus word, 
+                            # we flag it for the LLM to perform a 'corrective' reading.
+                            chunk_data["text"] = f"[STRICT_CLEANUP_REQUIRED] {chunk_data['text']}"
+                            
+                        all_chunks[r.id] = chunk_data
             except Exception as e:
                 print(f"DEBUG: Topic query '{topic}' failed: {e}")
 
@@ -385,8 +583,26 @@ async def get_insights(depth: str = "standard"):
         if compute_communities:
             graph_data = graph_store.load()
             graph_data = compute_communities(graph_data)
-            graph_store.save(graph_data)
-            return graph_data
+            # The community detection modifies the graph data directly, so we need to
+            # update the nodes in Supabase. Edges remain unchanged by community detection.
+            # We don't need to call graph_store.save(graph_data) as it's for GCS backup.
+            
+            # Instead, we directly update nodes in Supabase with community info
+            updated_nodes_for_community = []
+            for node in graph_data.get("nodes", []):
+                if "communityId" in node["data"]:
+                    updated_nodes_for_community.append({
+                        "id": node["id"],
+                        "metadata": { # Update only the metadata JSONB field
+                            "degree": node["data"].get("degree", 0),
+                            "communityId": node["data"]["communityId"],
+                            "communityColor": node["data"]["communityColor"],
+                        }
+                    })
+            if updated_nodes_for_community:
+                supabase.table("nodes").upsert(updated_nodes_for_community, on_conflict="id").execute()
+
+            return graph_store.load() # Reload from Supabase to get latest with communities
 
         return graph_store.load()
     except Exception as e:
@@ -743,8 +959,26 @@ async def detect_communities():
     try:
         graph_data = graph_store.load()
         graph_data = compute_communities(graph_data)
-        graph_store.save(graph_data)
-        return graph_data
+        # The community detection modifies the graph data directly, so we need to
+        # update the nodes in Supabase. Edges remain unchanged by community detection.
+        # We don't need to call graph_store.save(graph_data) as it's for GCS backup.
+        
+        # Instead, we directly update nodes in Supabase with community info
+        updated_nodes_for_community = []
+        for node in graph_data.get("nodes", []):
+            if "communityId" in node["data"]:
+                updated_nodes_for_community.append({
+                    "id": node["id"],
+                    "metadata": { # Update only the metadata JSONB field
+                        "degree": node["data"].get("degree", 0),
+                        "communityId": node["data"]["communityId"],
+                        "communityColor": node["data"]["communityColor"],
+                    }
+                })
+        if updated_nodes_for_community:
+            supabase.table("nodes").upsert(updated_nodes_for_community, on_conflict="id").execute()
+
+        return graph_store.load() # Reload from Supabase to get latest with communities
     except Exception as e:
         print(f"Community detection failed: {e}")
         return graph_store.load()
