@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Shield, Database, MessageSquare } from 'lucide-react';
+import InvestigationSteps from './InvestigationSteps';
 import type { ChatMessage } from '../types';
 
 interface ChatAreaProps {
@@ -65,12 +66,19 @@ export default function ChatArea({ messages, onSuggestedQuery }: ChatAreaProps) 
                 )}
 
                 <div
-                  className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-relaxed ${
+                  className={`px-4 py-2.5 text-[15px] leading-relaxed ${
                     isUser
-                      ? 'bg-[#007AFF] text-white rounded-[20px] rounded-br-[6px]'
-                      : 'bg-[#2C2C2E] text-[rgba(255,255,255,0.92)] rounded-[20px] rounded-bl-[6px]'
+                      ? 'max-w-[75%] bg-[#007AFF] text-white rounded-[20px] rounded-br-[6px]'
+                      : msg.isInvestigation
+                        ? 'max-w-[90%] bg-[#1C1C1E] text-[rgba(255,255,255,0.92)] rounded-2xl border border-[rgba(84,84,88,0.65)]'
+                        : 'max-w-[75%] bg-[#2C2C2E] text-[rgba(255,255,255,0.92)] rounded-[20px] rounded-bl-[6px]'
                   }`}
                 >
+                  {/* Investigation step cards */}
+                  {msg.isInvestigation && msg.steps && msg.steps.length > 0 && (
+                    <InvestigationSteps steps={msg.steps} />
+                  )}
+
                   {msg.content ? (
                     <div className="whitespace-pre-wrap">{msg.content}</div>
                   ) : (
@@ -100,6 +108,24 @@ export default function ChatArea({ messages, onSuggestedQuery }: ChatAreaProps) 
                           >
                             {idx + 1}
                           </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Follow-up questions */}
+                  {msg.followUpQuestions && msg.followUpQuestions.length > 0 && !msg.isStreaming && (
+                    <div className="mt-3 pt-3 border-t border-[rgba(84,84,88,0.65)]">
+                      <span className="text-[11px] font-semibold text-[rgba(235,235,245,0.6)] block mb-2">Dig Deeper</span>
+                      <div className="flex flex-col gap-1.5">
+                        {msg.followUpQuestions.map((q, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => onSuggestedQuery(q)}
+                            className="text-left text-[13px] text-[#007AFF] hover:text-[#0A84FF] bg-[#007AFF]/10 hover:bg-[#007AFF]/20 rounded-xl px-3 py-2 transition-colors"
+                          >
+                            {q}
+                          </button>
                         ))}
                       </div>
                     </div>

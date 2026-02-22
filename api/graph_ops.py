@@ -1,11 +1,11 @@
 """
 Graph intelligence operations: multi-hop path finding, community detection,
-fuzzy entity matching, and connection query detection.
+fuzzy entity matching, connection query detection, and Supabase entity lookups.
 """
 
 import re
 from collections import deque
-from typing import Optional
+from typing import Optional, List
 
 # --- Connection Query Detection ---
 
@@ -236,3 +236,139 @@ def compute_communities(graph_data: dict) -> dict:
     graph_data["communities"] = community_list
     print(f"DEBUG: Detected {len(community_list)} communities across {len(nodes)} nodes")
     return graph_data
+
+
+# --- Supabase Direct Entity Lookups ---
+
+def lookup_entity_intel(supabase_client, entity_name: str) -> dict:
+    """
+    Fuzzy-match an entity name against the Supabase `nodes` table, then fetch
+    its edges and connected entities. Returns structured intel dict.
+    """
+    name_norm = _normalize(entity_name)
+    if not name_norm:
+        return {"found": False, "entity_name": entity_name}
+
+    # Try exact label match first, then ilike partial match
+    result = supabase_client.table("nodes").select("*").ilike("label", f"%{entity_name}%").limit(5).execute()
+    rows = result.data or []
+
+    # Score and pick best match
+    best = None
+    for row in rows:
+        label_norm = _normalize(row.get("label", ""))
+        if label_norm == name_norm:
+            best = row
+            break
+        aliases = row.get("aliases", []) or []
+        for alias in aliases:
+            if _normalize(alias) == name_norm:
+                best = row
+                break
+        if best:
+            break
+
+    if not best and rows:
+        # Fall back to first partial match
+        best = rows[0]
+
+    if not best:
+        return {"found": False, "entity_name": entity_name}
+
+    entity_id = best["id"]
+
+    # Fetch edges where this entity is source or target
+    edges_as_source = supabase_client.table("edges").select("*").eq("source", entity_id).limit(100).execute()
+    edges_as_target = supabase_client.table("edges").select("*").eq("target", entity_id).limit(100).execute()
+    all_edges = (edges_as_source.data or []) + (edges_as_target.data or [])
+
+    # Collect connected entity IDs
+    connected_ids = set()
+    for e in all_edges:
+        connected_ids.add(e["source"])
+        connected_ids.add(e["target"])
+    connected_ids.discard(entity_id)
+
+    # Fetch connected entity labels
+    connected_entities = []
+    if connected_ids:
+        for cid in list(connected_ids)[:50]:
+            node_res = supabase_client.table("nodes").select("id,label,type").eq("id", cid).limit(1).execute()
+            if node_res.data:
+                connected_entities.append(node_res.data[0])
+
+    # Group edges by predicate
+    relationship_types = {}
+    for e in all_edges:
+        pred = e.get("predicate", "related_to")
+        relationship_types.setdefault(pred, []).append({
+            "source": e["source"],
+            "target": e["target"],
+            "evidence_text": e.get("evidence_text", ""),
+            "source_filename": e.get("source_filename", ""),
+            "confidence": e.get("confidence", "STATED"),
+        })
+
+    return {
+        "found": True,
+        "entity_id": entity_id,
+        "entity_name": best.get("label", entity_id),
+        "entity_type": best.get("type", "UNKNOWN"),
+        "description": best.get("description", ""),
+        "aliases": best.get("aliases", []),
+        "edge_count": len(all_edges),
+        "connected_entities": connected_entities,
+        "relationship_types": relationship_types,
+    }
+
+
+def keyword_search_evidence(supabase_client, names: List[str], limit: int = 10) -> list:
+    """
+    Search edges.evidence_text for exact name mentions using ilike.
+    Returns list of edge dicts with matching evidence.
+    """
+    results = []
+    seen_ids = set()
+    for name in names:
+        if not name or not name.strip():
+            continue
+        res = supabase_client.table("edges").select("*").ilike("evidence_text", f"%{name}%").limit(limit).execute()
+        for row in (res.data or []):
+            if row["id"] not in seen_ids:
+                seen_ids.add(row["id"])
+                results.append(row)
+    return results[:limit * 2]
+
+
+def bfs_collect_evidence(supabase_client, start_entity_id: str, max_hops: int = 2, max_edges: int = 50) -> list:
+    """
+    BFS from a starting entity via targeted Supabase edge queries.
+    Collects evidence text from traversed edges. Returns list of edge dicts.
+    """
+    visited_nodes = {start_entity_id}
+    frontier = [start_entity_id]
+    collected_edges = []
+    seen_edge_ids = set()
+
+    for _hop in range(max_hops):
+        if not frontier or len(collected_edges) >= max_edges:
+            break
+        next_frontier = []
+        for node_id in frontier:
+            if len(collected_edges) >= max_edges:
+                break
+            # Fetch edges for this node
+            edges_src = supabase_client.table("edges").select("*").eq("source", node_id).limit(25).execute()
+            edges_tgt = supabase_client.table("edges").select("*").eq("target", node_id).limit(25).execute()
+            for e in (edges_src.data or []) + (edges_tgt.data or []):
+                if e["id"] not in seen_edge_ids:
+                    seen_edge_ids.add(e["id"])
+                    collected_edges.append(e)
+                    # Add neighbor to next frontier
+                    neighbor = e["target"] if e["source"] == node_id else e["source"]
+                    if neighbor not in visited_nodes:
+                        visited_nodes.add(neighbor)
+                        next_frontier.append(neighbor)
+        frontier = next_frontier
+
+    return collected_edges[:max_edges]

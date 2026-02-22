@@ -11,6 +11,13 @@ export interface Community {
   size: number;
 }
 
+export interface InvestigationStep {
+  step: string;
+  label: string;
+  status: 'running' | 'done' | 'skipped';
+  detail?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -19,6 +26,9 @@ export interface ChatMessage {
   timestamp: number;
   isStreaming: boolean;
   error?: string;
+  isInvestigation?: boolean;
+  steps?: InvestigationStep[];
+  followUpQuestions?: string[];
 }
 
 export const DOC_TYPES = [

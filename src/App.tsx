@@ -322,6 +322,9 @@ function AppContent() {
       sources: [],
       timestamp: Date.now(),
       isStreaming: true,
+      isInvestigation: true,
+      steps: [],
+      followUpQuestions: [],
     };
 
     setMessages(prev => [...prev, userMsg, assistantMsg]);
@@ -329,15 +332,10 @@ function AppContent() {
     setIsStreaming(true);
 
     try {
-      const body: any = { query: text, top_k: topK, stream: true };
-      if (docTypeFilter) body.doc_type = docTypeFilter;
-      if (personFilter) body.person_filter = personFilter;
-      if (orgFilter) body.org_filter = orgFilter;
-
-      const res = await fetch('/api/query', {
+      const res = await fetch('/api/investigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ query: text }),
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -349,6 +347,8 @@ function AppContent() {
       let buffer = '';
       let fullText = '';
       let finalSources: any[] = [];
+      let followUps: string[] = [];
+      const stepsMap = new Map<string, any>();
 
       while (true) {
         const { done, value } = await reader.read();
@@ -362,18 +362,27 @@ function AppContent() {
           if (!line.startsWith('data: ')) continue;
           try {
             const data = JSON.parse(line.slice(6));
-            if (data.error) {
+            const eventType = data.type;
+
+            if (eventType === 'step_status') {
+              stepsMap.set(data.step, { step: data.step, label: data.label, status: data.status, detail: data.detail });
+              const steps = Array.from(stepsMap.values());
               setMessages(prev => prev.map(m =>
-                m.id === assistantId ? { ...m, error: data.error, isStreaming: false } : m
+                m.id === assistantId ? { ...m, steps } : m
               ));
-            } else if (data.text) {
+            } else if (eventType === 'text' || (!eventType && data.text)) {
               fullText += data.text;
               setMessages(prev => prev.map(m =>
                 m.id === assistantId ? { ...m, content: fullText } : m
               ));
-            }
-            if (data.sources) {
+            } else if (eventType === 'sources' || (!eventType && data.sources)) {
               finalSources = data.sources;
+            } else if (eventType === 'follow_ups') {
+              followUps = data.follow_ups || [];
+            } else if (data.error) {
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId ? { ...m, error: data.error, isStreaming: false } : m
+              ));
             }
           } catch {
             // skip malformed SSE lines
@@ -383,7 +392,7 @@ function AppContent() {
 
       setMessages(prev => prev.map(m =>
         m.id === assistantId
-          ? { ...m, isStreaming: false, sources: finalSources, content: fullText || m.content }
+          ? { ...m, isStreaming: false, sources: finalSources, content: fullText || m.content, followUpQuestions: followUps }
           : m
       ));
 

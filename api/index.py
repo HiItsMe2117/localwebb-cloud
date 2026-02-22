@@ -378,6 +378,9 @@ class FilteredQueryRequest(BaseModel):
     person_filter: Optional[str] = None
     org_filter: Optional[str] = None
 
+class InvestigateRequest(BaseModel):
+    query: str
+
 # --- Endpoints ---
 
 @app.get("/api")
@@ -627,42 +630,39 @@ async def get_insights(depth: str = "standard", focus: Optional[str] = None, str
         import traceback; traceback.print_exc()
         return graph_store.load()
 
-def _build_query_context(request):
-    """Shared logic: embed query, search Pinecone (with optional filters + reranking), build context + sources."""
-    if not index:
-        raise ValueError("Pinecone index not initialized. Please check environment variables.")
-    if not client:
-        raise ValueError("GenAI client not initialized. Please check environment variables.")
+def _get_rerank_fn():
+    """Lazy-load the reranker function."""
+    try:
+        from api.reranker import rerank
+        return rerank
+    except ImportError:
+        try:
+            from reranker import rerank
+            return rerank
+        except ImportError:
+            return None
 
-    top_k = max(1, min(request.top_k, 50))
 
+def _semantic_search_pass(query_text, genai_client, pinecone_index, rerank_fn=None,
+                          fetch_k=200, rerank_top_n=5, pinecone_filter=None) -> list:
+    """
+    Single semantic search pass: embed query → Pinecone similarity search → extract text → rerank.
+    Returns list of dicts with keys: text, filename, page, score.
+    """
     # 1. Embed query
-    print(f"DEBUG: Embedding query (top_k={top_k})...")
-    res = client.models.embed_content(
+    res = genai_client.models.embed_content(
         model="gemini-embedding-001",
-        contents=[request.query]
+        contents=[query_text]
     )
     embedding = res.embeddings[0].values
 
-    # 2. Build metadata filter for filtered queries
-    pinecone_filter = {}
-    if hasattr(request, 'doc_type') and request.doc_type:
-        pinecone_filter["doc_type"] = {"$eq": request.doc_type}
-    if hasattr(request, 'person_filter') and request.person_filter:
-        pinecone_filter["people"] = {"$in": [request.person_filter]}
-    if hasattr(request, 'org_filter') and request.org_filter:
-        pinecone_filter["organizations"] = {"$in": [request.org_filter]}
-
-    # 3. Over-fetch for reranking (40 if reranker available, else top_k)
-    fetch_k = 40 if top_k <= 20 else top_k
-    print("DEBUG: Querying Pinecone...")
+    # 2. Query Pinecone
     query_kwargs = dict(vector=embedding, top_k=fetch_k, include_metadata=True)
     if pinecone_filter:
         query_kwargs["filter"] = pinecone_filter
-        print(f"DEBUG: Applying filter: {pinecone_filter}")
-    results = index.query(**query_kwargs)
+    results = pinecone_index.query(**query_kwargs)
 
-    # 4. Extract text + metadata from results
+    # 3. Extract text + metadata
     candidates = []
     for r in results.matches:
         if not r.metadata:
@@ -680,7 +680,6 @@ def _build_query_context(request):
             filename = r.metadata.get('filename', 'unknown')
             page = r.metadata.get('page', '')
             if not page and page != 0:
-                # Legacy vectors without page numbers — show chunk index
                 chunk_idx = r.metadata.get('chunk_index', '')
                 page = f"Chunk {chunk_idx}" if chunk_idx != '' else ''
             candidates.append({
@@ -688,23 +687,52 @@ def _build_query_context(request):
                 "score": r.score,
             })
 
-    # 5. Cross-encoder reranking
-    try:
-        from api.reranker import rerank
-    except ImportError:
+    # 4. Cross-encoder reranking
+    if rerank_fn and len(candidates) > rerank_top_n:
         try:
-            from reranker import rerank
-        except ImportError:
-            rerank = None
-    try:
-        if rerank and len(candidates) > top_k:
-            print(f"DEBUG: Reranking {len(candidates)} candidates down to {min(top_k, 8)}...")
-            candidates = rerank(request.query, candidates, top_n=min(top_k, 8))
-    except Exception as e:
-        print(f"DEBUG: Reranker unavailable, using Pinecone ordering: {e}")
-        candidates = candidates[:top_k]
+            candidates = rerank_fn(query_text, candidates, top_n=rerank_top_n)
+        except Exception as e:
+            print(f"DEBUG: Reranker failed, using Pinecone ordering: {e}")
+            candidates = candidates[:rerank_top_n]
+    else:
+        candidates = candidates[:rerank_top_n]
 
-    # 6. Build context string and sources
+    return candidates
+
+
+def _build_query_context(request):
+    """Shared logic: embed query, search Pinecone (with optional filters + reranking), build context + sources."""
+    if not index:
+        raise ValueError("Pinecone index not initialized. Please check environment variables.")
+    if not client:
+        raise ValueError("GenAI client not initialized. Please check environment variables.")
+
+    top_k = max(1, min(request.top_k, 50))
+
+    # Build metadata filter for filtered queries
+    pinecone_filter = {}
+    if hasattr(request, 'doc_type') and request.doc_type:
+        pinecone_filter["doc_type"] = {"$eq": request.doc_type}
+    if hasattr(request, 'person_filter') and request.person_filter:
+        pinecone_filter["people"] = {"$in": [request.person_filter]}
+    if hasattr(request, 'org_filter') and request.org_filter:
+        pinecone_filter["organizations"] = {"$in": [request.org_filter]}
+
+    fetch_k = 40 if top_k <= 20 else top_k
+    rerank_fn = _get_rerank_fn()
+
+    print(f"DEBUG: Embedding query (top_k={top_k})...")
+    candidates = _semantic_search_pass(
+        query_text=request.query,
+        genai_client=client,
+        pinecone_index=index,
+        rerank_fn=rerank_fn,
+        fetch_k=fetch_k,
+        rerank_top_n=min(top_k, 8),
+        pinecone_filter=pinecone_filter or None,
+    )
+
+    # Build context string and sources
     context_parts = []
     sources = []
     seen_files = set()
@@ -799,6 +827,35 @@ async def query_index(request: FilteredQueryRequest):
     except Exception as e:
         print(f"CRITICAL ERROR in query_index: {str(e)}")
         return {"response": f"Analysis failed: {str(e)}", "sources": []}
+
+
+@app.post("/api/investigate")
+async def investigate(request: InvestigateRequest):
+    """Multi-step agentic investigation pipeline. Returns SSE stream."""
+    if not index:
+        return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+
+    try:
+        from api.investigator import run_investigation
+    except ImportError:
+        from investigator import run_investigation
+
+    rerank_fn = _get_rerank_fn()
+
+    return StreamingResponse(
+        run_investigation(
+            query=request.query,
+            genai_client=client,
+            pinecone_index=index,
+            supabase_client=supabase,
+            semantic_search_fn=_semantic_search_pass,
+            rerank_fn=rerank_fn,
+        ),
+        media_type="text/event-stream",
+    )
+
 
 @app.post("/api/upload")
 async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
