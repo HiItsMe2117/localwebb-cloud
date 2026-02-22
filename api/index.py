@@ -382,14 +382,7 @@ class FilteredQueryRequest(BaseModel):
 
 @app.get("/api")
 async def api_health():
-    supa_debug = "ok" if supabase else f"url={bool(SUPABASE_URL)},key={bool(SUPABASE_KEY)}"
-    return {
-        "status": "LocalWebb Cloud API is active",
-        "supabase": bool(supabase),
-        "supa_debug": supa_debug,
-        "pinecone": bool(index),
-        "genai": bool(client),
-    }
+    return {"status": "LocalWebb Cloud API is active"}
 
 @app.get("/api/graph")
 async def get_graph():
