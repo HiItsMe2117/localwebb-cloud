@@ -10,7 +10,7 @@ Yields SSE events as it progresses through phases:
 """
 
 import json
-import time
+import traceback
 from typing import AsyncGenerator
 
 from google.genai import types
@@ -19,6 +19,25 @@ from google.genai import types
 def _sse(event_type: str, data: dict) -> str:
     """Format a server-sent event."""
     return f"data: {json.dumps({'type': event_type, **data})}\n\n"
+
+
+def _safe_semantic_pass(semantic_search_fn, query_text, genai_client, pinecone_index,
+                        rerank_fn=None, fetch_k=50, rerank_top_n=5, pinecone_filter=None):
+    """Wrapper around semantic_search_fn with detailed error capture."""
+    try:
+        return semantic_search_fn(
+            query_text=query_text,
+            genai_client=genai_client,
+            pinecone_index=pinecone_index,
+            rerank_fn=rerank_fn,
+            fetch_k=fetch_k,
+            rerank_top_n=rerank_top_n,
+            pinecone_filter=pinecone_filter,
+        ), None
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        print(f"DEBUG: Semantic pass failed: {err}")
+        return [], err
 
 
 async def run_investigation(
@@ -31,24 +50,39 @@ async def run_investigation(
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that runs a multi-step investigation and yields SSE events.
-
-    Event types:
-      step_status  — { step, label, status: 'running'|'done'|'skipped', detail? }
-      text         — { text }  (streamed report chunks)
-      sources      — { sources: [...] }
-      follow_ups   — { follow_ups: [...] }
-      done         — { }
     """
-    all_context_chunks = []  # Accumulated evidence across all phases
+    # Top-level safety: if anything uncaught crashes the generator,
+    # surface it as an SSE error event so the frontend can display it.
+    try:
+        async for event in _run_investigation_inner(
+            query, genai_client, pinecone_index, supabase_client,
+            semantic_search_fn, rerank_fn,
+        ):
+            yield event
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"CRITICAL: Investigation pipeline crashed: {tb}")
+        yield _sse("text", {"text": f"\n\n**Pipeline error:** {type(e).__name__}: {e}"})
+        yield _sse("done", {})
+
+
+async def _run_investigation_inner(
+    query: str,
+    genai_client,
+    pinecone_index,
+    supabase_client,
+    semantic_search_fn,
+    rerank_fn=None,
+) -> AsyncGenerator[str, None]:
+    all_context_chunks = []
     all_sources = []
-    seen_texts = set()  # Dedup across passes
+    seen_texts = set()
     entity_intel = {}
     graph_evidence = []
     discovered_entities = []
     discovered_relationships = []
 
     def _add_chunks(chunks: list):
-        """Deduplicate and accumulate context chunks."""
         for c in chunks:
             sig = c["text"][:200]
             if sig not in seen_texts:
@@ -165,27 +199,25 @@ async def run_investigation(
     # ---------------------------------------------------------------
     # Phase D: Multi-Pass Semantic Search (~2-4s)
     # ---------------------------------------------------------------
-    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running", "detail": "Pass 1..."})
+    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running", "detail": "Starting pass 1..."})
 
     pass_count = 0
+    errors = []
 
     # Pass 1: Original query
-    try:
-        pass1 = semantic_search_fn(
-            query_text=query,
-            genai_client=genai_client,
-            pinecone_index=pinecone_index,
-            rerank_fn=rerank_fn,
-            fetch_k=50,
-            rerank_top_n=5,
-        )
-        _add_chunks(pass1)
+    results, err = _safe_semantic_pass(
+        semantic_search_fn, query, genai_client, pinecone_index,
+        rerank_fn=rerank_fn, fetch_k=50, rerank_top_n=5,
+    )
+    if err:
+        errors.append(f"Pass 1: {err}")
+    else:
+        _add_chunks(results)
         pass_count += 1
-    except Exception as e:
-        print(f"DEBUG: Semantic search pass 1 failed: {e}")
 
-    # Heartbeat between passes
-    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running", "detail": f"Pass 1 done ({len(all_context_chunks)} chunks). Pass 2..."})
+    # Heartbeat
+    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running",
+                "detail": f"Pass 1 {'OK' if not err else 'failed'} ({len(all_context_chunks)} chunks). Pass 2..."})
 
     # Pass 2: Reformulated with discovered context
     reformulated = None
@@ -195,22 +227,19 @@ async def run_investigation(
         reformulated = f"{query} {' '.join(discovered_entities[:3])}"
 
     if reformulated:
-        try:
-            pass2 = semantic_search_fn(
-                query_text=reformulated,
-                genai_client=genai_client,
-                pinecone_index=pinecone_index,
-                rerank_fn=rerank_fn,
-                fetch_k=50,
-                rerank_top_n=5,
-            )
-            _add_chunks(pass2)
+        results, err = _safe_semantic_pass(
+            semantic_search_fn, reformulated, genai_client, pinecone_index,
+            rerank_fn=rerank_fn, fetch_k=50, rerank_top_n=5,
+        )
+        if err:
+            errors.append(f"Pass 2: {err}")
+        else:
+            _add_chunks(results)
             pass_count += 1
-        except Exception as e:
-            print(f"DEBUG: Semantic search pass 2 failed: {e}")
 
     # Heartbeat
-    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running", "detail": f"{pass_count} passes ({len(all_context_chunks)} chunks)"})
+    yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running",
+                "detail": f"{pass_count} passes ({len(all_context_chunks)} chunks)"})
 
     # Pass 3 (conditional): Focused on most important connected entity
     top_connected = None
@@ -220,24 +249,28 @@ async def run_investigation(
         top_connected = secondary_entities[0]
 
     if top_connected and primary_entity:
-        try:
-            pass3 = semantic_search_fn(
-                query_text=f"{primary_entity} {top_connected}",
-                genai_client=genai_client,
-                pinecone_index=pinecone_index,
-                rerank_fn=rerank_fn,
-                fetch_k=40,
-                rerank_top_n=5,
-            )
-            _add_chunks(pass3)
+        results, err = _safe_semantic_pass(
+            semantic_search_fn, f"{primary_entity} {top_connected}", genai_client, pinecone_index,
+            rerank_fn=rerank_fn, fetch_k=40, rerank_top_n=5,
+        )
+        if err:
+            errors.append(f"Pass 3: {err}")
+        else:
+            _add_chunks(results)
             pass_count += 1
-        except Exception as e:
-            print(f"DEBUG: Semantic search pass 3 failed: {e}")
+
+    done_detail = f"{pass_count} passes, {len(all_context_chunks)} unique chunks"
+    if errors:
+        done_detail += f" ({len(errors)} errors)"
 
     yield _sse("step_status", {
         "step": "semantic_search", "label": "Research", "status": "done",
-        "detail": f"{pass_count} passes, {len(all_context_chunks)} unique chunks",
+        "detail": done_detail,
     })
+
+    # If semantic search totally failed, surface errors
+    if errors and not all_context_chunks:
+        yield _sse("text", {"text": f"*Semantic search errors: {'; '.join(errors)}*\n\n"})
 
     # ---------------------------------------------------------------
     # Phase E: Keyword Search (~1s)
@@ -246,7 +279,6 @@ async def run_investigation(
 
     keyword_results = []
     try:
-        # Build search names from discovered entities
         search_names = []
         if primary_entity:
             search_names.append(primary_entity)
@@ -254,24 +286,17 @@ async def run_investigation(
         search_names.extend(discovered_entities[:2])
         search_names = [n for n in search_names if n and len(n) > 2]
 
-        # Pinecone metadata filter search for key entity names
         for name in search_names[:3]:
             try:
                 pc_filter = {"people": {"$in": [name]}}
-                kw_results = semantic_search_fn(
-                    query_text=name,
-                    genai_client=genai_client,
-                    pinecone_index=pinecone_index,
-                    rerank_fn=None,
-                    fetch_k=10,
-                    rerank_top_n=5,
-                    pinecone_filter=pc_filter,
+                kw_results, _ = _safe_semantic_pass(
+                    semantic_search_fn, name, genai_client, pinecone_index,
+                    rerank_fn=None, fetch_k=10, rerank_top_n=5, pinecone_filter=pc_filter,
                 )
                 _add_chunks(kw_results)
             except Exception:
                 pass
 
-        # Supabase evidence_text search
         try:
             from api.graph_ops import keyword_search_evidence
         except ImportError:
@@ -293,15 +318,12 @@ async def run_investigation(
     # ---------------------------------------------------------------
     yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "running"})
 
-    # Build context from all accumulated evidence
     context_parts = []
 
-    # Document chunks from semantic search
     for c in all_context_chunks:
         context_parts.append(f"[Source: {c['filename']}, Page: {c['page']}]\n{c['text'][:1200]}")
         all_sources.append({"filename": c["filename"], "page": c["page"], "score": round(c.get("score", 0) or 0, 3)})
 
-    # Graph edge evidence
     if graph_evidence:
         graph_ctx = "\n\nKNOWLEDGE GRAPH EVIDENCE:\n"
         for e in graph_evidence[:30]:
@@ -312,7 +334,6 @@ async def run_investigation(
                 graph_ctx += f"{e['source']} --[{e.get('predicate', 'related')}]--> {e['target']}: {ev_text}\n\n"
         context_parts.append(graph_ctx)
 
-    # Entity intel summary
     if entity_intel.get("found"):
         intel_ctx = f"\n\nENTITY PROFILE: {entity_intel['entity_name']}\n"
         intel_ctx += f"Type: {entity_intel['entity_type']}\n"
@@ -323,7 +344,6 @@ async def run_investigation(
         intel_ctx += f"Relationship types: {', '.join(discovered_relationships[:10])}\n"
         context_parts.append(intel_ctx)
 
-    # Keyword evidence from graph
     if keyword_results:
         kw_ctx = "\n\nKEYWORD MATCHES IN EVIDENCE:\n"
         for e in keyword_results[:10]:
@@ -362,7 +382,7 @@ async def run_investigation(
             if chunk.text:
                 yield _sse("text", {"text": chunk.text})
     except Exception as e:
-        yield _sse("text", {"text": f"\n\n*Report generation error: {e}*"})
+        yield _sse("text", {"text": f"\n\n*Report generation error: {type(e).__name__}: {e}*"})
 
     yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "done"})
 
