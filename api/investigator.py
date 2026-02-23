@@ -11,6 +11,8 @@ Yields SSE events as it progresses through phases:
 
 import json
 import traceback
+import asyncio
+import re
 from typing import AsyncGenerator
 
 from google.genai import types
@@ -21,10 +23,19 @@ def _sse(event_type: str, data: dict) -> str:
     return f"data: {json.dumps({'type': event_type, **data})}\n\n"
 
 
+def _extract_json(text: str) -> str:
+    """Robustly extract JSON from model output."""
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        return match.group(0)
+    return text
+
+
 def _safe_semantic_pass(semantic_search_fn, query_text, genai_client, pinecone_index,
                         rerank_fn=None, fetch_k=50, rerank_top_n=5, pinecone_filter=None):
     """Wrapper around semantic_search_fn with detailed error capture."""
     try:
+        # Note: semantic_search_fn is synchronous in this codebase
         return semantic_search_fn(
             query_text=query_text,
             genai_client=genai_client,
@@ -51,8 +62,6 @@ async def run_investigation(
     """
     Async generator that runs a multi-step investigation and yields SSE events.
     """
-    # Top-level safety: if anything uncaught crashes the generator,
-    # surface it as an SSE error event so the frontend can display it.
     try:
         async for event in _run_investigation_inner(
             query, genai_client, pinecone_index, supabase_client,
@@ -83,16 +92,21 @@ async def _run_investigation_inner(
     discovered_relationships = []
 
     def _add_chunks(chunks: list):
+        if not isinstance(chunks, list):
+            return
         for c in chunks:
+            if not isinstance(c, dict) or "text" not in c:
+                continue
             sig = c["text"][:200]
             if sig not in seen_texts:
                 seen_texts.add(sig)
                 all_context_chunks.append(c)
 
     # ---------------------------------------------------------------
-    # Phase A: Query Analysis (~1s)
+    # Phase A: Query Analysis
     # ---------------------------------------------------------------
     yield _sse("step_status", {"step": "query_analysis", "label": "Analyzing Query", "status": "running"})
+    await asyncio.sleep(0.1) # Flush
 
     try:
         analysis_prompt = (
@@ -104,20 +118,21 @@ async def _run_investigation_inner(
             '- "secondary_entities": other specific named entities mentioned or implied (list of strings, empty if none)\n'
             '- "key_terms": important search terms and phrases for document retrieval (list of strings)\n'
             '- "reformulated_queries": 2-3 alternative phrasings to find relevant documents (list of strings)\n\n'
-            "EXAMPLES:\n"
-            'Query: "What can you tell me about Jeffrey Epstein?" → primary_entity: "Jeffrey Epstein"\n'
-            'Query: "Who are the key individuals connected to this network?" → primary_entity: "" (no specific named entity)\n'
-            'Query: "What is the connection between Israel and the Clinton Foundation?" → primary_entity: "Israel", secondary_entities: ["Clinton Foundation"]\n'
-            'Query: "What financial transactions appear suspicious?" → primary_entity: "" (no specific named entity)\n\n'
             f"Query: {query}\n\n"
             "Return JSON only."
         )
-        analysis_res = genai_client.models.generate_content(
+        
+        # Use asyncio.to_thread for blocking GenAI call
+        analysis_res = await asyncio.to_thread(
+            genai_client.models.generate_content,
             model="gemini-2.0-flash",
             contents=analysis_prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
-        analysis = json.loads(analysis_res.text)
+        
+        analysis_text = _extract_json(analysis_res.text)
+        analysis = json.loads(analysis_text)
+        
         primary_entity = analysis.get("primary_entity", "").strip()
         secondary_entities = analysis.get("secondary_entities", [])
         key_terms = analysis.get("key_terms", [])
@@ -141,14 +156,16 @@ async def _run_investigation_inner(
         "step": "query_analysis", "label": "Analyzing Query", "status": "done",
         "detail": ", ".join(detail_parts),
     })
+    await asyncio.sleep(0.3) # Pacing
 
     # ---------------------------------------------------------------
-    # Phase B: Entity Intel (~0.5s)
+    # Phase B: Entity Intel
     # ---------------------------------------------------------------
     has_entity = bool(primary_entity)
 
     if has_entity:
         yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "running"})
+        await asyncio.sleep(0.1)
 
         try:
             from api.graph_ops import lookup_entity_intel
@@ -156,7 +173,8 @@ async def _run_investigation_inner(
             from graph_ops import lookup_entity_intel
 
         try:
-            entity_intel = lookup_entity_intel(supabase_client, primary_entity)
+            # Supabase call is blocking, use thread
+            entity_intel = await asyncio.to_thread(lookup_entity_intel, supabase_client, primary_entity)
             if entity_intel.get("found"):
                 discovered_entities = [
                     e.get("label", e.get("id", "")) for e in entity_intel.get("connected_entities", [])
@@ -172,12 +190,15 @@ async def _run_investigation_inner(
         yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "done", "detail": detail})
     else:
         yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "done", "detail": "Skipped — no named entity"})
+    
+    await asyncio.sleep(0.3)
 
     # ---------------------------------------------------------------
-    # Phase C: Graph Traversal (~0.5s)
+    # Phase C: Graph Traversal
     # ---------------------------------------------------------------
     if entity_intel.get("found"):
         yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "running"})
+        await asyncio.sleep(0.1)
 
         try:
             from api.graph_ops import bfs_collect_evidence
@@ -185,7 +206,10 @@ async def _run_investigation_inner(
             from graph_ops import bfs_collect_evidence
 
         try:
-            graph_evidence = bfs_collect_evidence(supabase_client, entity_intel["entity_id"], max_hops=2, max_edges=50)
+            # Blocking Supabase/BFS call
+            graph_evidence = await asyncio.to_thread(
+                bfs_collect_evidence, supabase_client, entity_intel["entity_id"], max_hops=2, max_edges=50
+            )
             detail = f"Collected {len(graph_evidence)} edges across 2 hops"
         except Exception as e:
             print(f"DEBUG: Graph traversal failed: {e}")
@@ -196,16 +220,20 @@ async def _run_investigation_inner(
     else:
         yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "done", "detail": "Skipped"})
 
+    await asyncio.sleep(0.3)
+
     # ---------------------------------------------------------------
-    # Phase D: Multi-Pass Semantic Search (~2-4s)
+    # Phase D: Multi-Pass Semantic Search
     # ---------------------------------------------------------------
     yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running", "detail": "Starting pass 1..."})
+    await asyncio.sleep(0.1)
 
     pass_count = 0
     errors = []
 
     # Pass 1: Original query
-    results, err = _safe_semantic_pass(
+    results, err = await asyncio.to_thread(
+        _safe_semantic_pass,
         semantic_search_fn, query, genai_client, pinecone_index,
         rerank_fn=rerank_fn, fetch_k=50, rerank_top_n=5,
     )
@@ -218,6 +246,7 @@ async def _run_investigation_inner(
     # Heartbeat
     yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running",
                 "detail": f"Pass 1 {'OK' if not err else 'failed'} ({len(all_context_chunks)} chunks). Pass 2..."})
+    await asyncio.sleep(0.2)
 
     # Pass 2: Reformulated with discovered context
     reformulated = None
@@ -227,7 +256,8 @@ async def _run_investigation_inner(
         reformulated = f"{query} {' '.join(discovered_entities[:3])}"
 
     if reformulated:
-        results, err = _safe_semantic_pass(
+        results, err = await asyncio.to_thread(
+            _safe_semantic_pass,
             semantic_search_fn, reformulated, genai_client, pinecone_index,
             rerank_fn=rerank_fn, fetch_k=50, rerank_top_n=5,
         )
@@ -240,6 +270,7 @@ async def _run_investigation_inner(
     # Heartbeat
     yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running",
                 "detail": f"{pass_count} passes ({len(all_context_chunks)} chunks)"})
+    await asyncio.sleep(0.2)
 
     # Pass 3 (conditional): Focused on most important connected entity
     top_connected = None
@@ -249,7 +280,8 @@ async def _run_investigation_inner(
         top_connected = secondary_entities[0]
 
     if top_connected and primary_entity:
-        results, err = _safe_semantic_pass(
+        results, err = await asyncio.to_thread(
+            _safe_semantic_pass,
             semantic_search_fn, f"{primary_entity} {top_connected}", genai_client, pinecone_index,
             rerank_fn=rerank_fn, fetch_k=40, rerank_top_n=5,
         )
@@ -267,15 +299,17 @@ async def _run_investigation_inner(
         "step": "semantic_search", "label": "Research", "status": "done",
         "detail": done_detail,
     })
+    await asyncio.sleep(0.3)
 
     # If semantic search totally failed, surface errors
     if errors and not all_context_chunks:
         yield _sse("text", {"text": f"*Semantic search errors: {'; '.join(errors)}*\n\n"})
 
     # ---------------------------------------------------------------
-    # Phase E: Keyword Search (~1s)
+    # Phase E: Keyword Search
     # ---------------------------------------------------------------
     yield _sse("step_status", {"step": "keyword_search", "label": "Keyword Search", "status": "running"})
+    await asyncio.sleep(0.1)
 
     keyword_results = []
     try:
@@ -289,7 +323,8 @@ async def _run_investigation_inner(
         for name in search_names[:3]:
             try:
                 pc_filter = {"people": {"$in": [name]}}
-                kw_results, _ = _safe_semantic_pass(
+                kw_results, _ = await asyncio.to_thread(
+                    _safe_semantic_pass,
                     semantic_search_fn, name, genai_client, pinecone_index,
                     rerank_fn=None, fetch_k=10, rerank_top_n=5, pinecone_filter=pc_filter,
                 )
@@ -303,7 +338,9 @@ async def _run_investigation_inner(
             from graph_ops import keyword_search_evidence
 
         if supabase_client and search_names:
-            keyword_results = keyword_search_evidence(supabase_client, search_names[:5], limit=10)
+            keyword_results = await asyncio.to_thread(
+                keyword_search_evidence, supabase_client, search_names[:5], limit=10
+            )
 
     except Exception as e:
         print(f"DEBUG: Keyword search failed: {e}")
@@ -312,11 +349,13 @@ async def _run_investigation_inner(
         "step": "keyword_search", "label": "Keyword Search", "status": "done",
         "detail": f"{len(all_context_chunks)} total chunks, {len(keyword_results)} graph matches",
     })
+    await asyncio.sleep(0.3)
 
     # ---------------------------------------------------------------
-    # Phase F: Synthesis (streamed, ~5-8s)
+    # Phase F: Synthesis
     # ---------------------------------------------------------------
     yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "running"})
+    await asyncio.sleep(0.1)
 
     context_parts = []
 
@@ -374,13 +413,18 @@ async def _run_investigation_inner(
     )
 
     try:
-        stream = genai_client.models.generate_content_stream(
+        # Synthesis is streamed, so we can't easily use asyncio.to_thread for the whole thing
+        # but the generation itself is a generator.
+        # Note: genai_client.models.generate_content_stream is synchronous
+        stream = await asyncio.to_thread(
+            genai_client.models.generate_content_stream,
             model="gemini-2.5-pro",
             contents=synthesis_prompt,
         )
         for chunk in stream:
             if chunk.text:
                 yield _sse("text", {"text": chunk.text})
+                await asyncio.sleep(0.01) # Small sleep to yield to event loop
     except Exception as e:
         yield _sse("text", {"text": f"\n\n*Report generation error: {type(e).__name__}: {e}*"})
 
@@ -406,15 +450,18 @@ async def _run_investigation_inner(
             f"Key entities found: {primary_entity}, {', '.join(discovered_entities[:5])}\n"
             f"Relationships: {', '.join(discovered_relationships[:5])}"
         )
-        followup_res = genai_client.models.generate_content(
+        followup_res = await asyncio.to_thread(
+            genai_client.models.generate_content,
             model="gemini-2.0-flash",
             contents=followup_prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
-        follow_ups = json.loads(followup_res.text)
+        followup_text = _extract_json(followup_res.text)
+        follow_ups = json.loads(followup_text)
         if isinstance(follow_ups, list):
             yield _sse("follow_ups", {"follow_ups": follow_ups[:4]})
     except Exception as e:
         print(f"DEBUG: Follow-up generation failed: {e}")
 
     yield _sse("done", {})
+
