@@ -844,8 +844,9 @@ async def investigate(request: InvestigateRequest):
     except ImportError:
         from investigator import run_investigation
 
-    rerank_fn = _get_rerank_fn()
-
+    # Skip reranker for investigation pipeline — multi-pass search provides
+    # sufficient recall and the FlashRank model adds ~200MB memory overhead
+    # which exceeds Vercel's serverless function limit.
     return StreamingResponse(
         run_investigation(
             query=request.query,
@@ -853,7 +854,7 @@ async def investigate(request: InvestigateRequest):
             pinecone_index=index,
             supabase_client=supabase,
             semantic_search_fn=_semantic_search_pass,
-            rerank_fn=rerank_fn,
+            rerank_fn=None,
         ),
         media_type="text/event-stream",
     )
