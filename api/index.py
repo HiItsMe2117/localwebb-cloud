@@ -836,6 +836,8 @@ async def investigate(request: InvestigateRequest):
         return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
     if not client:
         return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
 
     try:
         from api.investigator import run_investigation

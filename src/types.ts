@@ -14,7 +14,7 @@ export interface Community {
 export interface InvestigationStep {
   step: string;
   label: string;
-  status: 'running' | 'done' | 'skipped';
+  status: 'running' | 'done' | 'skipped' | 'error';
   detail?: string;
 }
 

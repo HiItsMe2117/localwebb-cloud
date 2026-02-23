@@ -1,4 +1,4 @@
-import { Search, Network, GitBranch, BookOpen, FileSearch, PenTool, Loader2, Check } from 'lucide-react';
+import { Search, Network, GitBranch, BookOpen, FileSearch, PenTool, Loader2, Check, X } from 'lucide-react';
 import type { InvestigationStep } from '../types';
 
 const STEP_CONFIG: Record<string, { icon: typeof Search; color: string }> = {
@@ -24,19 +24,22 @@ export default function InvestigationSteps({ steps }: InvestigationStepsProps) {
         const Icon = config.icon;
         const isRunning = step.status === 'running';
         const isDone = step.status === 'done';
+        const isError = step.status === 'error';
 
         return (
           <div
             key={step.step}
             className="flex items-center gap-2 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[13px] transition-all"
-            style={{ borderColor: isRunning ? config.color + '60' : undefined }}
+            style={{ borderColor: isError ? '#FF453A60' : isRunning ? config.color + '60' : undefined }}
           >
             <div
               className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0"
-              style={{ backgroundColor: config.color + '20' }}
+              style={{ backgroundColor: isError ? '#FF453A20' : config.color + '20' }}
             >
               {isRunning ? (
                 <Loader2 size={14} className="animate-spin" style={{ color: config.color }} />
+              ) : isError ? (
+                <X size={14} style={{ color: '#FF453A' }} />
               ) : isDone ? (
                 <Check size={14} style={{ color: config.color }} />
               ) : (
@@ -44,11 +47,11 @@ export default function InvestigationSteps({ steps }: InvestigationStepsProps) {
               )}
             </div>
             <div className="flex flex-col min-w-0">
-              <span className={`font-medium truncate ${isDone ? 'text-[rgba(235,235,245,0.6)]' : 'text-white'}`}>
+              <span className={`font-medium truncate ${isError ? 'text-[#FF453A]' : isDone ? 'text-[rgba(235,235,245,0.6)]' : 'text-white'}`}>
                 {step.label}
               </span>
               {step.detail && (
-                <span className="text-[11px] text-[rgba(235,235,245,0.3)] truncate max-w-[200px]">
+                <span className={`text-[11px] truncate max-w-[200px] ${isError ? 'text-[#FF453A99]' : 'text-[rgba(235,235,245,0.3)]'}`}>
                   {step.detail}
                 </span>
               )}

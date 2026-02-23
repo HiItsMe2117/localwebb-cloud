@@ -10,6 +10,7 @@ Yields SSE events as it progresses through phases:
 """
 
 import json
+import queue as _queue
 import traceback
 import asyncio
 import re
@@ -108,6 +109,7 @@ async def _run_investigation_inner(
     yield _sse("step_status", {"step": "query_analysis", "label": "Analyzing Query", "status": "running"})
     await asyncio.sleep(0.1) # Flush
 
+    analysis_failed = False
     try:
         analysis_prompt = (
             "You are an investigative intelligence analyst. Analyze this query and extract structured information.\n\n"
@@ -121,7 +123,7 @@ async def _run_investigation_inner(
             f"Query: {query}\n\n"
             "Return JSON only."
         )
-        
+
         # Use asyncio.to_thread for blocking GenAI call
         analysis_res = await asyncio.to_thread(
             genai_client.models.generate_content,
@@ -129,33 +131,40 @@ async def _run_investigation_inner(
             contents=analysis_prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
-        
+
         analysis_text = _extract_json(analysis_res.text)
         analysis = json.loads(analysis_text)
-        
+
         primary_entity = analysis.get("primary_entity", "").strip()
         secondary_entities = analysis.get("secondary_entities", [])
         key_terms = analysis.get("key_terms", [])
         reformulated_queries = analysis.get("reformulated_queries", [])
     except Exception as e:
         print(f"DEBUG: Query analysis failed: {e}")
+        analysis_failed = True
         primary_entity = ""
         secondary_entities = []
         key_terms = [query.strip()]
         reformulated_queries = []
 
-    detail_parts = []
-    if primary_entity:
-        detail_parts.append(f"Primary: {primary_entity}")
-    if secondary_entities:
-        detail_parts.append(f"+{len(secondary_entities)} entities")
-    if not detail_parts:
-        detail_parts.append("General query — using semantic search")
+    if analysis_failed:
+        yield _sse("step_status", {
+            "step": "query_analysis", "label": "Analyzing Query", "status": "error",
+            "detail": f"Falling back to raw query",
+        })
+    else:
+        detail_parts = []
+        if primary_entity:
+            detail_parts.append(f"Primary: {primary_entity}")
+        if secondary_entities:
+            detail_parts.append(f"+{len(secondary_entities)} entities")
+        if not detail_parts:
+            detail_parts.append("General query — using semantic search")
 
-    yield _sse("step_status", {
-        "step": "query_analysis", "label": "Analyzing Query", "status": "done",
-        "detail": ", ".join(detail_parts),
-    })
+        yield _sse("step_status", {
+            "step": "query_analysis", "label": "Analyzing Query", "status": "done",
+            "detail": ", ".join(detail_parts),
+        })
     await asyncio.sleep(0.3) # Pacing
 
     # ---------------------------------------------------------------
@@ -185,9 +194,11 @@ async def _run_investigation_inner(
                 detail = "Not found in knowledge graph"
         except Exception as e:
             print(f"DEBUG: Entity intel failed: {e}")
-            detail = f"Error: {e}"
+            yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "error", "detail": f"{type(e).__name__}: {e}"})
+            detail = None
 
-        yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "done", "detail": detail})
+        if detail is not None:
+            yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "done", "detail": detail})
     else:
         yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "done", "detail": "Skipped — no named entity"})
     
@@ -214,9 +225,11 @@ async def _run_investigation_inner(
         except Exception as e:
             print(f"DEBUG: Graph traversal failed: {e}")
             graph_evidence = []
-            detail = f"Error: {e}"
+            yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "error", "detail": f"{type(e).__name__}: {e}"})
+            detail = None
 
-        yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "done", "detail": detail})
+        if detail is not None:
+            yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "done", "detail": detail})
     else:
         yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "done", "detail": "Skipped"})
 
@@ -291,19 +304,20 @@ async def _run_investigation_inner(
             _add_chunks(results)
             pass_count += 1
 
-    done_detail = f"{pass_count} passes, {len(all_context_chunks)} unique chunks"
-    if errors:
-        done_detail += f" ({len(errors)} errors)"
-
-    yield _sse("step_status", {
-        "step": "semantic_search", "label": "Research", "status": "done",
-        "detail": done_detail,
-    })
-    await asyncio.sleep(0.3)
-
-    # If semantic search totally failed, surface errors
     if errors and not all_context_chunks:
-        yield _sse("text", {"text": f"*Semantic search errors: {'; '.join(errors)}*\n\n"})
+        yield _sse("step_status", {
+            "step": "semantic_search", "label": "Research", "status": "error",
+            "detail": f"All passes failed: {'; '.join(errors)}",
+        })
+    else:
+        done_detail = f"{pass_count} passes, {len(all_context_chunks)} unique chunks"
+        if errors:
+            done_detail += f" ({len(errors)} errors)"
+        yield _sse("step_status", {
+            "step": "semantic_search", "label": "Research", "status": "done",
+            "detail": done_detail,
+        })
+    await asyncio.sleep(0.3)
 
     # ---------------------------------------------------------------
     # Phase E: Keyword Search
@@ -312,6 +326,7 @@ async def _run_investigation_inner(
     await asyncio.sleep(0.1)
 
     keyword_results = []
+    keyword_failed = False
     try:
         search_names = []
         if primary_entity:
@@ -344,11 +359,19 @@ async def _run_investigation_inner(
 
     except Exception as e:
         print(f"DEBUG: Keyword search failed: {e}")
+        keyword_failed = True
+        keyword_error = f"{type(e).__name__}: {e}"
 
-    yield _sse("step_status", {
-        "step": "keyword_search", "label": "Keyword Search", "status": "done",
-        "detail": f"{len(all_context_chunks)} total chunks, {len(keyword_results)} graph matches",
-    })
+    if keyword_failed:
+        yield _sse("step_status", {
+            "step": "keyword_search", "label": "Keyword Search", "status": "error",
+            "detail": keyword_error,
+        })
+    else:
+        yield _sse("step_status", {
+            "step": "keyword_search", "label": "Keyword Search", "status": "done",
+            "detail": f"{len(all_context_chunks)} total chunks, {len(keyword_results)} graph matches",
+        })
     await asyncio.sleep(0.3)
 
     # ---------------------------------------------------------------
@@ -412,23 +435,50 @@ async def _run_investigation_inner(
         "Do not fabricate information not supported by the provided context."
     )
 
+    synthesis_failed = False
     try:
-        # Synthesis is streamed, so we can't easily use asyncio.to_thread for the whole thing
-        # but the generation itself is a generator.
-        # Note: genai_client.models.generate_content_stream is synchronous
-        stream = await asyncio.to_thread(
-            genai_client.models.generate_content_stream,
-            model="gemini-2.5-pro",
-            contents=synthesis_prompt,
-        )
-        for chunk in stream:
-            if chunk.text:
-                yield _sse("text", {"text": chunk.text})
-                await asyncio.sleep(0.01) # Small sleep to yield to event loop
-    except Exception as e:
-        yield _sse("text", {"text": f"\n\n*Report generation error: {type(e).__name__}: {e}*"})
+        # Run the entire streaming call + iteration in a single background thread,
+        # collecting chunks into a thread-safe queue so we can yield SSE events
+        # from the async generator without blocking the event loop.
+        chunk_queue = _queue.Queue()
 
-    yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "done"})
+        def _produce_chunks():
+            try:
+                stream = genai_client.models.generate_content_stream(
+                    model="gemini-2.5-pro",
+                    contents=synthesis_prompt,
+                )
+                for chunk in stream:
+                    if chunk.text:
+                        chunk_queue.put(chunk.text)
+            except Exception as exc:
+                chunk_queue.put(exc)
+            finally:
+                chunk_queue.put(None)  # sentinel
+
+        # Start producer in a background thread
+        loop = asyncio.get_event_loop()
+        producer = loop.run_in_executor(None, _produce_chunks)
+
+        # Consume chunks as they arrive
+        while True:
+            item = await asyncio.to_thread(chunk_queue.get)
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield _sse("text", {"text": item})
+            await asyncio.sleep(0.01)
+
+        await producer  # ensure thread completed
+    except Exception as e:
+        synthesis_failed = True
+        yield _sse("text", {"text": f"\n\n**Report generation error:** {type(e).__name__}: {e}"})
+
+    if synthesis_failed:
+        yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "error", "detail": "Generation failed"})
+    else:
+        yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "done"})
 
     # Deduplicate sources
     seen_source_files = set()
