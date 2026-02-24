@@ -379,6 +379,10 @@ class FilteredQueryRequest(BaseModel):
     person_filter: Optional[str] = None
     org_filter: Optional[str] = None
 
+class TargetedSearchRequest(BaseModel):
+    keyword: str
+    extract: bool = False
+
 class InvestigateRequest(BaseModel):
     query: str
 
@@ -1086,6 +1090,192 @@ async def delete_case(case_id: str):
         supabase.table("cases").delete().eq("id", case_id).execute()
         return {"status": "deleted"}
     except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/search/targeted")
+async def targeted_search(request: TargetedSearchRequest):
+    """Keyword search + optional network extraction."""
+    if not index:
+        return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+
+    keyword = request.keyword.strip()
+    if not keyword:
+        return JSONResponse(status_code=400, content={"error": "keyword is required"})
+
+    try:
+        # 1. Embed the keyword once
+        emb_res = client.models.embed_content(
+            model="gemini-embedding-001", contents=[keyword]
+        )
+        embedding = emb_res.embeddings[0].values
+
+        # 2. Three Pinecone queries: semantic + people filter + orgs filter
+        sem_results = index.query(vector=embedding, top_k=200, include_metadata=True)
+        people_results = index.query(
+            vector=embedding, top_k=200, include_metadata=True,
+            filter={"people": {"$in": [keyword]}}
+        )
+        org_results = index.query(
+            vector=embedding, top_k=200, include_metadata=True,
+            filter={"organizations": {"$in": [keyword]}}
+        )
+
+        # 3. Deduplicate by vector ID
+        seen_ids = set()
+        all_matches = []
+        for result_set in [sem_results, people_results, org_results]:
+            for r in result_set.matches:
+                if r.id not in seen_ids and r.metadata:
+                    seen_ids.add(r.id)
+                    all_matches.append(r)
+
+        # 4. Extract text and post-filter for literal keyword mentions
+        keyword_lower = keyword.lower()
+        chunks = []
+        for r in all_matches:
+            text = ""
+            if '_node_content' in r.metadata:
+                try:
+                    text = json.loads(r.metadata['_node_content']).get('text', '')
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if not text:
+                text = r.metadata.get('text', '')
+            if not text or keyword_lower not in text.lower():
+                continue
+            chunks.append({
+                "id": r.id,
+                "text": text,
+                "filename": r.metadata.get('filename', 'unknown'),
+                "page": r.metadata.get('page', r.metadata.get('chunk_index', 0)),
+                "score": r.score,
+            })
+
+        unique_files = len(set(c["filename"] for c in chunks))
+        stats = {"total_mentions": len(chunks), "unique_files": unique_files}
+
+        # --- Search-only mode ---
+        if not request.extract:
+            return {"chunks": chunks, "stats": stats}
+
+        # --- Extract mode ---
+        if not chunks:
+            return graph_store.load()
+
+        context_parts = []
+        for c in chunks:
+            context_parts.append(f"[Source: {c['filename']}, Page: {c['page']}]\n{c['text']}")
+        context = "\n\n---\n\n".join(context_parts)
+
+        prompt = (
+            "You are an investigative intelligence analyst. Extract entities and their relationships from these documents.\n\n"
+            "RULES:\n"
+            "1. Every entity needs an id (lowercase_snake_case), a label (display name), a type (PERSON, ORGANIZATION, LOCATION, EVENT, DOCUMENT, FINANCIAL_ENTITY), a description, and aliases (alternate names).\n"
+            "2. Every relationship (triple) MUST include:\n"
+            "   - subject_id and object_id referencing entity ids\n"
+            "   - predicate: a lowercase_snake_case verb phrase (e.g. 'flew_with', 'employed_by', 'transferred_funds_to', 'visited', 'owns')\n"
+            "   - evidence_text: the EXACT verbatim quote from the document that proves this relationship\n"
+            "   - source_filename: the filename from the [Source: ...] header\n"
+            "   - source_page: the page number from the [Source: ...] header\n"
+            "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
+            "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, null otherwise\n"
+            "3. Do NOT invent relationships that aren't supported by the text.\n"
+            "4. Extract as many entities and relationships as the documents support.\n\n"
+            f"DOCUMENTS:\n{context}\n\n"
+            "Return JSON with 'entities' and 'triples' keys."
+        )
+
+        res = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CaseMap
+            )
+        )
+        output = res.parsed
+
+        import math
+        new_nodes = []
+        total = len(output.entities)
+        cx, cy = 400, 400
+        radius = max(200, total * 30)
+        for i, ent in enumerate(output.entities):
+            angle = (2 * math.pi * i) / max(total, 1)
+            new_nodes.append({
+                "id": ent.id,
+                "type": "entityNode",
+                "data": {
+                    "label": ent.label,
+                    "entityType": ent.type.upper(),
+                    "description": ent.description,
+                    "aliases": ent.aliases,
+                },
+                "position": {
+                    "x": cx + radius * math.cos(angle),
+                    "y": cy + radius * math.sin(angle),
+                },
+            })
+
+        seen_edge_ids = set()
+        new_edges = []
+        for triple in output.triples:
+            edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
+            if edge_id in seen_edge_ids:
+                continue
+            seen_edge_ids.add(edge_id)
+            new_edges.append({
+                "id": edge_id,
+                "source": triple.subject_id,
+                "target": triple.object_id,
+                "label": triple.predicate.replace("_", " "),
+                "animated": triple.confidence == "INFERRED",
+                "style": {"strokeDasharray": "5 5"} if triple.confidence == "INFERRED" else {},
+                "data": {
+                    "predicate": triple.predicate,
+                    "evidence_text": triple.evidence_text,
+                    "source_filename": triple.source_filename,
+                    "source_page": triple.source_page,
+                    "confidence": triple.confidence,
+                    "date_mentioned": triple.date_mentioned,
+                },
+            })
+
+        graph_store.add_elements(new_nodes, new_edges)
+
+        # Run community detection
+        try:
+            from api.graph_ops import compute_communities
+        except ImportError:
+            try:
+                from graph_ops import compute_communities
+            except ImportError:
+                compute_communities = None
+
+        if compute_communities:
+            graph_data = graph_store.load()
+            graph_data = compute_communities(graph_data)
+            updated = []
+            for node in graph_data.get("nodes", []):
+                if "communityId" in node["data"]:
+                    updated.append({
+                        "id": node["id"],
+                        "metadata": {
+                            "degree": node["data"].get("degree", 0),
+                            "communityId": node["data"]["communityId"],
+                            "communityColor": node["data"]["communityColor"],
+                        }
+                    })
+            if updated:
+                supabase.table("nodes").upsert(updated, on_conflict="id").execute()
+
+        return graph_store.load()
+    except Exception as e:
+        print(f"Targeted search failed: {e}")
+        import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 

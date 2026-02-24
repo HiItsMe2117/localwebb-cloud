@@ -49,7 +49,11 @@ function AppContent() {
   const [syncProgress, setSyncProgress] = useState(0);
   const [syncStatus, setSyncStatus] = useState('');
   const [focusTarget, setFocusTarget] = useState('');
-  const [strictMode, setStrictMode] = useState(false);
+
+  // Targeted keyword search state
+  const [targetedResults, setTargetedResults] = useState<{chunks: {id: string; text: string; filename: string; page: number; score: number}[]; stats: {total_mentions: number; unique_files: number}} | null>(null);
+  const [isTargetedSearching, setIsTargetedSearching] = useState(false);
+  const [expandedChunks, setExpandedChunks] = useState<Set<string>>(new Set());
 
   const { setCenter } = useReactFlow();
 
@@ -194,7 +198,6 @@ function AppContent() {
 
       let url = `/api/insights?depth=${depth}`;
       if (focus) url += `&focus=${encodeURIComponent(focus)}`;
-      if (strictMode) url += `&strict=true`;
 
       const res = await axios.get(url);
       
@@ -823,36 +826,133 @@ function AppContent() {
 
                        <div className="pt-2 mt-2 border-t border-white/5">
                           <label className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2 block">
-                            Targeted Extraction
+                            Keyword Search &amp; Network Builder
                           </label>
                           <div className="flex gap-2 mb-2">
-                            <input 
-                              type="text" 
+                            <input
+                              type="text"
                               value={focusTarget}
-                              onChange={(e) => setFocusTarget(e.target.value)}
-                              placeholder="e.g. Israel"
+                              onChange={(e) => { setFocusTarget(e.target.value); setTargetedResults(null); }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && focusTarget.trim() && !isTargetedSearching) {
+                                  setIsTargetedSearching(true);
+                                  setTargetedResults(null);
+                                  setExpandedChunks(new Set());
+                                  axios.post('/api/search/targeted', { keyword: focusTarget.trim() })
+                                    .then(res => setTargetedResults(res.data))
+                                    .catch(err => console.error('Targeted search failed:', err))
+                                    .finally(() => setIsTargetedSearching(false));
+                                }
+                              }}
+                              placeholder="e.g. Trump, Epstein, Boeing..."
                               className="flex-1 bg-black/40 border border-[rgba(84,84,88,0.65)] rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-white/20"
                             />
                             <button
-                              onClick={() => triggerInsights('deep', focusTarget)}
-                              disabled={!focusTarget.trim() || isSyncing}
-                              className="bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium text-[13px] transition-colors shadow-[0_0_10px_rgba(0,122,255,0.3)]"
+                              onClick={() => {
+                                if (!focusTarget.trim() || isTargetedSearching) return;
+                                setIsTargetedSearching(true);
+                                setTargetedResults(null);
+                                setExpandedChunks(new Set());
+                                axios.post('/api/search/targeted', { keyword: focusTarget.trim() })
+                                  .then(res => setTargetedResults(res.data))
+                                  .catch(err => console.error('Targeted search failed:', err))
+                                  .finally(() => setIsTargetedSearching(false));
+                              }}
+                              disabled={!focusTarget.trim() || isTargetedSearching}
+                              className="bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium text-[13px] transition-colors shadow-[0_0_10px_rgba(0,122,255,0.3)] flex items-center gap-1.5"
                             >
-                              Sync
+                              {isTargetedSearching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                              Search
                             </button>
                           </div>
-                          <div className="flex items-center gap-2 px-1">
-                            <input 
-                              type="checkbox" 
-                              id="strict-mode"
-                              checked={strictMode}
-                              onChange={(e) => setStrictMode(e.target.checked)}
-                              className="w-3 h-3 rounded bg-black border-[rgba(84,84,88,0.65)] text-[#007AFF] focus:ring-0"
-                            />
-                            <label htmlFor="strict-mode" className="text-[11px] text-[rgba(235,235,245,0.3)] font-medium cursor-pointer hover:text-[rgba(235,235,245,0.6)] transition-colors">
-                              Deep Clean (High-precision re-OCR for garbled text)
-                            </label>
-                          </div>
+
+                          {/* Results area */}
+                          {targetedResults && (
+                            <div className="mt-3 space-y-2">
+                              {/* Stats bar */}
+                              <div className="flex items-center gap-2 text-[12px]">
+                                <span className="text-[rgba(235,235,245,0.6)]">
+                                  Found <span className="font-bold text-white">{targetedResults.stats.total_mentions} mentions</span> across <span className="font-bold text-white">{targetedResults.stats.unique_files} files</span>
+                                </span>
+                              </div>
+
+                              {/* Chunk list */}
+                              {targetedResults.chunks.length > 0 && (
+                                <div className="max-h-[240px] overflow-y-auto rounded-lg border border-white/5 bg-black/30">
+                                  {targetedResults.chunks.map((chunk) => {
+                                    const isExpanded = expandedChunks.has(chunk.id);
+                                    return (
+                                      <button
+                                        key={chunk.id}
+                                        onClick={() => setExpandedChunks(prev => {
+                                          const next = new Set(prev);
+                                          if (next.has(chunk.id)) next.delete(chunk.id);
+                                          else next.add(chunk.id);
+                                          return next;
+                                        })}
+                                        className="w-full text-left px-3 py-2 border-b border-white/5 last:border-b-0 hover:bg-white/5 transition-colors"
+                                      >
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#007AFF]/20 text-[#007AFF] shrink-0">
+                                            {chunk.filename}
+                                          </span>
+                                          <span className="text-[10px] text-[rgba(235,235,245,0.3)] font-mono">p.{chunk.page}</span>
+                                        </div>
+                                        <p className="text-[11px] text-[rgba(235,235,245,0.5)] leading-relaxed">
+                                          {isExpanded ? chunk.text : chunk.text.slice(0, 200) + (chunk.text.length > 200 ? '...' : '')}
+                                        </p>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Build Network button */}
+                              {targetedResults.chunks.length > 0 && (
+                                <button
+                                  onClick={async () => {
+                                    setIsExtractingInsights(true);
+                                    setIsSyncing(true);
+                                    setSyncProgress(5);
+                                    setSyncStatus(`Extracting network for "${focusTarget}"...`);
+                                    const interval = setInterval(() => {
+                                      setSyncProgress(prev => (prev < 90 ? prev + Math.random() * 2 : prev));
+                                    }, 1500);
+                                    try {
+                                      const res = await axios.post('/api/search/targeted', {
+                                        keyword: focusTarget.trim(),
+                                        extract: true,
+                                      });
+                                      setSyncStatus('Extraction complete. Finalizing graph...');
+                                      setSyncProgress(95);
+                                      const rawNodes = res.data.nodes || [];
+                                      const rawEdges = res.data.edges || [];
+                                      if (res.data.communities) setCommunities(res.data.communities);
+                                      await applyForceLayout(rawNodes, rawEdges);
+                                      setTargetedResults(null);
+                                    } catch (err) {
+                                      console.error('Build network failed:', err);
+                                      setSyncStatus('Extraction failed. Please try again.');
+                                    } finally {
+                                      clearInterval(interval);
+                                      setSyncProgress(100);
+                                      setTimeout(() => {
+                                        setIsSyncing(false);
+                                        setIsExtractingInsights(false);
+                                        setSyncProgress(0);
+                                        setSyncStatus('');
+                                      }, 1000);
+                                    }
+                                  }}
+                                  disabled={isSyncing}
+                                  className="w-full py-2 rounded-lg bg-[#30D158] hover:bg-[#28b84c] disabled:opacity-50 text-white text-[13px] font-bold transition-colors flex items-center justify-center gap-2"
+                                >
+                                  <Network size={14} />
+                                  Build Network from {targetedResults.stats.total_mentions} Chunks
+                                </button>
+                              )}
+                            </div>
+                          )}
                        </div>
                      </div>
                   </div>
