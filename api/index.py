@@ -387,6 +387,7 @@ class TargetedSearchRequest(BaseModel):
 
 class InvestigateRequest(BaseModel):
     query: str
+    entity_id: Optional[str] = None
 
 class CreateCaseRequest(BaseModel):
     title: str
@@ -542,8 +543,9 @@ async def get_insights(depth: str = "standard", focus: Optional[str] = None, str
             "   - source_page: the page number from the [Source: ...] header\n"
             "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
             "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, null otherwise\n"
-            "3. Do NOT invent relationships that aren't supported by the text.\n"
-            "4. Extract as many entities and relationships as the documents support.\n\n"
+            "3. Do NOT use generic legal roles (e.g., 'THE WITNESS', 'THE DEFENDANT', 'THE AGENT', 'COUNSEL') as aliases. Instead, use the document context (headers, questions) to resolve these roles to the specific named entity they refer to.\n"
+            "4. Do NOT invent relationships that aren't supported by the text.\n"
+            "5. Extract as many entities and relationships as the documents support.\n\n"
             f"DOCUMENTS:\n{context}\n\n"
             "Return JSON with 'entities' and 'triples' keys."
         )
@@ -866,6 +868,21 @@ async def investigate(request: InvestigateRequest):
     except ImportError:
         from investigator import run_investigation
 
+    # Fetch entity context if provided
+    case_context = None
+    if request.entity_id:
+        try:
+            res = supabase.table("nodes").select("*").eq("id", request.entity_id).execute()
+            if res.data:
+                ent = res.data[0]
+                case_context = {
+                    "title": ent.get("label", ent["id"]),
+                    "summary": ent.get("description", ""),
+                    "entities": [ent.get("label", ent["id"])] + (ent.get("aliases") or []),
+                }
+        except Exception as e:
+            print(f"DEBUG: Failed to fetch entity context: {e}")
+
     # Skip reranker for investigation pipeline — multi-pass search provides
     # sufficient recall and the FlashRank model adds ~200MB memory overhead
     # which exceeds Vercel's serverless function limit.
@@ -877,6 +894,7 @@ async def investigate(request: InvestigateRequest):
             supabase_client=supabase,
             semantic_search_fn=_semantic_search_pass,
             rerank_fn=None,
+            case_context=case_context,
         ),
         media_type="text/event-stream",
     )
@@ -1184,8 +1202,9 @@ async def targeted_search(request: TargetedSearchRequest):
             "   - source_page: the page number from the [Source: ...] header\n"
             "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
             "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, null otherwise\n"
-            "3. Do NOT invent relationships that aren't supported by the text.\n"
-            "4. Extract as many entities and relationships as the documents support.\n\n"
+            "3. Do NOT use generic legal roles (e.g., 'THE WITNESS', 'THE DEFENDANT', 'THE AGENT', 'COUNSEL') as aliases. Instead, use the document context (headers, questions) to resolve these roles to the specific named entity they refer to.\n"
+            "4. Do NOT invent relationships that aren't supported by the text.\n"
+            "5. Extract as many entities and relationships as the documents support.\n\n"
             f"DOCUMENTS:\n{context}\n\n"
             "Return JSON with 'entities' and 'triples' keys."
         )

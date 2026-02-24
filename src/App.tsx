@@ -19,6 +19,7 @@ import {
   Type,
   Shield,
   Search,
+  CircleOff,
 } from 'lucide-react';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -44,6 +45,7 @@ function AppContent() {
   const [communities, setCommunities] = useState<Community[]>([]);
   const [yearFilter, setYearFilter] = useState(2026);
   const [minDegree, setMinDegree] = useState(1);
+  const [showOutliers, setShowOutliers] = useState(true);
   const [showEdgeLabels, setShowEdgeLabels] = useState(true);
   const [isLayouting, setIsLayouting] = useState(false);
   const [syncProgress, setSyncProgress] = useState(0);
@@ -250,10 +252,15 @@ function AppContent() {
 
   // 3. Degree-filter nodes, then prune edges to visible nodes
   const { filteredNodes, filteredEdges } = useMemo(() => {
-    // Nodes that pass the degree threshold
+    // Nodes that pass the degree threshold and outlier toggle
     const degreeFiltered = new Set<string>();
     for (const n of nodes) {
       const deg = degreeMap.get(n.id) || 0;
+      
+      // If outliers are hidden, node must have degree > 1
+      if (!showOutliers && deg <= 1) continue;
+      
+      // Apply existing minDegree filter
       if (deg >= deferredMinDegree) degreeFiltered.add(n.id);
     }
 
@@ -715,6 +722,16 @@ function AppContent() {
                     <Plus size={14} />
                   </button>
                 </div>
+                <button
+                  onClick={() => setShowOutliers(!showOutliers)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border border-[rgba(84,84,88,0.65)] ${
+                    showOutliers ? 'bg-[#1C1C1E] text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E]' : 'bg-[#FF9F0A] text-white border-[#FF9F0A]'
+                  }`}
+                  title={showOutliers ? "Hide Outliers (1 connection)" : "Show All Outliers"}
+                >
+                  <CircleOff size={14} />
+                  {showOutliers ? 'Outliers On' : 'Outliers Off'}
+                </button>
                 <button
                   onClick={() => setShowEdgeLabels(!showEdgeLabels)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border border-[rgba(84,84,88,0.65)] ${
