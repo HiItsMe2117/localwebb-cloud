@@ -1,8 +1,10 @@
 import os
+import re
 import json
 import shutil
 import tempfile
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request
@@ -1163,7 +1165,7 @@ async def targeted_search(request: TargetedSearchRequest):
 
         # --- Extract mode ---
         if not chunks:
-            return graph_store.load()
+            return {"extracted": {"entities": 0, "triples": 0}, **graph_store.load()}
 
         context_parts = []
         for c in chunks:
@@ -1272,7 +1274,7 @@ async def targeted_search(request: TargetedSearchRequest):
             if updated:
                 supabase.table("nodes").upsert(updated, on_conflict="id").execute()
 
-        return graph_store.load()
+        return {"extracted": {"entities": len(new_nodes), "triples": len(new_edges)}, **graph_store.load()}
     except Exception as e:
         print(f"Targeted search failed: {e}")
         import traceback; traceback.print_exc()
@@ -1478,6 +1480,204 @@ async def detect_communities():
     except Exception as e:
         print(f"Community detection failed: {e}")
         return graph_store.load()
+
+
+@app.post("/api/graph/deduplicate")
+async def deduplicate_graph():
+    """Two-pass entity deduplication: heuristic merge then Gemini fuzzy merge."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+
+    try:
+        # Load raw nodes and edges from Supabase
+        raw_nodes = graph_store._fetch_all("nodes")
+        raw_edges = graph_store._fetch_all("edges")
+
+        if not raw_nodes:
+            return {"merged": 0, "removed_nodes": 0, "removed_edges": 0, **graph_store.load()}
+
+        # --- Pass 1: Heuristic merge by (normalized_label, type) ---
+        def normalize(s):
+            return re.sub(r'[^a-z0-9\s]', '', s.lower()).strip()
+
+        groups = defaultdict(list)
+        for n in raw_nodes:
+            key = (normalize(n.get("label", n["id"])), (n.get("type") or "UNKNOWN").upper())
+            groups[key].append(n)
+
+        merged_entities = {}  # canonical_id -> node dict
+        id_remap = {}         # old_id -> canonical_id
+
+        for (_norm_label, _etype), group in groups.items():
+            group.sort(key=lambda e: len(e.get("description", "") or ""), reverse=True)
+            canonical = group[0]
+
+            all_aliases = set()
+            all_ids = set()
+            for ent in group:
+                all_aliases.add(ent.get("label", ent["id"]))
+                all_aliases.update(ent.get("aliases") or [])
+                all_ids.add(ent["id"])
+
+            all_aliases.discard(canonical.get("label", canonical["id"]))
+            canonical["aliases"] = sorted(all_aliases)
+
+            for old_id in all_ids:
+                id_remap[old_id] = canonical["id"]
+
+            merged_entities[canonical["id"]] = canonical
+
+        heuristic_removed = len(raw_nodes) - len(merged_entities)
+
+        # --- Pass 2: Gemini fuzzy merge ---
+        gemini_merges = 0
+        if client and len(merged_entities) > 10:
+            entity_list = []
+            for ent in merged_entities.values():
+                aliases_str = ", ".join((ent.get("aliases") or [])[:5])
+                entity_list.append(
+                    f"{ent['id']} | {ent.get('label', ent['id'])} | {ent.get('type', 'UNKNOWN')} | aliases: {aliases_str}"
+                )
+
+            batch_size = 500
+            all_merge_groups = []
+
+            for i in range(0, len(entity_list), batch_size):
+                batch = entity_list[i:i + batch_size]
+                batch_text = "\n".join(batch)
+
+                merge_prompt = (
+                    "You are deduplicating a knowledge graph. Below is a list of entities "
+                    "(id | label | type | aliases).\n"
+                    "Identify groups of entities that refer to the SAME real-world entity "
+                    "and should be merged.\n"
+                    "Only group entities that are clearly the same (e.g., 'FBI' and "
+                    "'Federal Bureau of Investigation', 'Les Wexner' and 'Leslie Wexner').\n"
+                    "Do NOT merge entities that are merely related.\n\n"
+                    f"ENTITIES:\n{batch_text}\n\n"
+                    "Return a JSON array of merge groups. Each group is an array of entity "
+                    "IDs to merge.\n"
+                    "Example: [[\"id_1\", \"id_2\"], [\"id_3\", \"id_4\", \"id_5\"]]\n"
+                    "If no merges needed, return an empty array: []"
+                )
+
+                try:
+                    res = client.models.generate_content(
+                        model="gemini-2.0-flash",
+                        contents=merge_prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                        )
+                    )
+                    merge_groups = json.loads(res.text)
+                    if isinstance(merge_groups, list):
+                        all_merge_groups.extend(merge_groups)
+                except Exception as e:
+                    print(f"Dedup Gemini batch {i // batch_size + 1} failed: {e}")
+
+            for group in all_merge_groups:
+                if not isinstance(group, list) or len(group) < 2:
+                    continue
+                valid_ids = [eid for eid in group if eid in merged_entities]
+                if len(valid_ids) < 2:
+                    continue
+
+                valid_ids.sort(
+                    key=lambda eid: len(merged_entities[eid].get("description", "") or ""),
+                    reverse=True,
+                )
+                canonical_id = valid_ids[0]
+                canonical = merged_entities[canonical_id]
+
+                for other_id in valid_ids[1:]:
+                    other = merged_entities.pop(other_id)
+
+                    aliases = set(canonical.get("aliases") or [])
+                    aliases.add(other.get("label", other["id"]))
+                    aliases.update(other.get("aliases") or [])
+                    aliases.discard(canonical.get("label", canonical["id"]))
+                    canonical["aliases"] = sorted(aliases)
+
+                    if len(other.get("description", "") or "") > len(canonical.get("description", "") or ""):
+                        canonical["description"] = other["description"]
+
+                    for k, v in list(id_remap.items()):
+                        if v == other_id:
+                            id_remap[k] = canonical_id
+                    id_remap[other_id] = canonical_id
+                    gemini_merges += 1
+
+        # Collect IDs that need remapping (old_id != canonical_id)
+        remap_pairs = [(old, new) for old, new in id_remap.items() if old != new]
+        duplicate_ids = [old for old, _ in remap_pairs]
+
+        if not duplicate_ids:
+            return {"merged": 0, "removed_nodes": 0, "removed_edges": 0, **graph_store.load()}
+
+        # --- Edge rewiring in Supabase (before deleting nodes due to FK) ---
+        CHUNK = 100
+        for i in range(0, len(remap_pairs), CHUNK):
+            chunk = remap_pairs[i:i + CHUNK]
+            for old_id, canonical_id in chunk:
+                supabase.table("edges").update({"source": canonical_id}).eq("source", old_id).execute()
+                supabase.table("edges").update({"target": canonical_id}).eq("target", old_id).execute()
+
+        # Delete self-loop edges
+        self_loops = supabase.table("edges").select("id, source, target").execute()
+        self_loop_ids = [e["id"] for e in (self_loops.data or []) if e["source"] == e["target"]]
+        for i in range(0, len(self_loop_ids), CHUNK):
+            chunk = self_loop_ids[i:i + CHUNK]
+            supabase.table("edges").delete().in_("id", chunk).execute()
+
+        # Delete duplicate edges (same source+predicate+target, keep first)
+        all_edges_now = graph_store._fetch_all("edges")
+        seen_edge_keys = {}
+        dup_edge_ids = []
+        for e in all_edges_now:
+            key = (e["source"], e["predicate"], e["target"])
+            if key in seen_edge_keys:
+                dup_edge_ids.append(e["id"])
+            else:
+                seen_edge_keys[key] = e["id"]
+        for i in range(0, len(dup_edge_ids), CHUNK):
+            chunk = dup_edge_ids[i:i + CHUNK]
+            supabase.table("edges").delete().in_("id", chunk).execute()
+
+        removed_edges = len(self_loop_ids) + len(dup_edge_ids)
+
+        # --- Node cleanup: upsert canonical nodes, delete duplicates ---
+        canonical_records = []
+        for ent in merged_entities.values():
+            canonical_records.append({
+                "id": ent["id"],
+                "label": ent.get("label", ent["id"]),
+                "type": ent.get("type", "UNKNOWN"),
+                "description": ent.get("description", ""),
+                "aliases": ent.get("aliases", []),
+            })
+        for i in range(0, len(canonical_records), CHUNK):
+            chunk = canonical_records[i:i + CHUNK]
+            supabase.table("nodes").upsert(chunk, on_conflict="id").execute()
+
+        for i in range(0, len(duplicate_ids), CHUNK):
+            chunk = duplicate_ids[i:i + CHUNK]
+            supabase.table("edges").delete().in_("source", chunk).execute()
+            supabase.table("edges").delete().in_("target", chunk).execute()
+            supabase.table("nodes").delete().in_("id", chunk).execute()
+
+        merge_count = heuristic_removed + gemini_merges
+        print(f"Dedup complete: {merge_count} merges, {len(duplicate_ids)} nodes removed, {removed_edges} edges cleaned")
+
+        return {
+            "merged": merge_count,
+            "removed_nodes": len(duplicate_ids),
+            "removed_edges": removed_edges,
+            **graph_store.load()
+        }
+    except Exception as e:
+        print(f"Deduplication failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": f"Deduplication failed: {str(e)}"})
 
 
 if __name__ == "__main__":

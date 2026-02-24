@@ -815,13 +815,54 @@ function AppContent() {
                          <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Heavy sampling across all themes. Captures more nuances.</span>
                        </button>
 
-                       <button 
+                       <button
                          onClick={() => triggerInsights('full')}
                          disabled={isSyncing}
                          className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-[#007AFF]/10 border border-[#007AFF]/30 hover:bg-[#007AFF]/20 transition-colors group text-left"
                        >
                          <span className="text-[13px] font-bold text-[#007AFF]">Full Reconstruction</span>
                          <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Exhaustive Pinecone sweep. Maximum entity density. (Expensive)</span>
+                       </button>
+
+                       <button
+                         onClick={async () => {
+                           setIsExtractingInsights(true);
+                           setIsSyncing(true);
+                           setSyncProgress(5);
+                           setSyncStatus('Deduplicating graph...');
+                           const interval = setInterval(() => {
+                             setSyncProgress(prev => (prev < 90 ? prev + Math.random() * 3 : prev));
+                           }, 1500);
+                           try {
+                             const res = await axios.post('/api/graph/deduplicate');
+                             const { merged, removed_nodes, removed_edges } = res.data;
+                             if (merged === 0) {
+                               setSyncStatus('No duplicates found');
+                             } else {
+                               setSyncStatus(`Merged ${merged} groups, removed ${removed_nodes} nodes, ${removed_edges} duplicate edges`);
+                             }
+                             setSyncProgress(95);
+                             await loadGraph();
+                             if (merged > 0) setActiveView('graph');
+                           } catch (err) {
+                             console.error('Deduplication failed:', err);
+                             setSyncStatus('Deduplication failed. Please try again.');
+                           } finally {
+                             clearInterval(interval);
+                             setSyncProgress(100);
+                             setTimeout(() => {
+                               setIsSyncing(false);
+                               setIsExtractingInsights(false);
+                               setSyncProgress(0);
+                               setSyncStatus('');
+                             }, 1500);
+                           }
+                         }}
+                         disabled={isSyncing}
+                         className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-black/40 border border-white/5 hover:bg-black/60 transition-colors group text-left"
+                       >
+                         <span className="text-[13px] font-bold text-white group-hover:text-[#FF453A]">Deduplicate Graph</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Merge duplicate entities and rewire edges. AI-assisted fuzzy matching.</span>
                        </button>
 
                        <div className="pt-2 mt-2 border-t border-white/5">
@@ -923,12 +964,16 @@ function AppContent() {
                                         keyword: focusTarget.trim(),
                                         extract: true,
                                       });
-                                      setSyncStatus('Extraction complete. Finalizing graph...');
-                                      setSyncProgress(95);
-                                      const rawNodes = res.data.nodes || [];
-                                      const rawEdges = res.data.edges || [];
-                                      if (res.data.communities) setCommunities(res.data.communities);
-                                      await applyForceLayout(rawNodes, rawEdges);
+                                      const ext = res.data.extracted || { entities: 0, triples: 0 };
+                                      if (ext.entities === 0) {
+                                        setSyncStatus('No entities extracted — try a different keyword.');
+                                        setSyncProgress(100);
+                                      } else {
+                                        setSyncStatus(`Extracted ${ext.entities} entities, ${ext.triples} relationships`);
+                                        setSyncProgress(95);
+                                        await loadGraph();
+                                        setActiveView('graph');
+                                      }
                                       setTargetedResults(null);
                                     } catch (err) {
                                       console.error('Build network failed:', err);
