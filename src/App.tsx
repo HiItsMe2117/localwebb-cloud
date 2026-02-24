@@ -16,15 +16,19 @@ import {
   HardDrive,
   Plus,
   Minus,
-  Type
+  Type,
+  Shield,
+  Search,
 } from 'lucide-react';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
 import axios from 'axios';
 import { getLayoutedElements, computeDegreeMap } from './utils/layout';
-import type { ChatMessage, Community } from './types';
+import CasesPanel from './components/CasesPanel';
+import CaseDetail from './components/CaseDetail';
+import type { ChatMessage, Community, Case, ScanFinding } from './types';
 
-type View = 'chat' | 'graph' | 'docs' | 'data';
+type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
 function AppContent() {
   const [activeView, setActiveView] = useState<View>('chat');
@@ -68,6 +72,17 @@ function AppContent() {
   const [isExtractingInsights, setIsExtractingInsights] = useState(false);
   const hasAttemptedInitialLoad = useRef(false);
   const hasAutoTriggered = useRef(false);
+
+  // Cases state
+  const [cases, setCases] = useState<Case[]>([]);
+  const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanFindings, setScanFindings] = useState<ScanFinding[]>([]);
+
+  // Graph search state
+  const [graphSearch, setGraphSearch] = useState('');
+  const [graphSearchIndex, setGraphSearchIndex] = useState(0);
+  const graphSearchRef = useRef<HTMLDivElement>(null);
 
   // --- Helpers ---
 
@@ -267,6 +282,24 @@ function AppContent() {
     return { filteredNodes: fNodes, filteredEdges: fEdges };
   }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, deferredMinDegree]);
 
+  // --- Graph search ---
+  const graphSearchResults = useMemo(() => {
+    const q = graphSearch.trim().toLowerCase();
+    if (!q) return [];
+    const qLower = q;
+    return filteredNodes
+      .filter((n) => n.data?.label?.toLowerCase().includes(qLower))
+      .sort((a, b) => {
+        const aLabel = (a.data?.label || '').toLowerCase();
+        const bLabel = (b.data?.label || '').toLowerCase();
+        const aPrefix = aLabel.startsWith(qLower) ? 0 : 1;
+        const bPrefix = bLabel.startsWith(qLower) ? 0 : 1;
+        if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+        return (b.data?.degree || 0) - (a.data?.degree || 0);
+      })
+      .slice(0, 8);
+  }, [graphSearch, filteredNodes]);
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const file = e.target.files[0];
@@ -301,6 +334,26 @@ function AppContent() {
     setSelectedNode(null);
     setSelectedEdge(null);
   }, []);
+
+  const selectSearchResult = useCallback((node: Node) => {
+    setGraphSearch('');
+    setGraphSearchIndex(0);
+    handleNodeClick(node);
+    setCenter(node.position.x, node.position.y, { zoom: 1.2, duration: 800 });
+  }, [handleNodeClick, setCenter]);
+
+  // Click-outside to dismiss search
+  useEffect(() => {
+    if (!graphSearch) return;
+    const handler = (e: MouseEvent) => {
+      if (graphSearchRef.current && !graphSearchRef.current.contains(e.target as HTMLElement)) {
+        setGraphSearch('');
+        setGraphSearchIndex(0);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [graphSearch]);
 
   const sendQuery = async (text: string) => {
     if (!text.trim() || isStreaming) return;
@@ -422,8 +475,85 @@ function AppContent() {
   const handleSend = () => sendQuery(inputValue.trim());
   const handleSuggestedQuery = (query: string) => sendQuery(query);
 
+  // --- Cases functions ---
+  const loadCases = async () => {
+    try {
+      const res = await axios.get('/api/cases');
+      setCases(res.data.cases || []);
+    } catch (err) {
+      console.error('Failed to load cases:', err);
+    }
+  };
+
+  const runScan = async () => {
+    setIsScanning(true);
+    setScanFindings([]);
+    try {
+      const res = await axios.post('/api/cases/scan');
+      setScanFindings(res.data.findings || []);
+    } catch (err) {
+      console.error('Scan failed:', err);
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const acceptFinding = async (finding: ScanFinding) => {
+    try {
+      const res = await axios.post('/api/cases', {
+        title: finding.title,
+        category: finding.category,
+        summary: finding.summary,
+        confidence: finding.confidence,
+        entities: finding.entity_ids,
+        suggested_questions: finding.suggested_questions,
+      });
+      setCases(prev => [res.data.case, ...prev]);
+      setScanFindings(prev => prev.filter(f => f.title !== finding.title));
+    } catch (err) {
+      console.error('Failed to create case:', err);
+    }
+  };
+
+  const dismissFinding = (finding: ScanFinding) => {
+    setScanFindings(prev => prev.filter(f => f.title !== finding.title));
+  };
+
+  const acceptAllFindings = async () => {
+    for (const f of scanFindings) {
+      await acceptFinding(f);
+    }
+  };
+
+  const updateCaseStatus = async (caseId: string, status: string) => {
+    try {
+      await axios.patch(`/api/cases/${caseId}`, { status });
+      setCases(prev => prev.map(c => c.id === caseId ? { ...c, status: status as Case['status'] } : c));
+    } catch (err) {
+      console.error('Failed to update case:', err);
+    }
+  };
+
+  const deleteCase = async (caseId: string) => {
+    try {
+      await axios.delete(`/api/cases/${caseId}`);
+      setCases(prev => prev.filter(c => c.id !== caseId));
+      if (activeCaseId === caseId) setActiveCaseId(null);
+    } catch (err) {
+      console.error('Failed to delete case:', err);
+    }
+  };
+
+  // Load cases when switching to cases tab
+  useEffect(() => {
+    if (activeView === 'cases') {
+      loadCases();
+    }
+  }, [activeView]);
+
   const tabs: { id: View; label: string; icon: typeof MessageSquare }[] = [
     { id: 'chat', label: 'Chat', icon: MessageSquare },
+    { id: 'cases', label: 'Cases', icon: Shield },
     { id: 'graph', label: 'Graph', icon: Network },
     { id: 'docs', label: 'Docs', icon: Database },
     { id: 'data', label: 'Data', icon: HardDrive },
@@ -492,9 +622,67 @@ function AppContent() {
 
         {activeView === 'graph' && (
           <div className="flex-1 flex flex-col h-full relative">
-            <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between">
-              <h1 className="text-[28px] font-bold tracking-tight text-white">Graph</h1>
-              <div className="flex items-center gap-3">
+            <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between gap-3">
+              <h1 className="text-[28px] font-bold tracking-tight text-white shrink-0">Graph</h1>
+
+              {/* Search */}
+              <div ref={graphSearchRef} className="relative max-w-[260px] flex-1">
+                <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)] focus-within:border-[#007AFF] transition-colors">
+                  <Search size={14} className="text-[rgba(235,235,245,0.3)] shrink-0" />
+                  <input
+                    type="text"
+                    value={graphSearch}
+                    onChange={(e) => { setGraphSearch(e.target.value); setGraphSearchIndex(0); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') { setGraphSearch(''); setGraphSearchIndex(0); }
+                      if (!graphSearchResults.length) return;
+                      if (e.key === 'ArrowDown') { e.preventDefault(); setGraphSearchIndex(i => (i + 1) % graphSearchResults.length); }
+                      if (e.key === 'ArrowUp') { e.preventDefault(); setGraphSearchIndex(i => (i - 1 + graphSearchResults.length) % graphSearchResults.length); }
+                      if (e.key === 'Enter') { e.preventDefault(); selectSearchResult(graphSearchResults[graphSearchIndex]); }
+                    }}
+                    placeholder="Search entities..."
+                    className="bg-transparent text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none w-full"
+                  />
+                </div>
+
+                {/* Search results dropdown */}
+                {graphSearchResults.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl overflow-hidden shadow-2xl z-50 max-h-[320px] overflow-y-auto">
+                    {graphSearchResults.map((node, i) => {
+                      const entityType = (node.data?.entityType || '').toUpperCase();
+                      const typeColors: Record<string, string> = {
+                        PERSON: '#60a5fa', ORGANIZATION: '#fbbf24', LOCATION: '#4ade80',
+                        EVENT: '#a78bfa', DOCUMENT: '#fb923c', FINANCIAL_ENTITY: '#f87171',
+                      };
+                      const color = typeColors[entityType] || '#9ca3af';
+                      return (
+                        <button
+                          key={node.id}
+                          onClick={() => selectSearchResult(node)}
+                          onMouseEnter={() => setGraphSearchIndex(i)}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                            i === graphSearchIndex ? 'bg-[#007AFF]/20' : 'hover:bg-[#2C2C2E]'
+                          }`}
+                        >
+                          <div
+                            className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+                            style={{ backgroundColor: `${color}20` }}
+                          >
+                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                          </div>
+                          <div className="flex-1 overflow-hidden">
+                            <p className="text-[13px] font-medium text-white truncate">{node.data?.label}</p>
+                            <p className="text-[10px] uppercase tracking-wider font-bold" style={{ color }}>{entityType}</p>
+                          </div>
+                          <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono shrink-0">{node.data?.degree || 0}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3 shrink-0">
                 <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
                   <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
                     {yearFilter >= 2026 ? 'All' : yearFilter}
@@ -699,6 +887,28 @@ function AppContent() {
               </div>
             </div>
           </div>
+        )}
+
+        {activeView === 'cases' && (
+          activeCaseId ? (
+            <CaseDetail
+              caseId={activeCaseId}
+              onBack={() => setActiveCaseId(null)}
+              onStatusChange={updateCaseStatus}
+              onDelete={deleteCase}
+            />
+          ) : (
+            <CasesPanel
+              cases={cases}
+              scanFindings={scanFindings}
+              isScanning={isScanning}
+              onScan={runScan}
+              onAccept={acceptFinding}
+              onDismiss={dismissFinding}
+              onAcceptAll={acceptAllFindings}
+              onOpenCase={setActiveCaseId}
+            />
+          )
         )}
 
         {activeView === 'data' && (

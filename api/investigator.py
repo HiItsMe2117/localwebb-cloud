@@ -59,10 +59,24 @@ async def run_investigation(
     supabase_client,
     semantic_search_fn,
     rerank_fn=None,
+    case_context: dict = None,
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that runs a multi-step investigation and yields SSE events.
+    Optional case_context dict enriches the query with case-specific info:
+      { title, summary, entities, suggested_questions }
     """
+    # If case context provided, enrich the query
+    if case_context:
+        enriched_parts = [query]
+        if case_context.get("summary"):
+            enriched_parts.append(f"Case background: {case_context['summary']}")
+        if case_context.get("entities"):
+            enriched_parts.append(f"Key entities: {', '.join(case_context['entities'][:10])}")
+        if case_context.get("suggested_questions"):
+            enriched_parts.append(f"Investigation angles: {'; '.join(case_context['suggested_questions'][:4])}")
+        query = "\n".join(enriched_parts)
+
     try:
         async for event in _run_investigation_inner(
             query, genai_client, pinecone_index, supabase_client,

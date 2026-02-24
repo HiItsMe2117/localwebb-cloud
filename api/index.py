@@ -3,6 +3,7 @@ import json
 import shutil
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -380,6 +381,21 @@ class FilteredQueryRequest(BaseModel):
 
 class InvestigateRequest(BaseModel):
     query: str
+
+class CreateCaseRequest(BaseModel):
+    title: str
+    category: str
+    summary: str
+    confidence: float = 0.5
+    entities: List[str] = []
+    suggested_questions: List[str] = []
+
+class UpdateCaseRequest(BaseModel):
+    status: Optional[str] = None
+    title: Optional[str] = None
+
+class AddNoteRequest(BaseModel):
+    content: str
 
 # --- Endpoints ---
 
@@ -858,6 +874,219 @@ async def investigate(request: InvestigateRequest):
         ),
         media_type="text/event-stream",
     )
+
+
+# ---- Cases endpoints ----
+
+@app.post("/api/cases/scan")
+async def scan_for_cases():
+    """Run the suspicious activity scanner across graph + documents."""
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    if not index:
+        return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
+
+    try:
+        try:
+            from api.scanner import run_scan
+        except ImportError:
+            from scanner import run_scan
+
+        import asyncio
+        findings = await asyncio.to_thread(
+            run_scan, client, supabase, index, _semantic_search_pass
+        )
+        return {"findings": findings}
+    except Exception as e:
+        print(f"CRITICAL: Scan failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": f"Scan failed: {str(e)}"})
+
+
+@app.get("/api/cases")
+async def list_cases():
+    """List all cases, ordered by updated_at desc."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        res = supabase.table("cases").select("*").order("updated_at", desc=True).execute()
+        return {"cases": res.data or []}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases")
+async def create_case(request: CreateCaseRequest):
+    """Accept a finding — insert into cases table."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        row = {
+            "title": request.title,
+            "category": request.category,
+            "summary": request.summary,
+            "status": "active",
+            "confidence": request.confidence,
+            "entities": request.entities,
+            "suggested_questions": request.suggested_questions,
+        }
+        res = supabase.table("cases").insert(row).execute()
+        return {"case": res.data[0] if res.data else row}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/cases/{case_id}")
+async def get_case(case_id: str):
+    """Get a case with its evidence."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        case_res = supabase.table("cases").select("*").eq("id", case_id).execute()
+        if not case_res.data:
+            return JSONResponse(status_code=404, content={"error": "Case not found"})
+
+        evidence_res = supabase.table("case_evidence").select("*").eq("case_id", case_id).order("created_at", desc=True).execute()
+
+        return {
+            "case": case_res.data[0],
+            "evidence": evidence_res.data or [],
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/investigate")
+async def investigate_case(case_id: str):
+    """Run scoped investigation for a case. Returns SSE stream."""
+    if not index:
+        return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+
+    # Load case data
+    case_res = supabase.table("cases").select("*").eq("id", case_id).execute()
+    if not case_res.data:
+        return JSONResponse(status_code=404, content={"error": "Case not found"})
+
+    case_data = case_res.data[0]
+
+    try:
+        from api.investigator import run_investigation
+    except ImportError:
+        from investigator import run_investigation
+
+    case_context = {
+        "title": case_data["title"],
+        "summary": case_data["summary"],
+        "entities": case_data.get("entities", []),
+        "suggested_questions": case_data.get("suggested_questions", []),
+    }
+
+    query = f"Investigate: {case_data['title']}"
+
+    async def stream_and_save():
+        full_text = ""
+        all_sources = []
+        async for event in run_investigation(
+            query=query,
+            genai_client=client,
+            pinecone_index=index,
+            supabase_client=supabase,
+            semantic_search_fn=_semantic_search_pass,
+            rerank_fn=None,
+            case_context=case_context,
+        ):
+            yield event
+            # Collect text and sources for saving
+            try:
+                if event.startswith("data: "):
+                    data = json.loads(event[6:].strip())
+                    if data.get("type") == "text":
+                        full_text += data.get("text", "")
+                    elif data.get("type") == "sources":
+                        all_sources = data.get("sources", [])
+                    elif data.get("type") == "done" and full_text:
+                        # Save evidence
+                        try:
+                            supabase.table("case_evidence").insert({
+                                "case_id": case_id,
+                                "type": "investigation",
+                                "content": full_text,
+                                "sources": all_sources,
+                            }).execute()
+                            supabase.table("cases").update({"updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", case_id).execute()
+                        except Exception as save_err:
+                            print(f"DEBUG: Failed to save case evidence: {save_err}")
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+    return StreamingResponse(stream_and_save(), media_type="text/event-stream")
+
+
+@app.post("/api/cases/{case_id}/notes")
+async def add_case_note(case_id: str, request: AddNoteRequest):
+    """Add a note to a case."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        # Verify case exists
+        case_res = supabase.table("cases").select("id").eq("id", case_id).execute()
+        if not case_res.data:
+            return JSONResponse(status_code=404, content={"error": "Case not found"})
+
+        res = supabase.table("case_evidence").insert({
+            "case_id": case_id,
+            "type": "note",
+            "content": request.content,
+            "sources": None,
+        }).execute()
+
+        # Update case timestamp
+        supabase.table("cases").update({"updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", case_id).execute()
+
+        return {"evidence": res.data[0] if res.data else {}}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/{case_id}")
+async def update_case(case_id: str, request: UpdateCaseRequest):
+    """Update case status or title."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        updates = {}
+        if request.status is not None:
+            updates["status"] = request.status
+        if request.title is not None:
+            updates["title"] = request.title
+        if not updates:
+            return JSONResponse(status_code=400, content={"error": "No fields to update"})
+
+        updates["updated_at"] = "now()"
+        res = supabase.table("cases").update(updates).eq("id", case_id).execute()
+        if not res.data:
+            return JSONResponse(status_code=404, content={"error": "Case not found"})
+        return {"case": res.data[0]}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/cases/{case_id}")
+async def delete_case(case_id: str):
+    """Delete a case and cascade evidence."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        supabase.table("cases").delete().eq("id", case_id).execute()
+        return {"status": "deleted"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.post("/api/upload")

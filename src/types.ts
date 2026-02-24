@@ -31,6 +31,46 @@ export interface ChatMessage {
   followUpQuestions?: string[];
 }
 
+export interface ScanFinding {
+  title: string;
+  category: string;
+  summary: string;
+  confidence: number;
+  entity_ids: string[];
+  suggested_questions: string[];
+}
+
+export interface Case {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  status: 'proposed' | 'active' | 'closed';
+  confidence: number;
+  entities: string[];
+  suggested_questions: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CaseEvidence {
+  id: string;
+  case_id: string;
+  type: 'investigation' | 'note' | 'fact_check';
+  content: string;
+  sources: { filename: string; page: number | string; score: number }[] | null;
+  created_at: string;
+}
+
+export const CASE_CATEGORIES: Record<string, { label: string; color: string }> = {
+  money_laundering: { label: 'Money Laundering', color: '#FF9F0A' },
+  fraud:            { label: 'Fraud',            color: '#FF453A' },
+  trafficking:      { label: 'Trafficking',      color: '#AF52DE' },
+  tax_evasion:      { label: 'Tax Evasion',      color: '#30D158' },
+  obstruction:      { label: 'Obstruction',      color: '#5AC8FA' },
+  other:            { label: 'Other',            color: '#8E8E93' },
+};
+
 export const DOC_TYPES = [
   { value: '', label: 'All Documents' },
   { value: 'flight_log', label: 'Flight Logs' },
