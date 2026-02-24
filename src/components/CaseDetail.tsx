@@ -66,7 +66,6 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
       const decoder = new TextDecoder();
       let buffer = '';
       let fullText = '';
-      let _finalSources: any[] = [];
       const stepsMap = new Map<string, InvestigationStep>();
 
       while (true) {
@@ -89,8 +88,6 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
             } else if (eventType === 'text' || (!eventType && data.text)) {
               fullText += data.text;
               setStreamingText(fullText);
-            } else if (eventType === 'sources' || (!eventType && data.sources)) {
-              _finalSources = data.sources;
             }
           } catch {
             // skip malformed
@@ -106,8 +103,6 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
             const data = JSON.parse(line.slice(6));
             if (data.type === 'text' || (!data.type && data.text)) {
               fullText += data.text;
-            } else if (data.type === 'sources') {
-              _finalSources = data.sources;
             }
           } catch {}
         }
