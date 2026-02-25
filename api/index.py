@@ -384,6 +384,9 @@ class FilteredQueryRequest(BaseModel):
 class TargetedSearchRequest(BaseModel):
     keyword: str
     extract: bool = False
+    page: int = 1
+    page_size: int = 50
+    search_mode: str = "fulltext"  # "fulltext" or "exact"
 
 class InvestigateRequest(BaseModel):
     query: str
@@ -1132,9 +1135,9 @@ async def delete_case(case_id: str):
 
 @app.post("/api/search/targeted")
 async def targeted_search(request: TargetedSearchRequest):
-    """Keyword search + optional network extraction."""
-    if not index:
-        return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
+    """Keyword search + optional network extraction using Supabase full-text search."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     if not client:
         return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
 
@@ -1143,68 +1146,75 @@ async def targeted_search(request: TargetedSearchRequest):
         return JSONResponse(status_code=400, content={"error": "keyword is required"})
 
     try:
-        # 1. Embed the keyword once
-        emb_res = client.models.embed_content(
-            model="gemini-embedding-001", contents=[keyword]
-        )
-        embedding = emb_res.embeddings[0].values
+        page = max(1, request.page)
+        page_size = max(1, min(200, request.page_size))
+        offset = (page - 1) * page_size
 
-        # 2. Three Pinecone queries: semantic + people filter + orgs filter
-        sem_results = index.query(vector=embedding, top_k=200, include_metadata=True)
-        people_results = index.query(
-            vector=embedding, top_k=200, include_metadata=True,
-            filter={"people": {"$in": [keyword]}}
-        )
-        org_results = index.query(
-            vector=embedding, top_k=200, include_metadata=True,
-            filter={"organizations": {"$in": [keyword]}}
-        )
+        # Query Supabase via RPC
+        if request.search_mode == "exact":
+            rpc_result = supabase.rpc("search_chunks_exact", {
+                "search_query": keyword,
+                "result_limit": page_size,
+                "result_offset": offset,
+            }).execute()
+        else:
+            rpc_result = supabase.rpc("search_chunks", {
+                "search_query": keyword,
+                "result_limit": page_size,
+                "result_offset": offset,
+            }).execute()
 
-        # 3. Deduplicate by vector ID
-        seen_ids = set()
-        all_matches = []
-        for result_set in [sem_results, people_results, org_results]:
-            for r in result_set.matches:
-                if r.id not in seen_ids and r.metadata:
-                    seen_ids.add(r.id)
-                    all_matches.append(r)
+        rows = rpc_result.data or []
 
-        # 4. Extract text and post-filter for literal keyword mentions
-        keyword_lower = keyword.lower()
+        # Build chunks list
         chunks = []
-        for r in all_matches:
-            text = ""
-            if '_node_content' in r.metadata:
-                try:
-                    text = json.loads(r.metadata['_node_content']).get('text', '')
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            if not text:
-                text = r.metadata.get('text', '')
-            if not text or keyword_lower not in text.lower():
-                continue
+        total_count = 0
+        for row in rows:
+            total_count = row.get("total_count", 0)
             chunks.append({
-                "id": r.id,
-                "text": text,
-                "filename": r.metadata.get('filename', 'unknown'),
-                "page": r.metadata.get('page', r.metadata.get('chunk_index', 0)),
-                "score": r.score,
+                "id": row["id"],
+                "text": row["text"],
+                "filename": row["filename"],
+                "page": row["page"],
+                "score": row.get("rank", 0),
             })
 
         unique_files = len(set(c["filename"] for c in chunks))
-        stats = {"total_mentions": len(chunks), "unique_files": unique_files}
+        total_pages = max(1, -(-total_count // page_size))  # ceil division
+        stats = {
+            "total_mentions": total_count,
+            "unique_files": unique_files,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+        }
 
         # --- Search-only mode ---
         if not request.extract:
             return {"chunks": chunks, "stats": stats}
 
         # --- Extract mode ---
-        if not chunks:
+        # Fetch up to 500 chunks for extraction context (not just the current page)
+        if request.search_mode == "exact":
+            extract_result = supabase.rpc("search_chunks_exact", {
+                "search_query": keyword,
+                "result_limit": 500,
+                "result_offset": 0,
+            }).execute()
+        else:
+            extract_result = supabase.rpc("search_chunks", {
+                "search_query": keyword,
+                "result_limit": 500,
+                "result_offset": 0,
+            }).execute()
+        extract_rows = extract_result.data or []
+
+        if not extract_rows:
             return {"extracted": {"entities": 0, "triples": 0}, **graph_store.load()}
 
         context_parts = []
-        for c in chunks:
-            context_parts.append(f"[Source: {c['filename']}, Page: {c['page']}]\n{c['text']}")
+        for row in extract_rows:
+            context_parts.append(f"[Source: {row['filename']}, Page: {row['page']}]\n{row['text']}")
         context = "\n\n---\n\n".join(context_parts)
 
         prompt = (
@@ -1399,6 +1409,31 @@ def _extract_chunk_metadata(chunk_text):
         return {}
 
 
+def _dual_write_chunks_to_supabase(batch):
+    """Write a Pinecone batch [(id, embedding, meta), ...] to document_chunks. Non-blocking on failure."""
+    if not supabase:
+        return
+    try:
+        rows = []
+        for vec_id, _emb, meta in batch:
+            rows.append({
+                "id": vec_id,
+                "filename": meta.get("filename", "unknown"),
+                "page": int(meta.get("page", 1)),
+                "chunk_index": int(meta.get("chunk_index", 0)),
+                "text": meta.get("text", ""),
+                "gcs_path": meta.get("gcs_path"),
+                "doc_type": meta.get("doc_type", "other"),
+                "people": meta.get("people", []) or [],
+                "organizations": meta.get("organizations", []) or [],
+                "dates": meta.get("dates", []) or [],
+            })
+        if rows:
+            supabase.table("document_chunks").upsert(rows).execute()
+    except Exception as e:
+        print(f"DEBUG: Supabase dual-write failed (non-fatal): {e}")
+
+
 def process_upload(file_path, filename):
     try:
         if not bucket:
@@ -1454,12 +1489,14 @@ def process_upload(file_path, filename):
                                 print(f"    FAILED to embed {vec_id}: {e}")
                     if len(batch) >= UPSERT_BATCH_SIZE:
                         index.upsert(vectors=batch)
+                        _dual_write_chunks_to_supabase(batch)
                         batch = []
                     i += 1
                 start += UPLOAD_CHUNK_SIZE - UPLOAD_CHUNK_OVERLAP
 
         if batch:
             index.upsert(vectors=batch)
+            _dual_write_chunks_to_supabase(batch)
         print(f"DEBUG: Finished indexing {filename}")
     finally:
         shutil.rmtree(os.path.dirname(file_path), ignore_errors=True)

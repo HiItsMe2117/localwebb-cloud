@@ -54,9 +54,11 @@ function AppContent() {
   const [focusTarget, setFocusTarget] = useState('');
 
   // Targeted keyword search state
-  const [targetedResults, setTargetedResults] = useState<{chunks: {id: string; text: string; filename: string; page: number; score: number}[]; stats: {total_mentions: number; unique_files: number}} | null>(null);
+  const [targetedResults, setTargetedResults] = useState<{chunks: {id: string; text: string; filename: string; page: number; score: number}[]; stats: {total_mentions: number; unique_files: number; page: number; page_size: number; total_pages: number}} | null>(null);
   const [isTargetedSearching, setIsTargetedSearching] = useState(false);
   const [expandedChunks, setExpandedChunks] = useState<Set<string>>(new Set());
+  const [searchPage, setSearchPage] = useState(1);
+  const [searchMode, setSearchMode] = useState<'fulltext' | 'exact'>('fulltext');
 
   const { setCenter } = useReactFlow();
 
@@ -887,17 +889,33 @@ function AppContent() {
                           <label className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2 block">
                             Keyword Search &amp; Network Builder
                           </label>
+                          {/* Search mode toggle */}
+                          <div className="flex gap-1 mb-2">
+                            <button
+                              onClick={() => { setSearchMode('fulltext'); setTargetedResults(null); setSearchPage(1); }}
+                              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${searchMode === 'fulltext' ? 'bg-[#007AFF] text-white' : 'bg-white/5 text-[rgba(235,235,245,0.4)] hover:bg-white/10'}`}
+                            >
+                              Full Text
+                            </button>
+                            <button
+                              onClick={() => { setSearchMode('exact'); setTargetedResults(null); setSearchPage(1); }}
+                              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${searchMode === 'exact' ? 'bg-[#007AFF] text-white' : 'bg-white/5 text-[rgba(235,235,245,0.4)] hover:bg-white/10'}`}
+                            >
+                              Exact Match
+                            </button>
+                          </div>
                           <div className="flex gap-2 mb-2">
                             <input
                               type="text"
                               value={focusTarget}
-                              onChange={(e) => { setFocusTarget(e.target.value); setTargetedResults(null); }}
+                              onChange={(e) => { setFocusTarget(e.target.value); setTargetedResults(null); setSearchPage(1); }}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter' && focusTarget.trim() && !isTargetedSearching) {
                                   setIsTargetedSearching(true);
                                   setTargetedResults(null);
                                   setExpandedChunks(new Set());
-                                  axios.post('/api/search/targeted', { keyword: focusTarget.trim() })
+                                  setSearchPage(1);
+                                  axios.post('/api/search/targeted', { keyword: focusTarget.trim(), page: 1, page_size: 50, search_mode: searchMode })
                                     .then(res => setTargetedResults(res.data))
                                     .catch(err => console.error('Targeted search failed:', err))
                                     .finally(() => setIsTargetedSearching(false));
@@ -912,7 +930,8 @@ function AppContent() {
                                 setIsTargetedSearching(true);
                                 setTargetedResults(null);
                                 setExpandedChunks(new Set());
-                                axios.post('/api/search/targeted', { keyword: focusTarget.trim() })
+                                setSearchPage(1);
+                                axios.post('/api/search/targeted', { keyword: focusTarget.trim(), page: 1, page_size: 50, search_mode: searchMode })
                                   .then(res => setTargetedResults(res.data))
                                   .catch(err => console.error('Targeted search failed:', err))
                                   .finally(() => setIsTargetedSearching(false));
@@ -931,13 +950,18 @@ function AppContent() {
                               {/* Stats bar */}
                               <div className="flex items-center gap-2 text-[12px]">
                                 <span className="text-[rgba(235,235,245,0.6)]">
-                                  Found <span className="font-bold text-white">{targetedResults.stats.total_mentions} mentions</span> across <span className="font-bold text-white">{targetedResults.stats.unique_files} files</span>
+                                  Found <span className="font-bold text-white">{targetedResults.stats.total_mentions.toLocaleString()} mentions</span> across <span className="font-bold text-white">{targetedResults.stats.unique_files} files</span>
+                                  {targetedResults.stats.total_pages > 1 && (
+                                    <span className="ml-1 text-[rgba(235,235,245,0.3)]">
+                                      — page {targetedResults.stats.page} of {targetedResults.stats.total_pages.toLocaleString()}
+                                    </span>
+                                  )}
                                 </span>
                               </div>
 
                               {/* Chunk list */}
                               {targetedResults.chunks.length > 0 && (
-                                <div className="max-h-[240px] overflow-y-auto rounded-lg border border-white/5 bg-black/30">
+                                <div className="max-h-[400px] overflow-y-auto rounded-lg border border-white/5 bg-black/30">
                                   {targetedResults.chunks.map((chunk) => {
                                     const isExpanded = expandedChunks.has(chunk.id);
                                     return (
@@ -980,8 +1004,49 @@ function AppContent() {
                                 </div>
                               )}
 
+                              {/* Pagination controls */}
+                              {targetedResults.stats.total_pages > 1 && (
+                                <div className="flex items-center justify-between">
+                                  <button
+                                    onClick={() => {
+                                      const newPage = searchPage - 1;
+                                      setSearchPage(newPage);
+                                      setIsTargetedSearching(true);
+                                      setExpandedChunks(new Set());
+                                      axios.post('/api/search/targeted', { keyword: focusTarget.trim(), page: newPage, page_size: 50, search_mode: searchMode })
+                                        .then(res => setTargetedResults(res.data))
+                                        .catch(err => console.error('Targeted search failed:', err))
+                                        .finally(() => setIsTargetedSearching(false));
+                                    }}
+                                    disabled={searchPage <= 1 || isTargetedSearching}
+                                    className="px-3 py-1.5 rounded-md text-[12px] font-medium bg-white/5 text-[rgba(235,235,245,0.6)] hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                  >
+                                    Prev
+                                  </button>
+                                  <span className="text-[11px] text-[rgba(235,235,245,0.4)]">
+                                    Page {targetedResults.stats.page} of {targetedResults.stats.total_pages.toLocaleString()}
+                                  </span>
+                                  <button
+                                    onClick={() => {
+                                      const newPage = searchPage + 1;
+                                      setSearchPage(newPage);
+                                      setIsTargetedSearching(true);
+                                      setExpandedChunks(new Set());
+                                      axios.post('/api/search/targeted', { keyword: focusTarget.trim(), page: newPage, page_size: 50, search_mode: searchMode })
+                                        .then(res => setTargetedResults(res.data))
+                                        .catch(err => console.error('Targeted search failed:', err))
+                                        .finally(() => setIsTargetedSearching(false));
+                                    }}
+                                    disabled={searchPage >= targetedResults.stats.total_pages || isTargetedSearching}
+                                    className="px-3 py-1.5 rounded-md text-[12px] font-medium bg-white/5 text-[rgba(235,235,245,0.6)] hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                  >
+                                    Next
+                                  </button>
+                                </div>
+                              )}
+
                               {/* Build Network button */}
-                              {targetedResults.chunks.length > 0 && (
+                              {targetedResults.stats.total_mentions > 0 && (
                                 <button
                                   onClick={async () => {
                                     setIsExtractingInsights(true);
@@ -995,6 +1060,7 @@ function AppContent() {
                                       const res = await axios.post('/api/search/targeted', {
                                         keyword: focusTarget.trim(),
                                         extract: true,
+                                        search_mode: searchMode,
                                       });
                                       const ext = res.data.extracted || { entities: 0, triples: 0 };
                                       if (ext.entities === 0) {
@@ -1025,7 +1091,7 @@ function AppContent() {
                                   className="w-full py-2 rounded-lg bg-[#30D158] hover:bg-[#28b84c] disabled:opacity-50 text-white text-[13px] font-bold transition-colors flex items-center justify-center gap-2"
                                 >
                                   <Network size={14} />
-                                  Build Network from {targetedResults.stats.total_mentions} Chunks
+                                  Build Network from {targetedResults.stats.total_mentions.toLocaleString()} Chunks
                                 </button>
                               )}
                             </div>

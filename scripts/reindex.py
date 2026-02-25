@@ -271,11 +271,37 @@ def extract_metadata_heuristic(text, filename):
     }
 
 
-def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path):
+def _dual_write_chunks(supabase_client, batch):
+    """Write a Pinecone batch to Supabase document_chunks. Non-blocking on failure."""
+    if not supabase_client:
+        return
+    try:
+        rows = []
+        for vec_id, _emb, meta in batch:
+            rows.append({
+                "id": vec_id,
+                "filename": meta.get("filename", "unknown"),
+                "page": int(meta.get("page", 1)),
+                "chunk_index": int(meta.get("chunk_index", 0)),
+                "text": meta.get("text", ""),
+                "gcs_path": meta.get("gcs_path"),
+                "doc_type": meta.get("doc_type", "other"),
+                "people": meta.get("people", []) or [],
+                "organizations": meta.get("organizations", []) or [],
+                "dates": meta.get("dates", []) or [],
+            })
+        if rows:
+            supabase_client.table("document_chunks").upsert(rows).execute()
+    except Exception as e:
+        print(f"    Supabase dual-write failed (non-fatal): {e}")
+
+
+def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path, supabase_client=None):
     """Embed text chunks and batch-upsert into Pinecone with enriched metadata.
 
     Args:
         chunks_with_pages: list of (chunk_text, page_number) tuples.
+        supabase_client: optional Supabase client for dual-write.
     """
     upserted = 0
     batch = []
@@ -300,6 +326,7 @@ def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path):
                 upserted += 1
                 if len(batch) >= UPSERT_BATCH_SIZE:
                     index.upsert(vectors=batch)
+                    _dual_write_chunks(supabase_client, batch)
                     print(f"    Flushed batch of {len(batch)} vectors")
                     batch = []
                 break
@@ -312,6 +339,7 @@ def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path):
                     print(f"    FAILED to embed chunk {i}: {e}")
     if batch:
         index.upsert(vectors=batch)
+        _dual_write_chunks(supabase_client, batch)
         print(f"    Flushed final batch of {len(batch)} vectors")
     return upserted
 
@@ -418,6 +446,20 @@ def main():
     pinecone_index = pc.Index("localwebb")
     storage_client = storage.Client()
     bucket = storage_client.bucket(env["GCS_BUCKET_NAME"])
+
+    # Initialize Supabase for dual-write
+    supabase_client = None
+    try:
+        sb_url = env.get("SUPABASE_URL", "")
+        sb_key = env.get("SUPABASE_SERVICE_KEY", "")
+        if sb_url and sb_key:
+            from supabase import create_client
+            supabase_client = create_client(sb_url, sb_key)
+            print("Supabase dual-write enabled")
+        else:
+            print("Supabase dual-write disabled (missing credentials)")
+    except Exception as e:
+        print(f"Supabase init failed (dual-write disabled): {e}")
 
     # List all PDFs
     blobs = [b for b in bucket.list_blobs() if b.name.lower().endswith(".pdf")]
@@ -539,7 +581,7 @@ def main():
             # Embed and upsert
             gcs_path = f"gs://{env['GCS_BUCKET_NAME']}/{blob.name}"
             print(f"  Embedding and upserting...")
-            upserted = embed_and_upsert(genai_client, pinecone_index, chunks_with_pages, filename, gcs_path)
+            upserted = embed_and_upsert(genai_client, pinecone_index, chunks_with_pages, filename, gcs_path, supabase_client=supabase_client)
             print(f"  Upserted {upserted} vectors")
 
             progress["completed"].append(filename)
