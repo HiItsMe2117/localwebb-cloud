@@ -4,6 +4,7 @@ import InvestigationSteps from './InvestigationSteps';
 import type { Case, CaseEvidence, InvestigationStep } from '../types';
 import { CASE_CATEGORIES } from '../types';
 import axios from 'axios';
+import { getFileUrl } from '../utils/files';
 
 interface CaseDetailProps {
   caseId: string;
@@ -304,9 +305,15 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {ev.sources.map((s, i) => (
-                    <span key={i} className="text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] px-2 py-0.5 rounded-lg">
+                    <a
+                      key={i}
+                      href={getFileUrl(s.filename, s.page)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] bg-[#2C2C2E] hover:bg-[#3A3A3C] text-[rgba(235,235,245,0.5)] hover:text-[rgba(235,235,245,0.7)] px-2 py-0.5 rounded-lg cursor-pointer hover:underline transition-colors"
+                    >
                       {s.filename} p.{s.page}
-                    </span>
+                    </a>
                   ))}
                 </div>
               </div>

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Shield, Database, MessageSquare, Loader2, ArrowUp } from 'lucide-react';
 import type { ChatMessage, Source } from '../types';
 import InvestigationSteps from './InvestigationSteps';
+import { getFileUrl } from '../utils/files';
 
 interface EntityChatProps {
   entityId: string;
@@ -230,13 +231,16 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
                       </span>
                       <div className="flex flex-wrap gap-1">
                         {msg.sources.map((source: Source, idx: number) => (
-                          <span
+                          <a
                             key={idx}
+                            href={getFileUrl(source.filename, source.page)}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             title={`${source.filename} (p. ${source.page})`}
-                            className="text-[10px] bg-[#3A3A3C] text-[rgba(235,235,245,0.6)] px-1.5 py-0.5 rounded transition-colors"
+                            className="text-[10px] bg-[#3A3A3C] hover:bg-[#48484A] text-[rgba(235,235,245,0.6)] px-1.5 py-0.5 rounded transition-colors cursor-pointer hover:underline"
                           >
                             {idx + 1}
-                          </span>
+                          </a>
                         ))}
                       </div>
                     </div>

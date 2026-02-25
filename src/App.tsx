@@ -25,6 +25,7 @@ import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'r
 import type { Node, Edge } from 'reactflow';
 import axios from 'axios';
 import { getLayoutedElements, computeDegreeMap } from './utils/layout';
+import { getFileUrl } from './utils/files';
 import CasesPanel from './components/CasesPanel';
 import CaseDetail from './components/CaseDetail';
 import type { ChatMessage, Community, Case, ScanFinding } from './types';
@@ -951,10 +952,24 @@ function AppContent() {
                                         className="w-full text-left px-3 py-2 border-b border-white/5 last:border-b-0 hover:bg-white/5 transition-colors"
                                       >
                                         <div className="flex items-center gap-2 mb-1">
-                                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#007AFF]/20 text-[#007AFF] shrink-0">
+                                          <a
+                                            href={getFileUrl(chunk.filename, chunk.page)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#007AFF]/20 text-[#007AFF] shrink-0 hover:underline transition-colors"
+                                          >
                                             {chunk.filename}
-                                          </span>
-                                          <span className="text-[10px] text-[rgba(235,235,245,0.3)] font-mono">p.{chunk.page}</span>
+                                          </a>
+                                          <a
+                                            href={getFileUrl(chunk.filename, chunk.page)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="text-[10px] text-[rgba(235,235,245,0.3)] font-mono hover:underline transition-colors"
+                                          >
+                                            p.{chunk.page}
+                                          </a>
                                         </div>
                                         <p className="text-[11px] text-[rgba(235,235,245,0.5)] leading-relaxed">
                                           {isExpanded ? chunk.text : chunk.text.slice(0, 200) + (chunk.text.length > 200 ? '...' : '')}

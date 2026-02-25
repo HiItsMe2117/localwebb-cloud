@@ -5,10 +5,10 @@ import shutil
 import tempfile
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request, Query
+from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -409,6 +409,23 @@ class AddNoteRequest(BaseModel):
 @app.get("/api")
 async def api_health():
     return {"status": "LocalWebb Cloud API is active"}
+
+@app.get("/api/files/{filename:path}")
+async def get_file(filename: str, page: Optional[int] = Query(None)):
+    if not bucket:
+        return JSONResponse(status_code=503, content={"error": "Storage not available"})
+    blob = bucket.blob(f"uploads/{filename}")
+    if not blob.exists():
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+    signed_url = blob.generate_signed_url(
+        version="v4",
+        expiration=timedelta(minutes=15),
+        method="GET",
+        response_type="application/pdf",
+    )
+    if page is not None:
+        signed_url += f"#page={page}"
+    return RedirectResponse(url=signed_url, status_code=302)
 
 @app.get("/api/graph")
 async def get_graph():

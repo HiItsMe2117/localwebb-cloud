@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Shield, Database, MessageSquare } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import type { ChatMessage } from '../types';
+import { getFileUrl } from '../utils/files';
 
 interface ChatAreaProps {
   messages: ChatMessage[];
@@ -101,13 +102,16 @@ export default function ChatArea({ messages, onSuggestedQuery }: ChatAreaProps) 
                         <Database size={12} /> Sources
                       </span>
                       <div className="flex flex-wrap gap-1.5">
-                        {msg.sources.map((_: any, idx: number) => (
-                          <span
+                        {msg.sources.map((source: any, idx: number) => (
+                          <a
                             key={idx}
-                            className="text-[11px] bg-[#3A3A3C] hover:bg-[#48484A] text-[rgba(235,235,245,0.6)] px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
+                            href={getFileUrl(source.filename, source.page)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] bg-[#3A3A3C] hover:bg-[#48484A] text-[rgba(235,235,245,0.6)] px-2 py-0.5 rounded-lg cursor-pointer transition-colors hover:underline"
                           >
                             {idx + 1}
-                          </span>
+                          </a>
                         ))}
                       </div>
                     </div>

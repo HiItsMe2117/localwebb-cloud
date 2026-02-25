@@ -2,6 +2,7 @@ import { X, FileText, Link2, Quote, AlertTriangle, CheckCircle2, ChevronRight, S
 import type { Node, Edge } from 'reactflow';
 import { useState, useEffect } from 'react';
 import EntityChat from './EntityChat';
+import { getFileUrl } from '../utils/files';
 
 interface EvidencePanelProps {
   selectedNode: Node | null;
@@ -145,7 +146,12 @@ export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, al
             {d.source_filename && (
               <div className="flex justify-between items-center">
                 <span className="flex items-center gap-2 text-[rgba(235,235,245,0.3)]"><FileText size={14} /> Source File</span>
-                <span className="text-[rgba(235,235,245,0.6)]">{d.source_filename} {d.source_page > 0 && `(p. ${d.source_page})`}</span>
+                <a
+                  href={getFileUrl(d.source_filename, d.source_page > 0 ? d.source_page : undefined)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[rgba(235,235,245,0.6)] hover:text-[rgba(235,235,245,0.8)] hover:underline cursor-pointer transition-colors"
+                >{d.source_filename} {d.source_page > 0 && `(p. ${d.source_page})`}</a>
               </div>
             )}
             <div className="flex justify-between items-center">
