@@ -418,9 +418,18 @@ async def api_health():
 async def get_file(filename: str, page: Optional[str] = Query(None)):
     if not bucket:
         return JSONResponse(status_code=503, content={"error": "Storage not available"})
+    
+    filename = filename.strip()
+    # Handle common hallucination: double .pdf or missing .pdf
+    if not filename.endswith(".pdf"):
+        filename += ".pdf"
+    filename = filename.replace(".pdf.pdf", ".pdf")
+
     blob = bucket.blob(f"uploads/{filename}")
     if not blob.exists():
-        return JSONResponse(status_code=404, content={"error": "File not found"})
+        print(f"ERROR: File not found in GCS: uploads/{filename}")
+        return JSONResponse(status_code=404, content={"error": f"File not found: {filename}"})
+    
     signed_url = blob.generate_signed_url(
         version="v4",
         expiration=timedelta(minutes=15),
