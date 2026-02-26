@@ -85,7 +85,7 @@ function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress;
     current_index = 0,
     total_urls = 0,
     files_uploaded = 0,
-    files_skipped = 0,
+    // files_skipped also available in progress
     files_failed = 0,
     started_at,
     last_updated,
