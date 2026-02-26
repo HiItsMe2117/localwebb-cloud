@@ -13,6 +13,51 @@ interface CaseDetailProps {
   onDelete: (caseId: string) => void;
 }
 
+function EvidenceText({ content }: { content: string }) {
+  // Regex to match [Source: EFTA02731069.pdf, Page: 6]
+  const sourceRegex = /\[Source:\s*([^,]+),\s*Page:\s*([^\]]+)\]/g;
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = sourceRegex.exec(content)) !== null) {
+    // Add text before match
+    if (match.index > lastIndex) {
+      parts.push(content.substring(lastIndex, match.index));
+    }
+
+    const filename = match[1].trim();
+    const page = match[2].trim();
+    const url = getFileUrl(filename, page);
+
+    parts.push(
+      <a
+        key={match.index}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#007AFF]/10 text-[#007AFF] hover:bg-[#007AFF]/20 transition-colors font-medium border border-[#007AFF]/20 mx-0.5"
+      >
+        <Database size={10} />
+        {filename} (p.{page})
+      </a>
+    );
+
+    lastIndex = sourceRegex.lastIndex;
+  }
+
+  // Add remaining text
+  if (lastIndex < content.length) {
+    parts.push(content.substring(lastIndex));
+  }
+
+  return (
+    <div className="whitespace-pre-wrap leading-relaxed">
+      {parts.length > 0 ? parts : content}
+    </div>
+  );
+}
+
 export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }: CaseDetailProps) {
   const [caseData, setCaseData] = useState<Case | null>(null);
   const [evidence, setEvidence] = useState<CaseEvidence[]>([]);
@@ -322,34 +367,13 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
                 {new Date(ev.created_at).toLocaleString()}
               </span>
             </div>
-            <div className={`text-[13px] leading-relaxed ${
+            <div className={`text-[13px] ${
               ev.type === 'note'
                 ? 'text-[rgba(235,235,245,0.8)]'
-                : 'text-[rgba(235,235,245,0.6)] whitespace-pre-wrap'
+                : 'text-[rgba(235,235,245,0.6)]'
             }`}>
-              {ev.content}
+              <EvidenceText content={ev.content} />
             </div>
-
-            {ev.sources && ev.sources.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-[rgba(84,84,88,0.65)]">
-                <span className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] flex items-center gap-1.5 mb-1.5">
-                  <Database size={10} /> Sources
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {ev.sources.map((s, i) => (
-                    <a
-                      key={i}
-                      href={getFileUrl(s.filename, s.page)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] bg-[#2C2C2E] hover:bg-[#3A3A3C] text-[rgba(235,235,245,0.5)] hover:text-[rgba(235,235,245,0.7)] px-2 py-0.5 rounded-lg cursor-pointer hover:underline transition-colors"
-                    >
-                      {s.filename} p.{s.page}
-                    </a>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         ))}
 
