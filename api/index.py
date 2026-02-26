@@ -427,7 +427,15 @@ async def get_file(filename: str, page: Optional[str] = Query(None)):
 
     blob = bucket.blob(f"uploads/{filename}")
     if not blob.exists():
-        print(f"ERROR: File not found in GCS: uploads/{filename}")
+        # Check subfolders (dataset-1, dataset-2, etc.)
+        for ds_num in range(1, 15):
+            candidate = bucket.blob(f"uploads/dataset-{ds_num}/{filename}")
+            if candidate.exists():
+                blob = candidate
+                break
+
+    if not blob.exists():
+        print(f"ERROR: File not found in GCS: uploads/{filename} (or subfolders)")
         return JSONResponse(status_code=404, content={"error": f"File not found: {filename}"})
     
     signed_url = blob.generate_signed_url(
