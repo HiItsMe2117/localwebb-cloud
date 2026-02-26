@@ -89,7 +89,9 @@ def load_progress():
 
 
 def save_progress(progress):
-    PROGRESS_FILE.write_text(json.dumps(progress, indent=2))
+    tmp = PROGRESS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(progress, indent=2))
+    tmp.rename(PROGRESS_FILE)
 
 
 def get_session():
