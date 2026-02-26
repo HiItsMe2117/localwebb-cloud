@@ -295,7 +295,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
                 ? 'text-[rgba(235,235,245,0.8)]'
                 : 'text-[rgba(235,235,245,0.6)] whitespace-pre-wrap'
             }`}>
-              {ev.content.length > 2000 ? ev.content.slice(0, 2000) + '...' : ev.content}
+              {ev.content}
             </div>
 
             {ev.sources && ev.sources.length > 0 && (
