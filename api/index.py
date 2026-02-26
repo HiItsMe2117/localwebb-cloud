@@ -415,7 +415,7 @@ async def api_health():
     return {"status": "LocalWebb Cloud API is active"}
 
 @app.get("/api/files/{filename:path}")
-async def get_file(filename: str, page: Optional[int] = Query(None)):
+async def get_file(filename: str, page: Optional[str] = Query(None)):
     if not bucket:
         return JSONResponse(status_code=503, content={"error": "Storage not available"})
     blob = bucket.blob(f"uploads/{filename}")
@@ -427,8 +427,12 @@ async def get_file(filename: str, page: Optional[int] = Query(None)):
         method="GET",
         response_type="application/pdf",
     )
-    if page is not None:
-        signed_url += f"#page={page}"
+    if page:
+        # Extract first number from potential string like "2, 3" or "page 5"
+        import re
+        m = re.search(r'(\d+)', str(page))
+        if m:
+            signed_url += f"#page={m.group(1)}"
     return RedirectResponse(url=signed_url, status_code=302)
 
 @app.get("/api/graph")
