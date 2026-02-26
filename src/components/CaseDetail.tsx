@@ -29,10 +29,10 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
   }, [caseId]);
 
   useEffect(() => {
-    if (isInvestigating) {
+    if (isInvestigating && streamingText.length % 50 === 0) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [streamingText, investigationSteps]);
+  }, [streamingText, investigationSteps, isInvestigating]);
 
   const loadCase = async () => {
     setIsLoading(true);
@@ -220,7 +220,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
       </header>
 
       {/* Evidence list */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 pb-32">
         {/* Case summary */}
         <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4">
           <h3 className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2">Summary</h3>
@@ -247,7 +247,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
               <InvestigationSteps steps={investigationSteps} />
             )}
             {streamingText && (
-              <div className="text-[13px] text-[rgba(235,235,245,0.6)] whitespace-pre-wrap leading-relaxed max-h-[400px] overflow-y-auto">
+              <div className="text-[13px] text-[rgba(235,235,245,0.6)] whitespace-pre-wrap leading-relaxed">
                 {streamingText}
               </div>
             )}
