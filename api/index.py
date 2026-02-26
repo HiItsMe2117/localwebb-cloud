@@ -1602,6 +1602,20 @@ def process_upload(file_path, filename):
     finally:
         shutil.rmtree(os.path.dirname(file_path), ignore_errors=True)
 
+@app.get("/api/scrape-progress")
+async def get_scrape_progress():
+    """Return live scraper progress from GCS."""
+    try:
+        if not bucket:
+            return {"active": False}
+        blob = bucket.blob("scrape_live_progress.json")
+        if not blob.exists():
+            return {"active": False}
+        data = json.loads(blob.download_as_text())
+        return data
+    except Exception:
+        return {"active": False}
+
 @app.get("/api/datasets")
 async def get_datasets():
     """Return per-dataset pipeline stats from pipeline_status.json in GCS."""

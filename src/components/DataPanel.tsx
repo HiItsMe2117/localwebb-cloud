@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 // Build ID: FIX-TS-6133-V3
 import {
   AlertCircle,
   RefreshCw,
   Loader2,
+  Download,
 } from 'lucide-react';
 
 const DATASET_INFO: Record<string, { name: string; description: string }> = {
@@ -66,6 +67,139 @@ function ProgressBar({ value, max, color }: { value: number; max: number; color:
   );
 }
 
+interface ScrapeProgress {
+  active: boolean;
+  dataset?: number;
+  current_index?: number;
+  total_urls?: number;
+  files_uploaded?: number;
+  files_skipped?: number;
+  files_failed?: number;
+  started_at?: string;
+  last_updated?: string;
+}
+
+function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress; onRefresh: () => void }) {
+  const {
+    dataset = 0,
+    current_index = 0,
+    total_urls = 0,
+    files_uploaded = 0,
+    files_skipped = 0,
+    files_failed = 0,
+    started_at,
+    last_updated,
+  } = progress;
+
+  const dsInfo = DATASET_INFO[String(dataset)];
+  const dsName = dsInfo ? `${dataset}. ${dsInfo.name}` : `Dataset ${dataset}`;
+  const pct = total_urls > 0 ? Math.min((current_index / total_urls) * 100, 100) : 0;
+
+  // Compute files/min and ETA
+  let filesPerMin = 0;
+  let etaText = '—';
+  if (started_at && files_uploaded > 0) {
+    const elapsedMs = Date.now() - new Date(started_at).getTime();
+    const elapsedMin = elapsedMs / 60000;
+    if (elapsedMin > 0) {
+      filesPerMin = Math.round(files_uploaded / elapsedMin);
+      const remaining = total_urls - current_index;
+      if (filesPerMin > 0) {
+        const etaMin = remaining / filesPerMin;
+        if (etaMin < 60) {
+          etaText = `~${Math.round(etaMin)}m`;
+        } else if (etaMin < 1440) {
+          etaText = `~${(etaMin / 60).toFixed(1)}h`;
+        } else {
+          etaText = `~${(etaMin / 1440).toFixed(1)}d`;
+        }
+      }
+    }
+  }
+
+  // "Last updated X ago"
+  let lastUpdatedText = '';
+  if (last_updated) {
+    const ago = Math.round((Date.now() - new Date(last_updated).getTime()) / 1000);
+    if (ago < 60) lastUpdatedText = `${ago}s ago`;
+    else if (ago < 3600) lastUpdatedText = `${Math.round(ago / 60)}m ago`;
+    else lastUpdatedText = `${(ago / 3600).toFixed(1)}h ago`;
+  }
+
+  return (
+    <div className="bg-[#1C1C1E] border border-[#0A84FF] rounded-2xl p-4 mb-4 relative overflow-hidden">
+      {/* Subtle blue glow at top */}
+      <div className="absolute inset-x-0 top-0 h-px bg-[#0A84FF]" />
+
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2.5">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#0A84FF] opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#0A84FF]" />
+          </span>
+          <div>
+            <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
+              <Download size={14} className="text-[#0A84FF]" />
+              {dsName}
+              <span className="text-[11px] font-normal text-[#0A84FF]">Downloading...</span>
+            </h3>
+          </div>
+        </div>
+        <button
+          onClick={onRefresh}
+          className="text-[11px] text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)] transition-colors"
+        >
+          <RefreshCw size={12} />
+        </button>
+      </div>
+
+      {/* Large progress bar */}
+      <div className="mb-3">
+        <div className="flex justify-between items-center mb-1.5">
+          <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
+            {current_index.toLocaleString()} / {total_urls.toLocaleString()}
+          </span>
+          <span className="text-[13px] font-mono text-[#0A84FF]">{pct.toFixed(1)}%</span>
+        </div>
+        <div className="h-2.5 w-full bg-[#3A3A3C] rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-700 bg-[#0A84FF]"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-4 gap-3 mb-2">
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-white">{files_uploaded.toLocaleString()}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Uploaded</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-[rgba(235,235,245,0.6)]">{filesPerMin}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Files/min</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-[#0A84FF]">{etaText}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">ETA</p>
+        </div>
+        <div className="text-center">
+          <p className={`text-[15px] font-bold ${files_failed > 0 ? 'text-[#FF453A]' : 'text-[rgba(235,235,245,0.6)]'}`}>
+            {files_failed.toLocaleString()}
+          </p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Errors</p>
+        </div>
+      </div>
+
+      {lastUpdatedText && (
+        <p className="text-[10px] text-[rgba(235,235,245,0.25)] text-right">
+          Updated {lastUpdatedText}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function DatasetCard({ num, stats }: { num: string; stats: DatasetStats }) {
   const info = DATASET_INFO[num] || { name: `Dataset ${num}`, description: '' };
   const scrapeMax = Math.max(stats.discovered, stats.scraped, 1);
@@ -122,6 +256,24 @@ export default function DataPanel() {
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [scrapeProgress, setScrapeProgress] = useState<ScrapeProgress | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchScrapeProgress = useCallback(async () => {
+    try {
+      const res = await fetch('/api/scrape-progress');
+      if (!res.ok) return;
+      const data: ScrapeProgress = await res.json();
+      setScrapeProgress(data.active ? data : null);
+      // Stop polling if scrape is no longer active
+      if (!data.active && pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    } catch {
+      // Silently ignore — non-critical
+    }
+  }, []);
 
   const fetchStatus = async () => {
     setLoading(true);
@@ -140,7 +292,13 @@ export default function DataPanel() {
 
   useEffect(() => {
     fetchStatus();
-  }, []);
+    fetchScrapeProgress();
+    // Poll scrape progress every 30s
+    pollRef.current = setInterval(fetchScrapeProgress, 30000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [fetchScrapeProgress]);
 
   const datasetNums = Object.keys(DATASET_INFO).sort((a, b) => parseInt(a) - parseInt(b));
 
@@ -149,7 +307,7 @@ export default function DataPanel() {
       <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between">
         <h1 className="text-[28px] font-bold tracking-tight text-white">Data</h1>
         <button
-          onClick={fetchStatus}
+          onClick={() => { fetchStatus(); fetchScrapeProgress(); }}
           disabled={loading}
           className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)]"
         >
@@ -160,6 +318,10 @@ export default function DataPanel() {
 
       <div className="flex-1 px-5 pb-4">
         <div className="max-w-4xl mx-auto w-full">
+
+          {scrapeProgress && (
+            <ScrapeProgressCard progress={scrapeProgress} onRefresh={fetchScrapeProgress} />
+          )}
 
           {status?.totals && (
             <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 mb-4">

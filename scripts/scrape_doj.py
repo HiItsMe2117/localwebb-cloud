@@ -29,9 +29,16 @@ import argparse
 import tempfile
 from pathlib import Path
 from urllib.parse import urljoin, unquote
+from datetime import datetime, timezone
 
 import requests
 from bs4 import BeautifulSoup
+
+# ---------------------------------------------------------------------------
+# Live progress upload to GCS (for UI)
+# ---------------------------------------------------------------------------
+_files_since_last_upload = 0
+PROGRESS_UPLOAD_INTERVAL = 50  # Upload every N files
 
 # ---------------------------------------------------------------------------
 # Config
@@ -268,6 +275,26 @@ def check_gcs_existing(bucket):
     return existing
 
 
+def upload_live_progress(bucket, dataset_num, current_index, total_urls,
+                         uploaded, skipped, failed, start_time, active=True):
+    """Upload lightweight progress JSON to GCS for the UI."""
+    try:
+        blob = bucket.blob("scrape_live_progress.json")
+        blob.upload_from_string(json.dumps({
+            "active": active,
+            "dataset": dataset_num,
+            "current_index": current_index,
+            "total_urls": total_urls,
+            "files_uploaded": uploaded,
+            "files_skipped": skipped,
+            "files_failed": failed,
+            "started_at": start_time,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }), content_type="application/json")
+    except Exception:
+        pass  # Non-critical, don't break scraping
+
+
 def main():
     parser = argparse.ArgumentParser(description="DOJ Epstein Files Scraper")
     parser.add_argument("--dataset", type=int, help="Single data set number to scrape (e.g., 9)")
@@ -276,6 +303,7 @@ def main():
     parser.add_argument("--resume", action="store_true", help="Resume from progress file")
     parser.add_argument("--dry-run", action="store_true", help="List URLs only, don't download")
     parser.add_argument("--test", action="store_true", help="Download only 1 file for testing")
+    parser.add_argument("--max-files", type=int, default=0, help="Max files to download per dataset (0 = unlimited)")
     args = parser.parse_args()
 
     # Determine which datasets to process
@@ -371,6 +399,8 @@ def main():
         ds_downloaded = 0
         ds_skipped = 0
         ds_failed = 0
+        ds_start_time = datetime.now(timezone.utc).isoformat()
+        files_since_progress = 0
 
         for i, url in enumerate(pdf_urls):
             filename = unquote(url.split("/")[-1])
@@ -400,8 +430,21 @@ def main():
 
             save_progress(progress)
 
+            # Upload live progress to GCS every N files
+            files_since_progress += 1
+            if files_since_progress >= PROGRESS_UPLOAD_INTERVAL:
+                files_since_progress = 0
+                upload_live_progress(
+                    bucket, ds_num, i + 1, len(pdf_urls),
+                    ds_downloaded, ds_skipped, ds_failed, ds_start_time,
+                )
+
             if args.test and ds_downloaded >= 1:
                 print("\n  TEST MODE: stopping after 1 download")
+                break
+
+            if args.max_files and ds_downloaded >= args.max_files:
+                print(f"\n  Reached --max-files limit ({args.max_files}), stopping")
                 break
 
         total_downloaded += ds_downloaded
@@ -426,6 +469,14 @@ def main():
         print(f"  Downloaded:      {total_downloaded}")
         print(f"  Skipped (dupes): {total_skipped}")
         print(f"  Failed:          {total_failed}")
+
+        # Upload final "done" progress so UI knows scrape finished
+        upload_live_progress(
+            bucket, datasets[-1], total_discovered, total_discovered,
+            total_downloaded, total_skipped, total_failed,
+            datetime.now(timezone.utc).isoformat(), active=False,
+        )
+
     if progress.get("files_failed"):
         print(f"\n  Failed files:")
         for f in progress["files_failed"][-20:]:
