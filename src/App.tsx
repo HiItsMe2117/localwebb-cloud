@@ -520,9 +520,12 @@ function AppContent() {
         confidence: finding.confidence,
         entities: finding.entity_ids,
         suggested_questions: finding.suggested_questions,
+        evidence_sources: finding.sources || [],
       });
-      setCases(prev => [res.data.case, ...prev]);
+      const newCase = res.data.case;
+      setCases(prev => [newCase, ...prev]);
       setScanFindings(prev => prev.filter(f => f.title !== finding.title));
+      setActiveCaseId(newCase.id);
     } catch (err) {
       console.error('Failed to create case:', err);
     }

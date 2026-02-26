@@ -38,6 +38,7 @@ export interface ScanFinding {
   confidence: number;
   entity_ids: string[];
   suggested_questions: string[];
+  sources?: { filename: string; page: number | string }[];
 }
 
 export interface Case {

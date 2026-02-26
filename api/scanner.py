@@ -39,8 +39,9 @@ Return a JSON object with a single key "findings" containing an array of objects
 - "confidence": 0.0 to 1.0 (number)
 - "entity_ids": list of entity IDs involved (array of strings)
 - "suggested_questions": 2-4 investigation angles to pursue (array of strings)
+- "sources": list of source objects citing specific evidence, each with "filename" (string) and "page" (string/number)
 
-Return up to 10 findings, ordered by confidence (highest first). Only include findings with genuine evidentiary basis — do not fabricate patterns."""
+Return up to 10 findings, ordered by confidence (highest first). Only include findings with genuine evidentiary basis — do not fabricate patterns. Check your work: ensure all cited sources actually appear in the provided context."""
 
 
 def run_scan(genai_client, supabase_client, pinecone_index, semantic_search_fn):

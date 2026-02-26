@@ -32,6 +32,20 @@ def _extract_json(text: str) -> str:
     return text
 
 
+def _truncate_at_sentence(text: str, max_len: int = 1200) -> str:
+    """Truncate text at the last sentence boundary before max_len."""
+    if len(text) <= max_len:
+        return text
+    truncated = text[:max_len]
+    # Find the last sentence-ending punctuation
+    last_period = truncated.rfind('.')
+    last_newline = truncated.rfind('\n')
+    boundary = max(last_period, last_newline)
+    if boundary > max_len // 2:
+        return truncated[:boundary + 1]
+    return truncated
+
+
 def _safe_semantic_pass(semantic_search_fn, query_text, genai_client, pinecone_index,
                         rerank_fn=None, fetch_k=50, rerank_top_n=5, pinecone_filter=None):
     """Wrapper around semantic_search_fn with detailed error capture."""
@@ -105,6 +119,7 @@ async def _run_investigation_inner(
     graph_evidence = []
     discovered_entities = []
     discovered_relationships = []
+    errors_log = []
 
     def _add_chunks(chunks: list):
         if not isinstance(chunks, list):
@@ -112,7 +127,7 @@ async def _run_investigation_inner(
         for c in chunks:
             if not isinstance(c, dict) or "text" not in c:
                 continue
-            sig = c["text"][:200]
+            sig = re.sub(r'\s+', ' ', c["text"][:500]).strip()
             if sig not in seen_texts:
                 seen_texts.add(sig)
                 all_context_chunks.append(c)
@@ -155,6 +170,7 @@ async def _run_investigation_inner(
         reformulated_queries = analysis.get("reformulated_queries", [])
     except Exception as e:
         print(f"DEBUG: Query analysis failed: {e}")
+        errors_log.append(f"Query Analysis: {type(e).__name__} — fell back to raw query")
         analysis_failed = True
         primary_entity = ""
         secondary_entities = []
@@ -208,6 +224,7 @@ async def _run_investigation_inner(
                 detail = "Not found in knowledge graph"
         except Exception as e:
             print(f"DEBUG: Entity intel failed: {e}")
+            errors_log.append(f"Entity Intel: {type(e).__name__} — entity profile unavailable")
             yield _sse("step_status", {"step": "entity_intel", "label": "Entity Intelligence", "status": "error", "detail": f"{type(e).__name__}: {e}"})
             detail = None
 
@@ -238,6 +255,7 @@ async def _run_investigation_inner(
             detail = f"Collected {len(graph_evidence)} edges across 2 hops"
         except Exception as e:
             print(f"DEBUG: Graph traversal failed: {e}")
+            errors_log.append(f"Graph Traversal: {type(e).__name__} — graph evidence unavailable")
             graph_evidence = []
             yield _sse("step_status", {"step": "graph_traversal", "label": "Graph Traversal", "status": "error", "detail": f"{type(e).__name__}: {e}"})
             detail = None
@@ -277,7 +295,9 @@ async def _run_investigation_inner(
 
     # Pass 2: Reformulated with discovered context
     reformulated = None
-    if reformulated_queries:
+    if len(reformulated_queries) >= 2:
+        reformulated = f"{reformulated_queries[0]} {reformulated_queries[1]}"
+    elif reformulated_queries:
         reformulated = reformulated_queries[0]
     elif discovered_entities:
         reformulated = f"{query} {' '.join(discovered_entities[:3])}"
@@ -299,17 +319,25 @@ async def _run_investigation_inner(
                 "detail": f"{pass_count} passes ({len(all_context_chunks)} chunks)"})
     await asyncio.sleep(0.2)
 
-    # Pass 3 (conditional): Focused on most important connected entity
+    # Pass 3 (conditional): Focused on most important connected entity, or unused reformulation
     top_connected = None
     if discovered_entities:
         top_connected = discovered_entities[0]
     elif secondary_entities:
         top_connected = secondary_entities[0]
 
+    pass3_query = None
     if top_connected and primary_entity:
+        pass3_query = f"{primary_entity} {top_connected}"
+    elif len(reformulated_queries) >= 3:
+        pass3_query = reformulated_queries[2]
+    elif len(reformulated_queries) >= 2 and not top_connected:
+        pass3_query = reformulated_queries[1]
+
+    if pass3_query:
         results, err = await asyncio.to_thread(
             _safe_semantic_pass,
-            semantic_search_fn, f"{primary_entity} {top_connected}", genai_client, pinecone_index,
+            semantic_search_fn, pass3_query, genai_client, pinecone_index,
             rerank_fn=rerank_fn, fetch_k=40, rerank_top_n=5,
         )
         if err:
@@ -317,6 +345,9 @@ async def _run_investigation_inner(
         else:
             _add_chunks(results)
             pass_count += 1
+
+    if errors:
+        errors_log.append(f"Semantic Search: {len(errors)} pass(es) failed — {'; '.join(errors)}")
 
     if errors and not all_context_chunks:
         yield _sse("step_status", {
@@ -373,6 +404,7 @@ async def _run_investigation_inner(
 
     except Exception as e:
         print(f"DEBUG: Keyword search failed: {e}")
+        errors_log.append(f"Keyword Search: {type(e).__name__} — keyword matches unavailable")
         keyword_failed = True
         keyword_error = f"{type(e).__name__}: {e}"
 
@@ -397,7 +429,7 @@ async def _run_investigation_inner(
     context_parts = []
 
     for c in all_context_chunks:
-        context_parts.append(f"[Source: {c['filename']}, Page: {c['page']}]\n{c['text'][:1200]}")
+        context_parts.append(f"[Source: {c['filename']}, Page: {c['page']}]\n{_truncate_at_sentence(c['text'])}")
         all_sources.append({"filename": c["filename"], "page": c["page"], "score": round(c.get("score", 0) or 0, 3)})
 
     if graph_evidence:
@@ -428,6 +460,12 @@ async def _run_investigation_inner(
 
     full_context = "\n\n---\n\n".join(context_parts)
 
+    if errors_log:
+        gaps = "\n\nDATA GAPS (some pipeline phases failed — caveat findings accordingly):\n"
+        for err_msg in errors_log:
+            gaps += f"- {err_msg}\n"
+        full_context += gaps
+
     if not full_context.strip():
         yield _sse("text", {"text": "No relevant information was found in the database for this query. Try uploading documents first, or rephrase your query with more specific terms."})
         yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "done", "detail": "No context available"})
@@ -450,6 +488,7 @@ async def _run_investigation_inner(
     )
 
     synthesis_failed = False
+    synthesis_text_parts = []
     try:
         # Run the entire streaming call + iteration in a single background thread,
         # collecting chunks into a thread-safe queue so we can yield SSE events
@@ -481,6 +520,7 @@ async def _run_investigation_inner(
                 break
             if isinstance(item, Exception):
                 raise item
+            synthesis_text_parts.append(item)
             yield _sse("text", {"text": item})
             await asyncio.sleep(0.01)
 
@@ -507,6 +547,7 @@ async def _run_investigation_inner(
 
     # Generate follow-up questions
     try:
+        synthesis_summary = "".join(synthesis_text_parts)[:500] if synthesis_text_parts else ""
         followup_prompt = (
             f"Based on this investigation about '{query}', suggest 3-4 specific follow-up questions "
             f"that would deepen the investigation. Focus on unexplored connections, missing evidence, "
@@ -514,6 +555,8 @@ async def _run_investigation_inner(
             f"Key entities found: {primary_entity}, {', '.join(discovered_entities[:5])}\n"
             f"Relationships: {', '.join(discovered_relationships[:5])}"
         )
+        if synthesis_summary:
+            followup_prompt += f"\n\nKey findings so far:\n{synthesis_summary}"
         followup_res = await asyncio.to_thread(
             genai_client.models.generate_content,
             model="gemini-2.0-flash",

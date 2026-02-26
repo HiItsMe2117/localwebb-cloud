@@ -289,13 +289,12 @@ def lookup_entity_intel(supabase_client, entity_name: str) -> dict:
         connected_ids.add(e["target"])
     connected_ids.discard(entity_id)
 
-    # Fetch connected entity labels
+    # Fetch connected entity labels (batch query)
     connected_entities = []
     if connected_ids:
-        for cid in list(connected_ids)[:50]:
-            node_res = supabase_client.table("nodes").select("id,label,type").eq("id", cid).limit(1).execute()
-            if node_res.data:
-                connected_entities.append(node_res.data[0])
+        ids_list = list(connected_ids)[:50]
+        batch_res = supabase_client.table("nodes").select("id,label,type").in_("id", ids_list).execute()
+        connected_entities = batch_res.data or []
 
     # Group edges by predicate
     relationship_types = {}

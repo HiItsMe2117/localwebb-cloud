@@ -6,7 +6,7 @@ import tempfile
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request, Query
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -399,6 +399,7 @@ class CreateCaseRequest(BaseModel):
     confidence: float = 0.5
     entities: List[str] = []
     suggested_questions: List[str] = []
+    evidence_sources: List[Dict[str, Any]] = []
 
 class UpdateCaseRequest(BaseModel):
     status: Optional[str] = None
@@ -977,6 +978,18 @@ async def create_case(request: CreateCaseRequest):
             "suggested_questions": request.suggested_questions,
         }
         res = supabase.table("cases").insert(row).execute()
+        
+        if res.data:
+            case_id = res.data[0]["id"]
+            # Also create an initial evidence entry based on the finding
+            evidence_row = {
+                "case_id": case_id,
+                "type": "investigation",
+                "content": f"Initial AI Finding: {request.summary}",
+                "sources": request.evidence_sources if request.evidence_sources else None
+            }
+            supabase.table("case_evidence").insert(evidence_row).execute()
+            
         return {"case": res.data[0] if res.data else row}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})

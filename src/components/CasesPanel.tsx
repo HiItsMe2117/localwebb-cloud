@@ -1,4 +1,4 @@
-import { Shield, Loader2, Check, X, Search, ChevronRight } from 'lucide-react';
+import { Shield, Loader2, Check, X, Search, ChevronRight, Database } from 'lucide-react';
 import type { Case, ScanFinding } from '../types';
 import { CASE_CATEGORIES } from '../types';
 
@@ -88,6 +88,22 @@ function FindingCard({ finding, onAccept, onDismiss }: {
           )}
         </div>
       )}
+
+      {finding.sources && finding.sources.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {finding.sources.slice(0, 3).map((s, i) => (
+            <span key={i} className="text-[10px] text-[rgba(235,235,245,0.3)] flex items-center gap-1">
+              <Database size={10} />
+              {s.filename} (p.{s.page})
+            </span>
+          ))}
+          {finding.sources.length > 3 && (
+            <span className="text-[10px] text-[rgba(235,235,245,0.2)]">
+              +{finding.sources.length - 3} more sources
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -164,18 +180,25 @@ export default function CasesPanel({
               <p className="text-[15px] font-medium text-white">
                 {scanFindings.length} finding{scanFindings.length !== 1 ? 's' : ''} detected
               </p>
-              <button
-                onClick={onAcceptAll}
-                className="text-[13px] font-medium text-[#007AFF] hover:text-[#0A84FF] transition-colors"
-              >
-                Accept All
-              </button>
-            </div>
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Are you sure you want to accept all ${scanFindings.length} findings and create cases for them?`)) {
+                                onAcceptAll();
+                              }
+                            }}
+                            className="text-[13px] font-medium text-[#007AFF] hover:text-[#0A84FF] transition-colors"
+                          >
+                            Accept All
+                          </button>            </div>
             {scanFindings.map((f, i) => (
               <FindingCard
                 key={`${f.title}-${i}`}
                 finding={f}
-                onAccept={() => onAccept(f)}
+                onAccept={() => {
+                  if (window.confirm(`Create a new investigation case for "${f.title}"?`)) {
+                    onAccept(f);
+                  }
+                }}
                 onDismiss={() => onDismiss(f)}
               />
             ))}
