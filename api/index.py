@@ -1085,6 +1085,73 @@ async def investigate_case(case_id: str):
     return StreamingResponse(stream_and_save(), media_type="text/event-stream")
 
 
+@app.post("/api/cases/{case_id}/consolidate")
+async def consolidate_case_evidence(case_id: str):
+    """Synthesize all evidence into a single master report."""
+    if not supabase or not client:
+        return JSONResponse(status_code=503, content={"error": "Cloud clients not initialized."})
+    
+    try:
+        # 1. Fetch all evidence
+        ev_res = supabase.table("case_evidence").select("*").eq("case_id", case_id).execute()
+        evidence = ev_res.data or []
+        
+        if not evidence:
+            return JSONResponse(status_code=400, content={"error": "No evidence found to consolidate."})
+
+        # 2. Build synthesis prompt
+        context_parts = []
+        all_sources = []
+        for e in evidence:
+            context_parts.append(f"--- Evidence Entry ({e['type']}, {e['created_at']}) ---\n{e['content']}")
+            if e.get("sources"):
+                all_sources.extend(e["sources"])
+
+        # De-duplicate sources
+        unique_sources = []
+        seen_src = set()
+        for s in all_sources:
+            sig = f"{s.get('filename')}:{s.get('page')}"
+            if sig not in seen_src:
+                seen_src.add(sig)
+                unique_sources.append(s)
+
+        prompt = f"""You are a Lead Intelligence Analyst. You are tasked with synthesizing multiple investigative findings into a single, master "Consolidated Intelligence Report".
+
+EXISTING EVIDENCE ENTRIES:
+{"\n\n".join(context_parts)}
+
+SYNTHESIS INSTRUCTIONS:
+1. Combine all findings into a cohesive, highly-structured narrative.
+2. REMOVE REDUNDANCIES: If multiple investigations found the same fact, state it once with all relevant context.
+3. PRESERVE DETAIL: Do not lose specific names, dates, or dollar amounts.
+4. STRUCTURE: Use Markdown. Include Executive Summary, Key Entities, Detailed Findings, and Remaining Gaps.
+5. SOURCES: Maintain the integrity of evidence. You don't need to list them at the bottom, but ensure the narrative is derived from the provided entries.
+
+Produce a professional, final investigative product."""
+
+        # 3. Generate with Gemini
+        res = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=prompt,
+        )
+        summary_text = res.text
+
+        # 4. Save as a new "Consolidated" evidence type
+        new_ev = {
+            "case_id": case_id,
+            "type": "fact_check", # Using fact_check color/style for now or we can add a new one
+            "content": summary_text,
+            "sources": unique_sources[:20] # Keep a sample of the top sources
+        }
+        save_res = supabase.table("case_evidence").insert(new_ev).execute()
+        
+        return {"evidence": save_res.data[0]}
+    except Exception as e:
+        print(f"CRITICAL: Consolidation failed: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/api/cases/{case_id}/notes")
 async def add_case_note(case_id: str, request: AddNoteRequest):
     """Add a note to a case."""

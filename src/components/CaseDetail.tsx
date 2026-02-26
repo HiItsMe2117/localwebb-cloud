@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2 } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import type { Case, CaseEvidence, InvestigationStep } from '../types';
 import { CASE_CATEGORIES } from '../types';
@@ -22,6 +22,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
   const [streamingText, setStreamingText] = useState('');
   const [noteText, setNoteText] = useState('');
   const [isAddingNote, setIsAddingNote] = useState(false);
+  const [isConsolidating, setIsConsolidating] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -134,6 +135,20 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
     }
   };
 
+  const consolidateEvidence = async () => {
+    if (isConsolidating || evidence.length < 2) return;
+    setIsConsolidating(true);
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/consolidate`);
+      setEvidence(prev => [res.data.evidence, ...prev]);
+      // Scroll to top of list
+    } catch (err) {
+      console.error('Consolidation failed:', err);
+    } finally {
+      setIsConsolidating(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -188,7 +203,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
         <div className="flex items-center gap-2">
           <button
             onClick={runInvestigation}
-            disabled={isInvestigating}
+            disabled={isInvestigating || isConsolidating}
             className="flex-1 flex items-center justify-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors"
           >
             {isInvestigating ? (
@@ -198,6 +213,21 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
             )}
             {isInvestigating ? 'Investigating...' : 'Investigate Further'}
           </button>
+          
+          <button
+            onClick={consolidateEvidence}
+            disabled={isConsolidating || isInvestigating || evidence.length < 2}
+            className="flex items-center justify-center gap-2 bg-[#AF52DE] hover:bg-[#9642C0] disabled:opacity-30 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors text-white"
+            title="Synthesize all findings into one master report"
+          >
+            {isConsolidating ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Wand2 size={14} />
+            )}
+            {isConsolidating ? 'Synthesizing...' : 'Synthesize Report'}
+          </button>
+
           <button
             onClick={() => onStatusChange(caseId, isClosed ? 'active' : 'closed')}
             className="w-10 h-10 rounded-xl bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] flex items-center justify-center hover:bg-[#2C2C2E] transition-colors"
@@ -275,7 +305,9 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
 
         {/* Evidence entries */}
         {evidence.map((ev) => (
-          <div key={ev.id} className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4">
+          <div key={ev.id} className={`bg-[#1C1C1E] border rounded-2xl p-4 ${
+            ev.type === 'fact_check' ? 'border-[#AF52DE]/50 ring-1 ring-[#AF52DE]/20' : 'border-[rgba(84,84,88,0.65)]'
+          }`}>
             <div className="flex items-center gap-2 mb-2">
               <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                 ev.type === 'investigation'
@@ -284,7 +316,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
                     ? 'bg-[#FF9F0A]/20 text-[#FF9F0A]'
                     : 'bg-[#AF52DE]/20 text-[#AF52DE]'
               }`}>
-                {ev.type === 'investigation' ? 'Investigation' : ev.type === 'note' ? 'Note' : 'Fact Check'}
+                {ev.type === 'investigation' ? 'Investigation' : ev.type === 'note' ? 'Note' : 'Consolidated Report'}
               </span>
               <span className="text-[11px] text-[rgba(235,235,245,0.3)]">
                 {new Date(ev.created_at).toLocaleString()}
