@@ -14,6 +14,7 @@ import queue as _queue
 import traceback
 import asyncio
 import re
+import urllib.parse
 from typing import AsyncGenerator
 
 from google.genai import types
@@ -74,11 +75,13 @@ async def run_investigation(
     semantic_search_fn,
     rerank_fn=None,
     case_context: dict = None,
+    mode: str = "files_only",
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that runs a multi-step investigation and yields SSE events.
     Optional case_context dict enriches the query with case-specific info:
       { title, summary, entities, suggested_questions }
+    mode: "files_only" (strict document-only) or "files_web" (supplement with Google Search)
     """
     # If case context provided, enrich the query
     if case_context:
@@ -94,7 +97,7 @@ async def run_investigation(
     try:
         async for event in _run_investigation_inner(
             query, genai_client, pinecone_index, supabase_client,
-            semantic_search_fn, rerank_fn,
+            semantic_search_fn, rerank_fn, mode=mode,
         ):
             yield event
     except Exception as e:
@@ -111,6 +114,7 @@ async def _run_investigation_inner(
     supabase_client,
     semantic_search_fn,
     rerank_fn=None,
+    mode: str = "files_only",
 ) -> AsyncGenerator[str, None]:
     all_context_chunks = []
     all_sources = []
@@ -472,40 +476,84 @@ async def _run_investigation_inner(
         yield _sse("done", {})
         return
 
-    synthesis_prompt = (
-        "You are an elite investigative intelligence analyst writing a comprehensive investigative report.\n\n"
-        "CONTEXT (documents, graph intelligence, entity profiles):\n"
-        f"{full_context}\n\n"
-        f"INVESTIGATION QUERY: {query}\n\n"
+    # Build mode-specific synthesis prompt
+    report_sections = (
         "Write a thorough investigative report with these sections:\n"
         "## Executive Summary\nBrief overview of key findings.\n\n"
         "## Key Connections\nImportant relationships and links discovered.\n\n"
         "## Document Evidence\nSpecific evidence from source documents with citations [Source: filename].\n\n"
         "## Timeline\nChronological events if dates are available.\n\n"
         "## Assessment\nAnalytical assessment of the findings.\n\n"
-        "Cite sources using [Source: filename] tags. Be thorough but precise. "
-        "Do not fabricate information not supported by the provided context."
+        "Cite sources using [Source: filename] tags. Be thorough but precise."
     )
+
+    if mode == "files_web":
+        synthesis_prompt = (
+            "You are an elite investigative intelligence analyst writing a comprehensive investigative report.\n\n"
+            "CONTEXT (documents, graph intelligence, entity profiles):\n"
+            f"{full_context}\n\n"
+            f"INVESTIGATION QUERY: {query}\n\n"
+            f"{report_sections}\n\n"
+            "Prioritize evidence from the provided document context above. "
+            "If the documents are insufficient to fully answer the query, supplement with Google Search. "
+            "Prefix any web-sourced information with [Web]. "
+            "Always clearly distinguish document evidence from web-sourced information."
+        )
+    else:
+        synthesis_prompt = (
+            "You are an elite investigative intelligence analyst writing a comprehensive investigative report.\n\n"
+            "CONTEXT (documents, graph intelligence, entity profiles):\n"
+            f"{full_context}\n\n"
+            f"INVESTIGATION QUERY: {query}\n\n"
+            f"{report_sections}\n\n"
+            "ONLY use information from the provided context. "
+            "Do not fabricate information not supported by the provided context. "
+            "If the provided context is insufficient to fully answer the query, explicitly state what information is missing rather than speculating."
+        )
+
+    # Web search step (files_web mode only)
+    if mode == "files_web":
+        yield _sse("step_status", {"step": "web_search", "label": "Web Search", "status": "running", "detail": "Gemini will search if needed"})
+        await asyncio.sleep(0.1)
 
     synthesis_failed = False
     synthesis_text_parts = []
+    web_sources = []
     try:
         # Run the entire streaming call + iteration in a single background thread,
         # collecting chunks into a thread-safe queue so we can yield SSE events
         # from the async generator without blocking the event loop.
         chunk_queue = _queue.Queue()
 
+        # Build config with optional Google Search tool
+        synthesis_config = None
+        if mode == "files_web":
+            synthesis_config = types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())]
+            )
+
         def _produce_chunks():
             try:
-                stream = genai_client.models.generate_content_stream(
+                kwargs = dict(
                     model="gemini-2.5-pro",
                     contents=synthesis_prompt,
                 )
+                if synthesis_config:
+                    kwargs["config"] = synthesis_config
+                stream = genai_client.models.generate_content_stream(**kwargs)
                 for chunk in stream:
                     if chunk.text:
-                        chunk_queue.put(chunk.text)
+                        chunk_queue.put(("text", chunk.text))
+                    # Collect grounding metadata from the final chunk
+                    if hasattr(chunk, 'candidates') and chunk.candidates:
+                        candidate = chunk.candidates[0]
+                        gm = getattr(candidate, 'grounding_metadata', None)
+                        if gm:
+                            grounding_chunks = getattr(gm, 'grounding_chunks', None)
+                            if grounding_chunks:
+                                chunk_queue.put(("grounding", grounding_chunks))
             except Exception as exc:
-                chunk_queue.put(exc)
+                chunk_queue.put(("error", exc))
             finally:
                 chunk_queue.put(None)  # sentinel
 
@@ -518,10 +566,21 @@ async def _run_investigation_inner(
             item = await asyncio.to_thread(chunk_queue.get)
             if item is None:
                 break
-            if isinstance(item, Exception):
-                raise item
-            synthesis_text_parts.append(item)
-            yield _sse("text", {"text": item})
+            if item[0] == "error":
+                raise item[1]
+            elif item[0] == "grounding":
+                # Extract web sources from grounding chunks
+                for gc in item[1]:
+                    web = getattr(gc, 'web', None)
+                    if web:
+                        uri = getattr(web, 'uri', '') or ''
+                        title = getattr(web, 'title', '') or ''
+                        if uri:
+                            domain = urllib.parse.urlparse(uri).netloc.removeprefix('www.')
+                            web_sources.append({"title": title, "uri": uri, "domain": domain})
+            elif item[0] == "text":
+                synthesis_text_parts.append(item[1])
+                yield _sse("text", {"text": item[1]})
             await asyncio.sleep(0.01)
 
         await producer  # ensure thread completed
@@ -533,6 +592,21 @@ async def _run_investigation_inner(
         yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "error", "detail": "Generation failed"})
     else:
         yield _sse("step_status", {"step": "synthesis", "label": "Writing Report", "status": "done"})
+
+    # Emit web search step status and web sources
+    if mode == "files_web":
+        # Deduplicate web sources by URI
+        seen_uris = set()
+        unique_web_sources = []
+        for ws in web_sources:
+            if ws["uri"] not in seen_uris:
+                seen_uris.add(ws["uri"])
+                unique_web_sources.append(ws)
+        if unique_web_sources:
+            yield _sse("step_status", {"step": "web_search", "label": "Web Search", "status": "done", "detail": f"{len(unique_web_sources)} web sources"})
+            yield _sse("web_sources", {"web_sources": unique_web_sources})
+        else:
+            yield _sse("step_status", {"step": "web_search", "label": "Web Search", "status": "done", "detail": "No web sources needed"})
 
     # Deduplicate sources
     seen_source_files = set()

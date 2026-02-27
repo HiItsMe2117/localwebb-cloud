@@ -4,6 +4,12 @@ export interface Source {
   score: number | null;
 }
 
+export interface WebSource {
+  title: string;
+  uri: string;
+  domain: string;
+}
+
 export interface Community {
   id: number;
   color: string;
@@ -29,6 +35,7 @@ export interface ChatMessage {
   isInvestigation?: boolean;
   steps?: InvestigationStep[];
   followUpQuestions?: string[];
+  webSources?: WebSource[];
 }
 
 export interface ScanFinding {

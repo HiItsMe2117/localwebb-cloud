@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Shield, Database, MessageSquare, Loader2, ArrowUp } from 'lucide-react';
-import type { ChatMessage, Source } from '../types';
+import { Shield, Database, Globe, MessageSquare, Loader2, ArrowUp } from 'lucide-react';
+import type { ChatMessage, Source, WebSource } from '../types';
 import InvestigationSteps from './InvestigationSteps';
 import { getFileUrl } from '../utils/files';
 
@@ -13,6 +13,7 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [mode, setMode] = useState<'files_only' | 'files_web'>('files_only');
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -61,9 +62,10 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
       const res = await fetch('/api/investigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           query: text,
-          entity_id: entityId 
+          entity_id: entityId,
+          mode,
         }),
       });
 
@@ -76,6 +78,7 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
       let buffer = '';
       let fullText = '';
       let finalSources: any[] = [];
+      let finalWebSources: WebSource[] = [];
       let followUps: string[] = [];
       const stepsMap = new Map<string, any>();
 
@@ -99,6 +102,8 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
               ));
             } else if (eventType === 'sources' || (!eventType && data.sources)) {
               finalSources = data.sources;
+            } else if (eventType === 'web_sources') {
+              finalWebSources = data.web_sources || [];
             } else if (eventType === 'follow_ups') {
               followUps = data.follow_ups || [];
             } else if (data.error) {
@@ -128,7 +133,7 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
 
       setMessages(prev => prev.map(m =>
         m.id === assistantId
-          ? { ...m, isStreaming: false, sources: finalSources, content: fullText || m.content, followUpQuestions: followUps }
+          ? { ...m, isStreaming: false, sources: finalSources, webSources: finalWebSources.length > 0 ? finalWebSources : undefined, content: fullText || m.content, followUpQuestions: followUps }
           : m
       ));
     } catch (err: any) {
@@ -245,6 +250,29 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
                       </div>
                     </div>
                   )}
+
+                  {msg.webSources && msg.webSources.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-[rgba(84,84,88,0.65)] flex flex-col gap-1.5">
+                      <span className="text-[10px] font-semibold text-[#0A84FF]/70 flex items-center gap-1.5">
+                        <Globe size={10} /> Web Sources
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {msg.webSources.map((ws: WebSource, idx: number) => (
+                          <a
+                            key={idx}
+                            href={ws.uri}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={ws.title}
+                            className="inline-flex items-center gap-1 text-[10px] bg-[#0A84FF]/15 hover:bg-[#0A84FF]/25 text-[#0A84FF] pl-1.5 pr-2 py-0.5 rounded-full transition-colors cursor-pointer"
+                          >
+                            <Globe size={9} />
+                            {ws.domain}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -255,6 +283,33 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
 
       {/* Input Area */}
       <div className="p-3 bg-[#1C1C1E] border-t border-[rgba(84,84,88,0.65)]">
+        {/* Mode Selector */}
+        <div className="flex justify-center mb-2">
+          <div className="inline-flex bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-lg p-0.5">
+            <button
+              onClick={() => setMode('files_only')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[12px] font-medium transition-all ${
+                mode === 'files_only'
+                  ? 'bg-[#3A3A3C] text-white shadow-sm'
+                  : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+              }`}
+            >
+              <Database size={12} />
+              Files Only
+            </button>
+            <button
+              onClick={() => setMode('files_web')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[12px] font-medium transition-all ${
+                mode === 'files_web'
+                  ? 'bg-[#0A84FF]/20 text-[#0A84FF] shadow-sm'
+                  : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+              }`}
+            >
+              <Globe size={12} />
+              Files + Web
+            </button>
+          </div>
+        </div>
         <div className="relative flex items-end gap-2 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-2xl px-3 py-1.5 focus-within:border-[#007AFF]/40 transition-all">
           <textarea
             ref={textareaRef}

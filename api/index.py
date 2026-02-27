@@ -391,6 +391,7 @@ class TargetedSearchRequest(BaseModel):
 class InvestigateRequest(BaseModel):
     query: str
     entity_id: Optional[str] = None
+    mode: str = "files_only"
 
 class CreateCaseRequest(BaseModel):
     title: str
@@ -937,6 +938,7 @@ async def investigate(request: InvestigateRequest):
             semantic_search_fn=_semantic_search_pass,
             rerank_fn=None,
             case_context=case_context,
+            mode=request.mode,
         ),
         media_type="text/event-stream",
     )
