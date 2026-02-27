@@ -77,6 +77,8 @@ interface ScrapeProgress {
   files_failed?: number;
   started_at?: string;
   last_updated?: string;
+  phase?: 'discovering' | 'downloading';
+  pages_crawled?: number;
 }
 
 function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress; onRefresh: () => void }) {
@@ -89,16 +91,19 @@ function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress;
     files_failed = 0,
     started_at,
     last_updated,
+    phase,
+    pages_crawled = 0,
   } = progress;
 
+  const isDiscovering = phase === 'discovering';
   const dsInfo = DATASET_INFO[String(dataset)];
   const dsName = dsInfo ? `${dataset}. ${dsInfo.name}` : `Dataset ${dataset}`;
   const pct = total_urls > 0 ? Math.min((current_index / total_urls) * 100, 100) : 0;
 
-  // Compute files/min and ETA
+  // Compute files/min and ETA (download phase only)
   let filesPerMin = 0;
   let etaText = '—';
-  if (started_at && files_uploaded > 0) {
+  if (!isDiscovering && started_at && files_uploaded > 0) {
     const elapsedMs = Date.now() - new Date(started_at).getTime();
     const elapsedMin = elapsedMs / 60000;
     if (elapsedMin > 0) {
@@ -114,6 +119,16 @@ function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress;
           etaText = `~${(etaMin / 1440).toFixed(1)}d`;
         }
       }
+    }
+  }
+
+  // Pages/min and discovery ETA
+  let pagesPerMin = 0;
+  if (isDiscovering && started_at && pages_crawled > 0) {
+    const elapsedMs = Date.now() - new Date(started_at).getTime();
+    const elapsedMin = elapsedMs / 60000;
+    if (elapsedMin > 0) {
+      pagesPerMin = Math.round(pages_crawled / elapsedMin);
     }
   }
 
@@ -141,7 +156,9 @@ function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress;
             <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
               <Download size={14} className="text-[#0A84FF]" />
               {dsName}
-              <span className="text-[11px] font-normal text-[#0A84FF]">Downloading...</span>
+              <span className="text-[11px] font-normal text-[#0A84FF]">
+                {isDiscovering ? 'Discovering URLs...' : 'Downloading...'}
+              </span>
             </h3>
           </div>
         </div>
@@ -153,43 +170,76 @@ function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress;
         </button>
       </div>
 
-      {/* Large progress bar */}
-      <div className="mb-3">
-        <div className="flex justify-between items-center mb-1.5">
-          <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
-            {current_index.toLocaleString()} / {total_urls.toLocaleString()}
-          </span>
-          <span className="text-[13px] font-mono text-[#0A84FF]">{pct.toFixed(1)}%</span>
-        </div>
-        <div className="h-2.5 w-full bg-[#3A3A3C] rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all duration-700 bg-[#0A84FF]"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </div>
+      {isDiscovering ? (
+        <>
+          {/* Discovery phase — show pages crawled and URLs found */}
+          <div className="mb-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Loader2 size={14} className="text-[#0A84FF] animate-spin" />
+              <span className="text-[13px] text-[rgba(235,235,245,0.6)]">
+                Crawling DOJ pagination pages...
+              </span>
+            </div>
+            <div className="h-2.5 w-full bg-[#3A3A3C] rounded-full overflow-hidden">
+              <div className="h-full rounded-full bg-[#0A84FF] animate-pulse" style={{ width: '100%', opacity: 0.4 }} />
+            </div>
+          </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-4 gap-3 mb-2">
-        <div className="text-center">
-          <p className="text-[15px] font-bold text-white">{files_uploaded.toLocaleString()}</p>
-          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Uploaded</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[15px] font-bold text-[rgba(235,235,245,0.6)]">{filesPerMin}</p>
-          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Files/min</p>
-        </div>
-        <div className="text-center">
-          <p className="text-[15px] font-bold text-[#0A84FF]">{etaText}</p>
-          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">ETA</p>
-        </div>
-        <div className="text-center">
-          <p className={`text-[15px] font-bold ${files_failed > 0 ? 'text-[#FF453A]' : 'text-[rgba(235,235,245,0.6)]'}`}>
-            {files_failed.toLocaleString()}
-          </p>
-          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Errors</p>
-        </div>
-      </div>
+          <div className="grid grid-cols-3 gap-3 mb-2">
+            <div className="text-center">
+              <p className="text-[15px] font-bold text-white">{pages_crawled.toLocaleString()}</p>
+              <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Pages Crawled</p>
+            </div>
+            <div className="text-center">
+              <p className="text-[15px] font-bold text-[#0A84FF]">{current_index.toLocaleString()}</p>
+              <p className="text-[10px] text-[rgba(235,235,245,0.4)]">URLs Found</p>
+            </div>
+            <div className="text-center">
+              <p className="text-[15px] font-bold text-[rgba(235,235,245,0.6)]">{pagesPerMin}</p>
+              <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Pages/min</p>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Download phase — existing progress bar and stats */}
+          <div className="mb-3">
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
+                {current_index.toLocaleString()} / {total_urls.toLocaleString()}
+              </span>
+              <span className="text-[13px] font-mono text-[#0A84FF]">{pct.toFixed(1)}%</span>
+            </div>
+            <div className="h-2.5 w-full bg-[#3A3A3C] rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-700 bg-[#0A84FF]"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-4 gap-3 mb-2">
+            <div className="text-center">
+              <p className="text-[15px] font-bold text-white">{files_uploaded.toLocaleString()}</p>
+              <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Uploaded</p>
+            </div>
+            <div className="text-center">
+              <p className="text-[15px] font-bold text-[rgba(235,235,245,0.6)]">{filesPerMin}</p>
+              <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Files/min</p>
+            </div>
+            <div className="text-center">
+              <p className="text-[15px] font-bold text-[#0A84FF]">{etaText}</p>
+              <p className="text-[10px] text-[rgba(235,235,245,0.4)]">ETA</p>
+            </div>
+            <div className="text-center">
+              <p className={`text-[15px] font-bold ${files_failed > 0 ? 'text-[#FF453A]' : 'text-[rgba(235,235,245,0.6)]'}`}>
+                {files_failed.toLocaleString()}
+              </p>
+              <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Errors</p>
+            </div>
+          </div>
+        </>
+      )}
 
       {lastUpdatedText && (
         <p className="text-[10px] text-[rgba(235,235,245,0.25)] text-right">

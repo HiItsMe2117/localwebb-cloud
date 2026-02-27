@@ -128,7 +128,7 @@ def get_session():
     return session
 
 
-def discover_dataset_urls(session, dataset_num):
+def discover_dataset_urls(session, dataset_num, bucket=None):
     """Crawl a DOJ data set page and all its pagination to find PDF links.
 
     URL pattern: https://www.justice.gov/epstein/doj-disclosures/data-set-N-files
@@ -141,6 +141,7 @@ def discover_dataset_urls(session, dataset_num):
     pdf_urls = []
     seen_urls = set()
     page = 0
+    discovery_start_time = datetime.now(timezone.utc).isoformat()
 
     while True:
         page_url = f"{working_url}?page={page}" if page > 0 else working_url
@@ -181,6 +182,13 @@ def discover_dataset_urls(session, dataset_num):
 
         pdf_urls.extend(page_pdfs)
         print(f"  Found {len(page_pdfs)} PDFs on page {page} (total: {len(pdf_urls)})")
+
+        if bucket and page % 25 == 0:
+            upload_live_progress(
+                bucket, dataset_num, len(pdf_urls), 0,
+                0, 0, 0, discovery_start_time,
+                phase="discovering", pages_crawled=page,
+            )
 
         # Check for pagination — look for a "next" link or page=N+1 link
         has_next = False
@@ -278,11 +286,12 @@ def check_gcs_existing(bucket):
 
 
 def upload_live_progress(bucket, dataset_num, current_index, total_urls,
-                         uploaded, skipped, failed, start_time, active=True):
+                         uploaded, skipped, failed, start_time, active=True,
+                         phase="downloading", pages_crawled=0):
     """Upload lightweight progress JSON to GCS for the UI."""
     try:
         blob = bucket.blob("scrape_live_progress.json")
-        blob.upload_from_string(json.dumps({
+        data = {
             "active": active,
             "dataset": dataset_num,
             "current_index": current_index,
@@ -292,7 +301,11 @@ def upload_live_progress(bucket, dataset_num, current_index, total_urls,
             "files_failed": failed,
             "started_at": start_time,
             "last_updated": datetime.now(timezone.utc).isoformat(),
-        }), content_type="application/json")
+            "phase": phase,
+        }
+        if pages_crawled:
+            data["pages_crawled"] = pages_crawled
+        blob.upload_from_string(json.dumps(data), content_type="application/json")
     except Exception:
         pass  # Non-critical, don't break scraping
 
@@ -380,7 +393,7 @@ def main():
             pdf_urls = progress["urls_discovered"][ds_key]
             print(f"  Using cached URL list: {len(pdf_urls)} PDFs")
         else:
-            pdf_urls = discover_dataset_urls(session, ds_num)
+            pdf_urls = discover_dataset_urls(session, ds_num, bucket=bucket)
             progress.setdefault("urls_discovered", {})[ds_key] = pdf_urls
             save_progress(progress)
 
