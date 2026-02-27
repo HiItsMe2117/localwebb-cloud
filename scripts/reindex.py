@@ -648,7 +648,7 @@ def main():
     try:
         from generate_pipeline_status import generate_status, upload_to_gcs
         print("\nUpdating pipeline status in GCS...")
-        status = generate_status()
+        status = generate_status(bucket=bucket)
         upload_to_gcs(status)
     except Exception as e:
         print(f"Warning: Could not update pipeline status: {e}")
