@@ -535,7 +535,7 @@ async def _run_investigation_inner(
         def _produce_chunks():
             try:
                 kwargs = dict(
-                    model="gemini-2.5-pro",
+                    model="gemini-2.0-flash",
                     contents=synthesis_prompt,
                 )
                 if synthesis_config:
