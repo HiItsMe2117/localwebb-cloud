@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
 import type { Case, CaseEvidence, InvestigationStep } from '../types';
@@ -72,6 +72,9 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
   const [detailTab, setDetailTab] = useState<'evidence' | 'network'>('evidence');
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState('');
+  const [isSavingNote, setIsSavingNote] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -181,6 +184,21 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
       console.error('Failed to add note:', err);
     } finally {
       setIsAddingNote(false);
+    }
+  };
+
+  const saveNote = async (evidenceId: string) => {
+    if (!editingNoteText.trim() || isSavingNote) return;
+    setIsSavingNote(true);
+    try {
+      const res = await axios.patch(`/api/cases/${caseId}/evidence/${evidenceId}`, { content: editingNoteText.trim() });
+      setEvidence(prev => prev.map(ev => ev.id === evidenceId ? res.data.evidence : ev));
+      setEditingNoteId(null);
+      setEditingNoteText('');
+    } catch (err) {
+      console.error('Failed to save note:', err);
+    } finally {
+      setIsSavingNote(false);
     }
   };
 
@@ -445,7 +463,45 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
                   <span className="text-[11px] text-[rgba(235,235,245,0.3)]">
                     {new Date(ev.created_at).toLocaleString()}
                   </span>
+                  <div className="flex-1" />
+                  {ev.type === 'note' && editingNoteId !== ev.id && (
+                    <button
+                      onClick={() => { setEditingNoteId(ev.id); setEditingNoteText(ev.content); }}
+                      className="p-1 rounded hover:bg-[#2C2C2E] transition-colors"
+                      title="Edit note"
+                    >
+                      <Pencil size={12} className="text-[rgba(235,235,245,0.3)] hover:text-[rgba(235,235,245,0.6)]" />
+                    </button>
+                  )}
                 </div>
+                {editingNoteId === ev.id ? (
+                  <div className="space-y-2">
+                    <textarea
+                      value={editingNoteText}
+                      onChange={(e) => setEditingNoteText(e.target.value)}
+                      className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors resize-none"
+                      rows={3}
+                      autoFocus
+                      onKeyDown={(e) => { if (e.key === 'Enter' && e.metaKey) saveNote(ev.id); }}
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => { setEditingNoteId(null); setEditingNoteText(''); }}
+                        className="px-3 py-1 rounded-lg text-[12px] text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E] transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => saveNote(ev.id)}
+                        disabled={!editingNoteText.trim() || isSavingNote}
+                        className="flex items-center gap-1 px-3 py-1 rounded-lg bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-30 text-[12px] font-semibold transition-colors"
+                      >
+                        {isSavingNote ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                ) : (
                 <div className={`text-[13px] ${
                   ev.type === 'note'
                     ? 'text-[rgba(235,235,245,0.8)]'
@@ -453,6 +509,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
                 }`}>
                   <EvidenceText content={ev.content} />
                 </div>
+                )}
               </div>
             );
           })}

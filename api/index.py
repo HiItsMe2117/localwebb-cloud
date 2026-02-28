@@ -410,6 +410,9 @@ class UpdateCaseRequest(BaseModel):
 class AddNoteRequest(BaseModel):
     content: str
 
+class UpdateNoteRequest(BaseModel):
+    content: str
+
 class AddGraphEntitiesRequest(BaseModel):
     node_ids: List[str]
 
@@ -1208,6 +1211,31 @@ async def add_case_note(case_id: str, request: AddNoteRequest):
             "content": request.content,
             "sources": None,
         }).execute()
+
+        # Update case timestamp
+        supabase.table("cases").update({"updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", case_id).execute()
+
+        return {"evidence": res.data[0] if res.data else {}}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/{case_id}/evidence/{evidence_id}")
+async def update_evidence(case_id: str, evidence_id: str, request: UpdateNoteRequest):
+    """Update the content of a note."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        # Verify evidence exists and is a note
+        ev_res = supabase.table("case_evidence").select("*").eq("id", evidence_id).eq("case_id", case_id).execute()
+        if not ev_res.data:
+            return JSONResponse(status_code=404, content={"error": "Evidence not found"})
+        if ev_res.data[0]["type"] != "note":
+            return JSONResponse(status_code=400, content={"error": "Only notes can be edited"})
+
+        res = supabase.table("case_evidence").update({
+            "content": request.content,
+        }).eq("id", evidence_id).execute()
 
         # Update case timestamp
         supabase.table("cases").update({"updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", case_id).execute()
