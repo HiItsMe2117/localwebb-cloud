@@ -38,11 +38,12 @@ interface NexusProps {
   onNodeDragStop: any;
   onNodeClick?: (node: Node) => void;
   onEdgeClick?: (edge: Edge) => void;
+  onPaneClick?: () => void;
   height?: string;
   showEdgeLabels?: boolean;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, height, showEdgeLabels = true }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, onPaneClick, height, showEdgeLabels = true }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
@@ -112,6 +113,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
         onConnect={onConnect}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
+        onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
         fitView
         minZoom={0.1}

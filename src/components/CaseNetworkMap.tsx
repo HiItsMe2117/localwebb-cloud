@@ -93,6 +93,12 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     setCopied(false);
   }, []);
 
+  // Filter out ReactFlow's built-in select changes — we manage selection ourselves
+  const handleNodesChange = useCallback((changes: any[]) => {
+    const filtered = changes.filter((c: any) => c.type !== 'select');
+    if (filtered.length > 0) onNodesChange(filtered);
+  }, [onNodesChange]);
+
   // Load the case subgraph
   const loadGraph = useCallback(async () => {
     try {
@@ -423,10 +429,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
         <NexusCanvas
           nodes={displayNodes}
           edges={edges}
-          onNodesChange={onNodesChange}
+          onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeDragStop={onNodeDragStop}
           onNodeClick={onNodeClick}
+          onPaneClick={clearSelection}
           showEdgeLabels={false}
         />
 
