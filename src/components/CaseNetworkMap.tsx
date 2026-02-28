@@ -7,6 +7,7 @@ import axios from 'axios';
 
 interface CaseNetworkMapProps {
   caseId: string;
+  caseEntities?: string[];
 }
 
 interface SearchResult {
@@ -33,10 +34,15 @@ const TYPE_COLORS: Record<string, string> = {
   FINANCIAL_ENTITY: '#f87171',
 };
 
-function CaseNetworkMapInner({ caseId }: CaseNetworkMapProps) {
+function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Suggested entities from the case
+  const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const [isAddingSuggestions, setIsAddingSuggestions] = useState(false);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -76,6 +82,48 @@ function CaseNetworkMapInner({ caseId }: CaseNetworkMapProps) {
   useEffect(() => {
     loadGraph();
   }, [loadGraph]);
+
+  // Load suggested entities from case when graph is empty
+  useEffect(() => {
+    if (isLoading || nodes.length > 0 || caseEntities.length === 0) return;
+    setIsLoadingSuggestions(true);
+    // Fetch details for each case entity via search (handles underscore IDs)
+    Promise.all(
+      caseEntities.slice(0, 10).map(async (entityId) => {
+        try {
+          const label = entityId.replace(/_/g, ' ');
+          const res = await axios.get(`/api/nodes/search?q=${encodeURIComponent(label)}`);
+          const results = res.data.results || [];
+          // Best match: exact ID match, else first result
+          return results.find((r: SearchResult) => r.id === entityId) || results[0] || null;
+        } catch {
+          return null;
+        }
+      })
+    ).then((results) => {
+      const unique = new Map<string, SearchResult>();
+      for (const r of results) {
+        if (r && !unique.has(r.id)) unique.set(r.id, r);
+      }
+      setSuggestions(Array.from(unique.values()));
+      setIsLoadingSuggestions(false);
+    });
+  }, [isLoading, nodes.length, caseEntities]);
+
+  // Add all suggested entities at once
+  const addSuggestions = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return;
+    setIsAddingSuggestions(true);
+    try {
+      await axios.post(`/api/cases/${caseId}/graph/entities`, { node_ids: ids });
+      setSuggestions([]);
+      await loadGraph();
+    } catch (err) {
+      console.error('Failed to add suggested entities:', err);
+    } finally {
+      setIsAddingSuggestions(false);
+    }
+  }, [caseId, loadGraph]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -251,6 +299,51 @@ function CaseNetworkMapInner({ caseId }: CaseNetworkMapProps) {
           <p className="text-[13px] text-[rgba(235,235,245,0.3)] max-w-[280px]">
             Search for an entity above to start building a focused network map for this case.
           </p>
+
+          {/* Suggested entities from the case */}
+          {isLoadingSuggestions ? (
+            <div className="mt-4 flex items-center gap-2">
+              <Loader2 size={14} className="text-[rgba(235,235,245,0.3)] animate-spin" />
+              <span className="text-[12px] text-[rgba(235,235,245,0.3)]">Loading suggestions...</span>
+            </div>
+          ) : suggestions.length > 0 && (
+            <div className="mt-5 w-full max-w-[340px]">
+              <p className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2">
+                Suggested from this case
+              </p>
+              <div className="flex flex-wrap gap-1.5 justify-center mb-3">
+                {suggestions.map(s => {
+                  const color = TYPE_COLORS[s.type.toUpperCase()] || '#9ca3af';
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => addSuggestions([s.id])}
+                      disabled={isAddingSuggestions}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] hover:border-[#007AFF]/50 transition-colors disabled:opacity-50"
+                    >
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                      <span className="text-[12px] text-white font-medium">{s.label}</span>
+                      <Plus size={10} className="text-[rgba(235,235,245,0.3)]" />
+                    </button>
+                  );
+                })}
+              </div>
+              {suggestions.length > 1 && (
+                <button
+                  onClick={() => addSuggestions(suggestions.map(s => s.id))}
+                  disabled={isAddingSuggestions}
+                  className="flex items-center justify-center gap-2 mx-auto bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors"
+                >
+                  {isAddingSuggestions ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Plus size={14} />
+                  )}
+                  Add all {suggestions.length} entities
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );

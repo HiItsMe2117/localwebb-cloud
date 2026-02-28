@@ -330,7 +330,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
 
       {/* Tab content */}
       {detailTab === 'network' ? (
-        <CaseNetworkMap caseId={caseId} />
+        <CaseNetworkMap caseId={caseId} caseEntities={caseData.entities || []} />
       ) : (
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 pb-32">
           {/* Case summary */}
