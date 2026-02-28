@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
-import type { Node, Edge } from 'reactflow';
+import type { Node } from 'reactflow';
 import { Search, Plus, X, Expand, Trash2, Loader2, Share2 } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
@@ -44,7 +44,7 @@ function CaseNetworkMapInner({ caseId }: CaseNetworkMapProps) {
   const [searchIndex, setSearchIndex] = useState(0);
   const [isSearching, setIsSearching] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Expand state
   const [expandNode, setExpandNode] = useState<Node | null>(null);
