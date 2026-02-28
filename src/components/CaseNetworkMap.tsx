@@ -206,27 +206,27 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     }
   }, [caseId, loadGraph]);
 
-  // Node click → toggle selection. Second click on a lone selected node opens context menu.
-  const onNodeClick = useCallback((node: Node) => {
-    setSelectedNodeIds(prev => {
-      const next = new Set(prev);
-      if (next.has(node.id)) {
-        // Already selected — if it's the only one, show context menu; otherwise deselect
-        if (next.size === 1) {
-          setContextNode(c => c?.id === node.id ? null : node);
-          return next; // keep it selected
-        }
-        next.delete(node.id);
-      } else {
-        next.add(node.id);
-      }
+  // Node click: plain click → context menu (expand/remove). Shift+click → toggle multi-select.
+  const onNodeClick = useCallback((node: Node, event?: React.MouseEvent) => {
+    if (event?.shiftKey) {
+      // Shift+click: toggle selection for copy
+      setSelectedNodeIds(prev => {
+        const next = new Set(prev);
+        if (next.has(node.id)) next.delete(node.id);
+        else next.add(node.id);
+        return next;
+      });
+      setCopied(false);
       setContextNode(null);
-      return next;
-    });
-    setCopied(false);
-    setExpandNode(null);
-    setNeighbors([]);
-    setSelectedNeighbors(new Set());
+    } else {
+      // Plain click: show context menu for this node
+      setContextNode(prev => prev?.id === node.id ? null : node);
+      setSelectedNodeIds(new Set());
+      setCopied(false);
+      setExpandNode(null);
+      setNeighbors([]);
+      setSelectedNeighbors(new Set());
+    }
   }, []);
 
   // Expand: fetch neighbors
@@ -556,6 +556,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex items-center justify-between">
         <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
           {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} \u00B7 {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
+          {selectedNodeIds.size === 0 && nodes.length > 0 && ' \u00B7 Shift+click to select'}
         </span>
         {selectedNodeIds.size > 0 && (
           <div className="flex items-center gap-2">

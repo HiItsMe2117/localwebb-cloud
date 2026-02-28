@@ -36,7 +36,7 @@ interface NexusProps {
   onNodesChange: any;
   onEdgesChange: any;
   onNodeDragStop: any;
-  onNodeClick?: (node: Node) => void;
+  onNodeClick?: (node: Node, event?: React.MouseEvent) => void;
   onEdgeClick?: (edge: Edge) => void;
   onPaneClick?: () => void;
   height?: string;
@@ -61,8 +61,8 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
   );
 
   const handleNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
-      onNodeClick?.(node);
+    (event: React.MouseEvent, node: Node) => {
+      onNodeClick?.(node, event);
     },
     [onNodeClick]
   );
