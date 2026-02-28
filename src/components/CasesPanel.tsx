@@ -1,4 +1,5 @@
-import { Shield, Loader2, Check, X, Search, ChevronRight, Database } from 'lucide-react';
+import { useState } from 'react';
+import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus } from 'lucide-react';
 import type { Case, ScanFinding } from '../types';
 import { CASE_CATEGORIES } from '../types';
 
@@ -11,6 +12,7 @@ interface CasesPanelProps {
   onDismiss: (finding: ScanFinding) => void;
   onAcceptAll: () => void;
   onOpenCase: (caseId: string) => void;
+  onCreateCase: (title: string, category: string) => Promise<void>;
 }
 
 function CategoryBadge({ category }: { category: string }) {
@@ -132,36 +134,109 @@ function CaseCard({ caseData, onOpen }: { caseData: Case; onOpen: () => void }) 
 
 export default function CasesPanel({
   cases, scanFindings, isScanning,
-  onScan, onAccept, onDismiss, onAcceptAll, onOpenCase,
+  onScan, onAccept, onDismiss, onAcceptAll, onOpenCase, onCreateCase,
 }: CasesPanelProps) {
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newCategory, setNewCategory] = useState('other');
+  const [isCreating, setIsCreating] = useState(false);
+
   const activeCases = cases.filter(c => c.status === 'active');
   const closedCases = cases.filter(c => c.status === 'closed');
   const hasFindings = scanFindings.length > 0;
   const hasCases = cases.length > 0;
 
+  const handleCreate = async () => {
+    if (!newTitle.trim() || isCreating) return;
+    setIsCreating(true);
+    await onCreateCase(newTitle.trim(), newCategory);
+    setNewTitle('');
+    setNewCategory('other');
+    setShowCreateForm(false);
+    setIsCreating(false);
+  };
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between">
         <h1 className="text-[28px] font-bold tracking-tight text-white">Cases</h1>
-        {hasCases && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={onScan}
-            disabled={isScanning}
-            className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] transition-colors disabled:opacity-50"
+            onClick={() => setShowCreateForm(v => !v)}
+            className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors"
           >
-            {isScanning ? (
-              <Loader2 size={12} className="animate-spin text-[#FF9F0A]" />
-            ) : (
-              <Search size={12} className="text-[rgba(235,235,245,0.4)]" />
-            )}
-            <span className="text-[rgba(235,235,245,0.6)]">
-              {isScanning ? 'Scanning...' : 'Scan Again'}
-            </span>
+            <Plus size={14} />
+            New Case
           </button>
-        )}
+          {hasCases && (
+            <button
+              onClick={onScan}
+              disabled={isScanning}
+              className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] transition-colors disabled:opacity-50"
+            >
+              {isScanning ? (
+                <Loader2 size={12} className="animate-spin text-[#FF9F0A]" />
+              ) : (
+                <Search size={12} className="text-[rgba(235,235,245,0.4)]" />
+              )}
+              <span className="text-[rgba(235,235,245,0.6)]">
+                {isScanning ? 'Scanning...' : 'Scan'}
+              </span>
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto px-5 pb-6">
+        {/* Create case form */}
+        {showCreateForm && (
+          <div className="bg-[#1C1C1E] border border-[#007AFF]/30 rounded-2xl p-4 space-y-3 mt-4 max-w-2xl mx-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[13px] font-semibold text-white">New Case</h3>
+              <button onClick={() => setShowCreateForm(false)} className="p-1 hover:bg-[#2C2C2E] rounded-lg">
+                <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+              </button>
+            </div>
+            <input
+              type="text"
+              value={newTitle}
+              onChange={e => setNewTitle(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
+              placeholder="Case title..."
+              autoFocus
+              className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-[rgba(235,235,245,0.2)]"
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(CASE_CATEGORIES).map(([key, cfg]) => (
+                <button
+                  key={key}
+                  onClick={() => setNewCategory(key)}
+                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                    newCategory === key
+                      ? 'ring-2 ring-offset-1 ring-offset-[#1C1C1E]'
+                      : 'opacity-50 hover:opacity-80'
+                  }`}
+                  style={{
+                    backgroundColor: cfg.color + '20',
+                    color: cfg.color,
+                    ...(newCategory === key ? { ringColor: cfg.color } : {}),
+                  }}
+                >
+                  {cfg.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={handleCreate}
+              disabled={!newTitle.trim() || isCreating}
+              className="w-full flex items-center justify-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-30 px-4 py-2.5 rounded-xl text-[13px] font-semibold transition-colors"
+            >
+              {isCreating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+              Create Case
+            </button>
+          </div>
+        )}
+
         {/* Scanning overlay */}
         {isScanning && (
           <div className="flex flex-col items-center justify-center py-20">

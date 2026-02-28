@@ -511,6 +511,25 @@ function AppContent() {
     }
   };
 
+  const createCase = async (title: string, category: string) => {
+    try {
+      const res = await axios.post('/api/cases', {
+        title,
+        category,
+        summary: '',
+        confidence: 0,
+        entities: [],
+        suggested_questions: [],
+        evidence_sources: [],
+      });
+      const newCase = res.data.case;
+      setCases(prev => [newCase, ...prev]);
+      setActiveCaseId(newCase.id);
+    } catch (err) {
+      console.error('Failed to create case:', err);
+    }
+  };
+
   const acceptFinding = async (finding: ScanFinding) => {
     try {
       const res = await axios.post('/api/cases', {
@@ -1153,6 +1172,7 @@ function AppContent() {
               onDismiss={dismissFinding}
               onAcceptAll={acceptAllFindings}
               onOpenCase={setActiveCaseId}
+              onCreateCase={createCase}
             />
           )
         )}
