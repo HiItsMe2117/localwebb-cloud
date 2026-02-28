@@ -385,6 +385,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
           onEdgesChange={onEdgesChange}
           onNodeDragStop={onNodeDragStop}
           onNodeClick={onNodeClick}
+          showEdgeLabels={false}
         />
 
         {/* Node context popover */}
