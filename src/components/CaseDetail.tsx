@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2 } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
+import CaseNetworkMap from './CaseNetworkMap';
 import type { Case, CaseEvidence, InvestigationStep } from '../types';
 import { CASE_CATEGORIES } from '../types';
 import axios from 'axios';
@@ -68,6 +69,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
   const [noteText, setNoteText] = useState('');
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [isConsolidating, setIsConsolidating] = useState(false);
+  const [detailTab, setDetailTab] = useState<'evidence' | 'network'>('evidence');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -294,99 +296,135 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
         </div>
       </header>
 
-      {/* Evidence list */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 pb-32">
-        {/* Case summary */}
-        <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4">
-          <h3 className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2">Summary</h3>
-          <p className="text-[13px] text-[rgba(235,235,245,0.6)] leading-relaxed">{caseData.summary}</p>
-          {caseData.entities && caseData.entities.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {caseData.entities.map((e) => (
-                <span key={e} className="text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] px-2 py-0.5 rounded-lg">
-                  {e.replace(/_/g, ' ')}
-                </span>
-              ))}
-            </div>
+      {/* Tab bar */}
+      <div className="shrink-0 flex bg-black border-b border-[rgba(84,84,88,0.65)]">
+        <button
+          onClick={() => setDetailTab('evidence')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[13px] font-semibold transition-colors relative ${
+            detailTab === 'evidence'
+              ? 'text-[#007AFF]'
+              : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+          }`}
+        >
+          <FileText size={14} />
+          Evidence
+          {detailTab === 'evidence' && (
+            <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-[#007AFF] rounded-full" />
           )}
-        </div>
+        </button>
+        <button
+          onClick={() => setDetailTab('network')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[13px] font-semibold transition-colors relative ${
+            detailTab === 'network'
+              ? 'text-[#007AFF]'
+              : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+          }`}
+        >
+          <Share2 size={14} />
+          Network Map
+          {detailTab === 'network' && (
+            <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-[#007AFF] rounded-full" />
+          )}
+        </button>
+      </div>
 
-        {/* Active investigation stream */}
-        {isInvestigating && (
-          <div className="bg-[#1C1C1E] border border-[#007AFF]/30 rounded-2xl p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <Loader2 size={14} className="text-[#007AFF] animate-spin" />
-              <span className="text-[13px] font-semibold text-[#007AFF]">Investigation in Progress</span>
-            </div>
-            {investigationSteps.length > 0 && (
-              <InvestigationSteps steps={investigationSteps} />
-            )}
-            {streamingText && (
-              <div className="text-[13px] text-[rgba(235,235,245,0.6)] whitespace-pre-wrap leading-relaxed">
-                {streamingText}
+      {/* Tab content */}
+      {detailTab === 'network' ? (
+        <CaseNetworkMap caseId={caseId} />
+      ) : (
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 pb-32">
+          {/* Case summary */}
+          <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4">
+            <h3 className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2">Summary</h3>
+            <p className="text-[13px] text-[rgba(235,235,245,0.6)] leading-relaxed">{caseData.summary}</p>
+            {caseData.entities && caseData.entities.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                {caseData.entities.map((e) => (
+                  <span key={e} className="text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] px-2 py-0.5 rounded-lg">
+                    {e.replace(/_/g, ' ')}
+                  </span>
+                ))}
               </div>
             )}
           </div>
-        )}
 
-        {/* Note input */}
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={noteText}
-            onChange={(e) => setNoteText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') addNote(); }}
-            placeholder="Add a note..."
-            className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-[rgba(235,235,245,0.2)]"
-          />
-          <button
-            onClick={addNote}
-            disabled={!noteText.trim() || isAddingNote}
-            className="w-10 h-10 rounded-xl bg-[#007AFF] disabled:opacity-30 flex items-center justify-center transition-colors"
-          >
-            <Plus size={18} />
-          </button>
-        </div>
-
-        {/* Evidence entries */}
-        {evidence.map((ev) => (
-          <div key={ev.id} className={`bg-[#1C1C1E] border rounded-2xl p-4 ${
-            ev.type === 'fact_check' ? 'border-[#AF52DE]/50 ring-1 ring-[#AF52DE]/20' : 'border-[rgba(84,84,88,0.65)]'
-          }`}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                ev.type === 'investigation'
-                  ? 'bg-[#007AFF]/20 text-[#007AFF]'
-                  : ev.type === 'note'
-                    ? 'bg-[#FF9F0A]/20 text-[#FF9F0A]'
-                    : 'bg-[#AF52DE]/20 text-[#AF52DE]'
-              }`}>
-                {ev.type === 'investigation' ? 'Investigation' : ev.type === 'note' ? 'Note' : 'Consolidated Report'}
-              </span>
-              <span className="text-[11px] text-[rgba(235,235,245,0.3)]">
-                {new Date(ev.created_at).toLocaleString()}
-              </span>
+          {/* Active investigation stream */}
+          {isInvestigating && (
+            <div className="bg-[#1C1C1E] border border-[#007AFF]/30 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Loader2 size={14} className="text-[#007AFF] animate-spin" />
+                <span className="text-[13px] font-semibold text-[#007AFF]">Investigation in Progress</span>
+              </div>
+              {investigationSteps.length > 0 && (
+                <InvestigationSteps steps={investigationSteps} />
+              )}
+              {streamingText && (
+                <div className="text-[13px] text-[rgba(235,235,245,0.6)] whitespace-pre-wrap leading-relaxed">
+                  {streamingText}
+                </div>
+              )}
             </div>
-            <div className={`text-[13px] ${
-              ev.type === 'note'
-                ? 'text-[rgba(235,235,245,0.8)]'
-                : 'text-[rgba(235,235,245,0.6)]'
+          )}
+
+          {/* Note input */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') addNote(); }}
+              placeholder="Add a note..."
+              className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-[rgba(235,235,245,0.2)]"
+            />
+            <button
+              onClick={addNote}
+              disabled={!noteText.trim() || isAddingNote}
+              className="w-10 h-10 rounded-xl bg-[#007AFF] disabled:opacity-30 flex items-center justify-center transition-colors"
+            >
+              <Plus size={18} />
+            </button>
+          </div>
+
+          {/* Evidence entries */}
+          {evidence.map((ev) => (
+            <div key={ev.id} className={`bg-[#1C1C1E] border rounded-2xl p-4 ${
+              ev.type === 'fact_check' ? 'border-[#AF52DE]/50 ring-1 ring-[#AF52DE]/20' : 'border-[rgba(84,84,88,0.65)]'
             }`}>
-              <EvidenceText content={ev.content} />
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                  ev.type === 'investigation'
+                    ? 'bg-[#007AFF]/20 text-[#007AFF]'
+                    : ev.type === 'note'
+                      ? 'bg-[#FF9F0A]/20 text-[#FF9F0A]'
+                      : 'bg-[#AF52DE]/20 text-[#AF52DE]'
+                }`}>
+                  {ev.type === 'investigation' ? 'Investigation' : ev.type === 'note' ? 'Note' : 'Consolidated Report'}
+                </span>
+                <span className="text-[11px] text-[rgba(235,235,245,0.3)]">
+                  {new Date(ev.created_at).toLocaleString()}
+                </span>
+              </div>
+              <div className={`text-[13px] ${
+                ev.type === 'note'
+                  ? 'text-[rgba(235,235,245,0.8)]'
+                  : 'text-[rgba(235,235,245,0.6)]'
+              }`}>
+                <EvidenceText content={ev.content} />
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
 
-        {evidence.length === 0 && !isInvestigating && (
-          <div className="text-center py-10">
-            <p className="text-[rgba(235,235,245,0.3)] text-[13px]">
-              No evidence yet. Click "Investigate Further" to start.
-            </p>
-          </div>
-        )}
+          {evidence.length === 0 && !isInvestigating && (
+            <div className="text-center py-10">
+              <p className="text-[rgba(235,235,245,0.3)] text-[13px]">
+                No evidence yet. Click "Investigate Further" to start.
+              </p>
+            </div>
+          )}
 
-        <div ref={bottomRef} />
-      </div>
+          <div ref={bottomRef} />
+        </div>
+      )}
     </div>
   );
 }

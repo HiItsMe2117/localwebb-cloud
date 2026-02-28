@@ -380,6 +380,7 @@ class FilteredQueryRequest(BaseModel):
     doc_type: Optional[str] = None
     person_filter: Optional[str] = None
     org_filter: Optional[str] = None
+    location_filter: Optional[str] = None
 
 class TargetedSearchRequest(BaseModel):
     keyword: str
@@ -408,6 +409,12 @@ class UpdateCaseRequest(BaseModel):
 
 class AddNoteRequest(BaseModel):
     content: str
+
+class AddGraphEntitiesRequest(BaseModel):
+    node_ids: List[str]
+
+class SavePositionsRequest(BaseModel):
+    positions: List[Dict[str, Any]]  # [{"node_id": "x", "x": 0.0, "y": 0.0}]
 
 # --- Endpoints ---
 
@@ -784,6 +791,8 @@ def _build_query_context(request):
         pinecone_filter["people"] = {"$in": [request.person_filter]}
     if hasattr(request, 'org_filter') and request.org_filter:
         pinecone_filter["organizations"] = {"$in": [request.org_filter]}
+    if hasattr(request, 'location_filter') and request.location_filter:
+        pinecone_filter["locations"] = {"$in": [request.location_filter]}
 
     fetch_k = 40 if top_k <= 20 else top_k
     rerank_fn = _get_rerank_fn()
@@ -1232,6 +1241,181 @@ async def delete_case(case_id: str):
     try:
         supabase.table("cases").delete().eq("id", case_id).execute()
         return {"status": "deleted"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ─── Case Graph (Subgraph Builder) ───────────────────────────────────────────
+
+@app.get("/api/nodes/search")
+async def search_nodes(q: str = Query("", min_length=1)):
+    """Search nodes by label for the case graph entity picker."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        term = q.strip().lower()
+        res = supabase.table("nodes").select("id, label, type, metadata").ilike("label", f"%{term}%").limit(20).execute()
+        results = []
+        for n in res.data or []:
+            meta = n.get("metadata") or {}
+            results.append({
+                "id": n["id"],
+                "label": n.get("label", n["id"]),
+                "type": n.get("type", "UNKNOWN"),
+                "degree": meta.get("degree", 0),
+            })
+        results.sort(key=lambda x: x["degree"], reverse=True)
+        return {"results": results}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/cases/{case_id}/graph")
+async def get_case_graph(case_id: str):
+    """Fetch subgraph: pinned nodes + all edges between them."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        # Get pinned entities for this case
+        pinned = supabase.table("case_graph_entities").select("*").eq("case_id", case_id).execute()
+        pinned_rows = pinned.data or []
+        if not pinned_rows:
+            return {"nodes": [], "edges": []}
+
+        node_ids = [r["node_id"] for r in pinned_rows]
+        position_map = {r["node_id"]: {"x": r.get("position_x"), "y": r.get("position_y")} for r in pinned_rows}
+
+        # Fetch node data
+        nodes_res = supabase.table("nodes").select("*").in_("id", node_ids).execute()
+        nodes = []
+        for n in nodes_res.data or []:
+            meta = n.get("metadata") or {}
+            pos = position_map.get(n["id"], {})
+            nodes.append({
+                "id": n["id"],
+                "type": "entityNode",
+                "data": {
+                    "label": n.get("label", n["id"]),
+                    "entityType": n.get("type", "UNKNOWN"),
+                    "description": n.get("description", ""),
+                    "aliases": n.get("aliases", []),
+                    "degree": meta.get("degree", 0),
+                    "communityId": meta.get("communityId"),
+                    "communityColor": meta.get("communityColor"),
+                },
+                "position": {"x": pos.get("x") or 0, "y": pos.get("y") or 0},
+            })
+
+        # Get all edges where BOTH endpoints are in the case's entity set
+        edges_res = supabase.table("edges").select("*").in_("source", node_ids).in_("target", node_ids).execute()
+        edges = []
+        for e in edges_res.data or []:
+            edges.append({
+                "id": e["id"],
+                "source": e["source"],
+                "target": e["target"],
+                "label": e.get("label", e.get("predicate", "")),
+                "animated": e.get("confidence") == "INFERRED",
+                "data": {
+                    "predicate": e.get("predicate", ""),
+                    "evidence_text": e.get("evidence_text", ""),
+                    "source_filename": e.get("source_filename", ""),
+                    "source_page": e.get("source_page", 0),
+                    "confidence": e.get("confidence", "STATED"),
+                    "date_mentioned": e.get("date_mentioned"),
+                },
+            })
+
+        return {"nodes": nodes, "edges": edges}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/entities")
+async def add_case_graph_entities(case_id: str, request: AddGraphEntitiesRequest):
+    """Add entities to a case graph."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        records = [{"case_id": case_id, "node_id": nid} for nid in request.node_ids]
+        supabase.table("case_graph_entities").upsert(records, on_conflict="case_id,node_id").execute()
+        return {"added": len(request.node_ids)}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/cases/{case_id}/graph/entities/{node_id}")
+async def remove_case_graph_entity(case_id: str, node_id: str):
+    """Remove an entity from a case graph."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        supabase.table("case_graph_entities").delete().eq("case_id", case_id).eq("node_id", node_id).execute()
+        return {"removed": node_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/positions")
+async def save_case_graph_positions(case_id: str, request: SavePositionsRequest):
+    """Save dragged node positions for a case graph."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        for pos in request.positions:
+            supabase.table("case_graph_entities").update({
+                "position_x": pos["x"],
+                "position_y": pos["y"],
+            }).eq("case_id", case_id).eq("node_id", pos["node_id"]).execute()
+        return {"saved": len(request.positions)}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/cases/{case_id}/graph/expand/{node_id}")
+async def expand_case_graph_node(case_id: str, node_id: str):
+    """Get neighbors of a node that are NOT already in the case graph."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        # Get already-pinned node IDs
+        pinned = supabase.table("case_graph_entities").select("node_id").eq("case_id", case_id).execute()
+        pinned_ids = set(r["node_id"] for r in (pinned.data or []))
+
+        # Get edges involving this node
+        out_edges = supabase.table("edges").select("target, label").eq("source", node_id).execute()
+        in_edges = supabase.table("edges").select("source, label").eq("target", node_id).execute()
+
+        neighbor_ids = set()
+        edge_labels = {}
+        for e in (out_edges.data or []):
+            nid = e["target"]
+            if nid not in pinned_ids:
+                neighbor_ids.add(nid)
+                edge_labels.setdefault(nid, []).append(e.get("label", ""))
+        for e in (in_edges.data or []):
+            nid = e["source"]
+            if nid not in pinned_ids:
+                neighbor_ids.add(nid)
+                edge_labels.setdefault(nid, []).append(e.get("label", ""))
+
+        if not neighbor_ids:
+            return {"neighbors": []}
+
+        # Fetch node details for neighbors
+        nodes_res = supabase.table("nodes").select("id, label, type, metadata").in_("id", list(neighbor_ids)).execute()
+        neighbors = []
+        for n in (nodes_res.data or []):
+            meta = n.get("metadata") or {}
+            neighbors.append({
+                "id": n["id"],
+                "label": n.get("label", n["id"]),
+                "type": n.get("type", "UNKNOWN"),
+                "degree": meta.get("degree", 0),
+                "relationships": edge_labels.get(n["id"], []),
+            })
+        neighbors.sort(key=lambda x: x["degree"], reverse=True)
+        return {"neighbors": neighbors}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
