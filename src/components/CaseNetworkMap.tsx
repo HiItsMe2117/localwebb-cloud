@@ -120,8 +120,22 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       const analysis = res.data.analysis || 'No analysis returned.';
       setAnalysisResult(analysis);
       setAnalysisShared(res.data.shared_neighbors || []);
-      // Seed chat history with the initial analysis
-      setChatMessages([{ role: 'assistant', content: analysis }]);
+
+      const messages: { role: 'user' | 'assistant'; content: string }[] = [
+        { role: 'assistant', content: analysis },
+      ];
+
+      // If the backend found follow-up leads, add them as a second message
+      if (res.data.follow_up) {
+        const newEntities = res.data.new_entities_found || 0;
+        const searchTerms = res.data.search_terms || [];
+        const prefix = newEntities > 0
+          ? `I searched the graph for ${searchTerms.slice(0, 3).map((t: string) => `"${t}"`).join(', ')}${searchTerms.length > 3 ? ` and ${searchTerms.length - 3} more` : ''} and found ${newEntities} additional ${newEntities === 1 ? 'entity' : 'entities'}.\n\n`
+          : '';
+        messages.push({ role: 'assistant', content: prefix + res.data.follow_up });
+      }
+
+      setChatMessages(messages);
     } catch (err) {
       console.error('Analysis failed:', err);
       setAnalysisResult('Analysis failed. Please try again.');

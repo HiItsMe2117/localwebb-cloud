@@ -1523,9 +1523,104 @@ Be specific, reference actual entity names, and flag anything that looks unusual
             model="gemini-2.0-flash",
             contents=prompt,
         )
+        initial_analysis = res.text
+
+        # --- Pass 2: Auto-follow-up on investigative leads ---
+        # Ask Gemini to extract search terms from its own leads
+        extract_prompt = f"""From the following investigative analysis, extract 3-6 specific entity names, organization names, or person names that should be searched in the knowledge graph to follow up on the leads. Return ONLY a JSON array of search terms, nothing else.
+
+Analysis:
+{initial_analysis}
+
+Example output: ["Knight Capital", "Cereplast management", "John Doe"]"""
+
+        try:
+            extract_res = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=extract_prompt,
+            )
+            import re as _re
+            # Parse the JSON array from the response
+            match = _re.search(r'\[.*\]', extract_res.text, _re.DOTALL)
+            search_terms = json.loads(match.group()) if match else []
+        except Exception:
+            search_terms = []
+
+        # Search the graph for each term
+        follow_up_findings = []
+        found_entities = {}
+        if search_terms and supabase:
+            for term in search_terms[:6]:
+                term_clean = term.strip()
+                if not term_clean or len(term_clean) < 2:
+                    continue
+                try:
+                    search_res = supabase.table("nodes").select("id, label, type, description").ilike("label", f"%{term_clean}%").limit(5).execute()
+                    for n in (search_res.data or []):
+                        if n["id"] not in node_ids and n["id"] not in found_entities:
+                            found_entities[n["id"]] = n
+                except Exception:
+                    continue
+
+            # For discovered entities, find how they connect to the original selection
+            if found_entities:
+                for eid, entity in list(found_entities.items())[:10]:
+                    connections_to_selected = []
+                    try:
+                        out = supabase.table("edges").select("target, label").eq("source", eid).in_("target", node_ids).execute()
+                        inc = supabase.table("edges").select("source, label").eq("target", eid).in_("source", node_ids).execute()
+                        for e in (out.data or []):
+                            tgt_label = nodes_by_id.get(e["target"], {}).get("label", e["target"])
+                            connections_to_selected.append(f"{e.get('label', '?')} → {tgt_label}")
+                        for e in (inc.data or []):
+                            src_label = nodes_by_id.get(e["source"], {}).get("label", e["source"])
+                            connections_to_selected.append(f"{src_label} → {e.get('label', '?')}")
+                    except Exception:
+                        pass
+
+                    desc = (entity.get("description") or "")[:200]
+                    finding = f"**{entity.get('label', eid)}** ({entity.get('type', 'UNKNOWN')})"
+                    if desc:
+                        finding += f": {desc}"
+                    if connections_to_selected:
+                        finding += f"\n  Connections to selected entities: {'; '.join(connections_to_selected[:5])}"
+                    else:
+                        finding += "\n  No direct connections to selected entities found in graph."
+                    follow_up_findings.append(finding)
+
+        # Generate follow-up analysis if we found anything
+        follow_up = None
+        if follow_up_findings:
+            follow_up_prompt = f"""You are an investigative journalist following up on leads. You previously analyzed a group of entities and suggested investigative leads. Your research team searched the knowledge graph and found the following additional entities and connections.
+
+YOUR ORIGINAL ANALYSIS:
+{initial_analysis}
+
+NEW FINDINGS FROM THE GRAPH:
+{chr(10).join(follow_up_findings)}
+
+Based on these new findings, provide a follow-up report:
+1. Which of your leads panned out — what did the graph reveal?
+2. New connections or patterns discovered
+3. Any red flags or suspicious patterns in the newly found entities
+4. Updated investigative priorities based on what you now know
+
+Be specific, name names, and think like a journalist building a story. Keep it concise — 3-5 bullet points."""
+
+            try:
+                follow_up_res = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=follow_up_prompt,
+                )
+                follow_up = follow_up_res.text
+            except Exception as follow_err:
+                print(f"Follow-up analysis failed: {follow_err}")
 
         return {
-            "analysis": res.text,
+            "analysis": initial_analysis,
+            "follow_up": follow_up,
+            "search_terms": search_terms,
+            "new_entities_found": len(found_entities),
             "direct_connections": len(direct_edges.data or []),
             "shared_connections": len(shared_neighbors_detail),
             "shared_neighbors": shared_neighbors_detail[:10],
