@@ -416,6 +416,9 @@ class AddGraphEntitiesRequest(BaseModel):
 class SavePositionsRequest(BaseModel):
     positions: List[Dict[str, Any]]  # [{"node_id": "x", "x": 0.0, "y": 0.0}]
 
+class AnalyzeEntitiesRequest(BaseModel):
+    node_ids: List[str]
+
 # --- Endpoints ---
 
 @app.get("/api")
@@ -1417,6 +1420,113 @@ async def expand_case_graph_node(case_id: str, node_id: str):
         neighbors.sort(key=lambda x: x["degree"], reverse=True)
         return {"neighbors": neighbors}
     except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/analyze")
+async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequest):
+    """Analyze a group of selected entities for similarities and patterns."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    if len(request.node_ids) < 2:
+        return JSONResponse(status_code=400, content={"error": "Need at least 2 entities to analyze."})
+    try:
+        node_ids = request.node_ids
+
+        # Fetch node details
+        nodes_res = supabase.table("nodes").select("id, label, type, description, aliases").in_("id", node_ids).execute()
+        nodes_by_id = {n["id"]: n for n in (nodes_res.data or [])}
+
+        # Fetch all edges between the selected nodes
+        direct_edges = supabase.table("edges").select("source, target, label, predicate, evidence_text, confidence").in_("source", node_ids).in_("target", node_ids).execute()
+
+        # Fetch shared neighbors: entities connected to 2+ of the selected nodes
+        all_neighbor_edges = []
+        for nid in node_ids:
+            out = supabase.table("edges").select("source, target, label").eq("source", nid).execute()
+            inc = supabase.table("edges").select("source, target, label").eq("target", nid).execute()
+            all_neighbor_edges.extend(out.data or [])
+            all_neighbor_edges.extend(inc.data or [])
+
+        # Count how many selected nodes each neighbor connects to
+        neighbor_connections = defaultdict(lambda: {"count": 0, "connected_to": set(), "labels": []})
+        for e in all_neighbor_edges:
+            other = e["target"] if e["source"] in node_ids else e["source"]
+            if other in node_ids:
+                continue  # skip direct edges between selected nodes
+            selected_end = e["source"] if e["source"] in node_ids else e["target"]
+            neighbor_connections[other]["count"] += 1
+            neighbor_connections[other]["connected_to"].add(selected_end)
+            neighbor_connections[other]["labels"].append(e.get("label", ""))
+
+        # Keep neighbors connected to 2+ selected nodes
+        shared_neighbor_ids = [nid for nid, info in neighbor_connections.items() if len(info["connected_to"]) >= 2]
+
+        shared_neighbors_detail = []
+        if shared_neighbor_ids:
+            sn_res = supabase.table("nodes").select("id, label, type").in_("id", shared_neighbor_ids[:30]).execute()
+            for sn in (sn_res.data or []):
+                info = neighbor_connections[sn["id"]]
+                connected_labels = [nodes_by_id[c]["label"] for c in info["connected_to"] if c in nodes_by_id]
+                shared_neighbors_detail.append({
+                    "label": sn.get("label", sn["id"]),
+                    "type": sn.get("type", "UNKNOWN"),
+                    "connected_to": connected_labels,
+                    "relationships": list(set(info["labels"]))[:5],
+                })
+
+        # Build context for Gemini
+        entity_descriptions = []
+        for nid in node_ids:
+            n = nodes_by_id.get(nid, {})
+            desc = n.get("description", "") or ""
+            entity_descriptions.append(f"- {n.get('label', nid)} ({n.get('type', 'UNKNOWN')}): {desc[:200]}")
+
+        direct_edge_descriptions = []
+        for e in (direct_edges.data or []):
+            src = nodes_by_id.get(e["source"], {}).get("label", e["source"])
+            tgt = nodes_by_id.get(e["target"], {}).get("label", e["target"])
+            direct_edge_descriptions.append(f"- {src} → {e.get('label', e.get('predicate', '?'))} → {tgt}")
+
+        shared_descriptions = []
+        for sn in shared_neighbors_detail[:15]:
+            shared_descriptions.append(f"- {sn['label']} ({sn['type']}) — connected to: {', '.join(sn['connected_to'])} via: {', '.join(sn['relationships'][:3])}")
+
+        prompt = f"""Analyze the following group of entities from an investigative knowledge graph. Identify patterns, similarities, and notable connections between them.
+
+SELECTED ENTITIES:
+{chr(10).join(entity_descriptions)}
+
+DIRECT CONNECTIONS BETWEEN THEM:
+{chr(10).join(direct_edge_descriptions) if direct_edge_descriptions else "None found."}
+
+SHARED CONNECTIONS (entities linked to 2+ of the selected):
+{chr(10).join(shared_descriptions) if shared_descriptions else "None found."}
+
+Provide a concise analysis (3-5 bullet points) covering:
+1. What these entities have in common
+2. Key relationships or patterns between them
+3. Notable shared connections or intermediaries
+4. Any investigative implications
+
+Be specific and reference the actual entity names. Keep each bullet to 1-2 sentences."""
+
+        res = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+        )
+
+        return {
+            "analysis": res.text,
+            "direct_connections": len(direct_edges.data or []),
+            "shared_connections": len(shared_neighbors_detail),
+            "shared_neighbors": shared_neighbors_detail[:10],
+        }
+    except Exception as e:
+        print(f"Analysis failed: {e}")
+        import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 

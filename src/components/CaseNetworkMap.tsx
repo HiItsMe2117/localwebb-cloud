@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node } from 'reactflow';
-import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy } from 'lucide-react';
+import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -65,6 +65,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   const [contextNode, setContextNode] = useState<Node | null>(null);
   const contextRef = useRef<HTMLDivElement>(null);
 
+  // Analysis state
+  const [analysisResult, setAnalysisResult] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisShared, setAnalysisShared] = useState<{ label: string; type: string; connected_to: string[] }[]>([]);
+
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
 
@@ -91,7 +96,28 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     setSelectedNodeIds(new Set());
     setContextNode(null);
     setCopied(false);
+    setAnalysisResult(null);
+    setAnalysisShared([]);
   }, []);
+
+  const analyzeSelected = useCallback(async () => {
+    if (selectedNodeIds.size < 2) return;
+    setIsAnalyzing(true);
+    setAnalysisResult(null);
+    setAnalysisShared([]);
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/graph/analyze`, {
+        node_ids: Array.from(selectedNodeIds),
+      });
+      setAnalysisResult(res.data.analysis || 'No analysis returned.');
+      setAnalysisShared(res.data.shared_neighbors || []);
+    } catch (err) {
+      console.error('Analysis failed:', err);
+      setAnalysisResult('Analysis failed. Please try again.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [caseId, selectedNodeIds]);
 
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -552,6 +578,57 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
         )}
       </div>
 
+      {/* Analysis panel */}
+      {(analysisResult || isAnalyzing) && (
+        <div className="shrink-0 max-h-[40vh] overflow-y-auto border-t border-[rgba(84,84,88,0.65)] bg-[#1C1C1E]">
+          <div className="px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Sparkles size={14} className="text-[#AF52DE]" />
+                <span className="text-[13px] font-semibold text-white">Similarity Analysis</span>
+              </div>
+              <button onClick={() => { setAnalysisResult(null); setAnalysisShared([]); }} className="p-1 hover:bg-[#2C2C2E] rounded-lg">
+                <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+              </button>
+            </div>
+            {isAnalyzing ? (
+              <div className="flex items-center gap-2 py-4 justify-center">
+                <Loader2 size={16} className="text-[#AF52DE] animate-spin" />
+                <span className="text-[13px] text-[rgba(235,235,245,0.4)]">Analyzing connections...</span>
+              </div>
+            ) : (
+              <>
+                <div className="text-[13px] text-[rgba(235,235,245,0.6)] whitespace-pre-wrap leading-relaxed">
+                  {analysisResult}
+                </div>
+                {analysisShared.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-[rgba(84,84,88,0.35)]">
+                    <p className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2">
+                      Shared Connections
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {analysisShared.map(sn => {
+                        const color = TYPE_COLORS[sn.type.toUpperCase()] || '#9ca3af';
+                        return (
+                          <span
+                            key={sn.label}
+                            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#2C2C2E] text-[11px] text-[rgba(235,235,245,0.6)]"
+                          >
+                            <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                            {sn.label}
+                            <span className="text-[rgba(235,235,245,0.3)]">({sn.connected_to.length})</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Footer stats + selection bar */}
       <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex items-center justify-between">
         <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
@@ -563,6 +640,16 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
             <span className="text-[11px] text-[rgba(235,235,245,0.6)] font-medium">
               {selectedNodeIds.size} selected
             </span>
+            {selectedNodeIds.size >= 2 && (
+              <button
+                onClick={analyzeSelected}
+                disabled={isAnalyzing}
+                className="flex items-center gap-1.5 bg-[#AF52DE] hover:bg-[#9642C0] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+              >
+                {isAnalyzing ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                Similarities
+              </button>
+            )}
             <button
               onClick={copySelectedNodes}
               className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
