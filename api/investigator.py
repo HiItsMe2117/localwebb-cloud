@@ -92,6 +92,29 @@ async def run_investigation(
             enriched_parts.append(f"Key entities: {', '.join(case_context['entities'][:10])}")
         if case_context.get("suggested_questions"):
             enriched_parts.append(f"Investigation angles: {'; '.join(case_context['suggested_questions'][:4])}")
+        if case_context.get("notes"):
+            notes_list = "\n- ".join(case_context["notes"][:20])
+            enriched_parts.append(f"Investigator notes:\n- {notes_list}")
+        if case_context.get("network_entities"):
+            ent_lines = []
+            for ent in case_context["network_entities"][:30]:
+                line = f"{ent.get('label', 'Unknown')} ({ent.get('type', '?')})"
+                if ent.get("description"):
+                    line += f": {ent['description'][:200]}"
+                if ent.get("aliases"):
+                    aliases = ent["aliases"] if isinstance(ent["aliases"], list) else [ent["aliases"]]
+                    line += f" [aliases: {', '.join(aliases[:5])}]"
+                ent_lines.append(line)
+            enriched_parts.append("Network map entities:\n- " + "\n- ".join(ent_lines))
+        if case_context.get("network_relationships"):
+            rel_lines = []
+            for rel in case_context["network_relationships"][:30]:
+                predicate = rel.get("predicate") or rel.get("label") or "RELATED_TO"
+                line = f"{rel.get('source', '?')} → {predicate} → {rel.get('target', '?')}"
+                if rel.get("evidence_text"):
+                    line += f" (evidence: {rel['evidence_text'][:150]})"
+                rel_lines.append(line)
+            enriched_parts.append("Known relationships:\n- " + "\n- ".join(rel_lines))
         query = "\n".join(enriched_parts)
 
     try:

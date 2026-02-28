@@ -1079,11 +1079,32 @@ async def investigate_case(case_id: str):
     except ImportError:
         from investigator import run_investigation
 
+    # Fetch notes & prior evidence
+    evidence_res = supabase.table("case_evidence").select("*").eq("case_id", case_id).order("created_at", desc=True).execute()
+    notes = [e["content"] for e in (evidence_res.data or []) if e.get("type") == "note" and e.get("content")]
+
+    # Fetch network map entities pinned to this case
+    network_entities = []
+    network_relationships = []
+    graph_res = supabase.table("case_graph_entities").select("node_id").eq("case_id", case_id).execute()
+    node_ids = [row["node_id"] for row in (graph_res.data or [])]
+    if node_ids:
+        # Get entity details from nodes table
+        nodes_res = supabase.table("nodes").select("id,label,type,description,aliases").in_("id", node_ids).execute()
+        network_entities = nodes_res.data or []
+
+        # Get relationships between pinned entities
+        edges_res = supabase.table("edges").select("source,target,label,predicate,evidence_text").in_("source", node_ids).in_("target", node_ids).execute()
+        network_relationships = edges_res.data or []
+
     case_context = {
         "title": case_data["title"],
         "summary": case_data["summary"],
         "entities": case_data.get("entities", []),
         "suggested_questions": case_data.get("suggested_questions", []),
+        "notes": notes,
+        "network_entities": network_entities,
+        "network_relationships": network_relationships,
     }
 
     query = f"Investigate: {case_data['title']}"
