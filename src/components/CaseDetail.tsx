@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
@@ -76,6 +76,12 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
   const [editingNoteText, setEditingNoteText] = useState('');
   const [isSavingNote, setIsSavingNote] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const autoResize = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+  }, []);
 
   useEffect(() => {
     loadCase();
@@ -409,19 +415,20 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
           )}
 
           {/* Note input */}
-          <div className="flex gap-2">
-            <input
-              type="text"
+          <div className="flex items-end gap-2">
+            <textarea
               value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') addNote(); }}
+              onChange={(e) => { setNoteText(e.target.value); autoResize(e.target); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addNote(); } }}
               placeholder="Add a note..."
-              className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-[rgba(235,235,245,0.2)]"
+              rows={1}
+              ref={(el) => { if (el) autoResize(el); }}
+              className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-[rgba(235,235,245,0.2)] resize-none overflow-hidden"
             />
             <button
               onClick={addNote}
               disabled={!noteText.trim() || isAddingNote}
-              className="w-10 h-10 rounded-xl bg-[#007AFF] disabled:opacity-30 flex items-center justify-center transition-colors"
+              className="w-10 h-10 shrink-0 rounded-xl bg-[#007AFF] disabled:opacity-30 flex items-center justify-center transition-colors"
             >
               <Plus size={18} />
             </button>
@@ -478,10 +485,10 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
                   <div className="space-y-2">
                     <textarea
                       value={editingNoteText}
-                      onChange={(e) => setEditingNoteText(e.target.value)}
-                      className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors resize-none"
-                      rows={3}
-                      autoFocus
+                      onChange={(e) => { setEditingNoteText(e.target.value); autoResize(e.target); }}
+                      ref={(el) => { if (el) { el.focus(); autoResize(el); } }}
+                      className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors resize-none overflow-hidden"
+                      rows={1}
                       onKeyDown={(e) => { if (e.key === 'Enter' && e.metaKey) saveNote(ev.id); }}
                     />
                     <div className="flex justify-end gap-2">
