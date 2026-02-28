@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
 import type { Case, CaseEvidence, InvestigationStep } from '../types';
@@ -70,6 +70,8 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [isConsolidating, setIsConsolidating] = useState(false);
   const [detailTab, setDetailTab] = useState<'evidence' | 'network'>('evidence');
+  const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
+  const [copied, setCopied] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -194,6 +196,28 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
     } finally {
       setIsConsolidating(false);
     }
+  };
+
+  const toggleCard = (id: string) => {
+    setSelectedCards(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setCopied(false);
+  };
+
+  const copySelected = async () => {
+    const selected = evidence.filter(ev => selectedCards.has(ev.id));
+    const text = selected.map(ev => {
+      const typeLabel = ev.type === 'investigation' ? 'Investigation' : ev.type === 'note' ? 'Note' : 'Consolidated Report';
+      const date = new Date(ev.created_at).toLocaleString();
+      return `[${typeLabel} — ${date}]\n${ev.content}`;
+    }).join('\n\n---\n\n');
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   if (isLoading) {
@@ -386,33 +410,50 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
           </div>
 
           {/* Evidence entries */}
-          {evidence.map((ev) => (
-            <div key={ev.id} className={`bg-[#1C1C1E] border rounded-2xl p-4 ${
-              ev.type === 'fact_check' ? 'border-[#AF52DE]/50 ring-1 ring-[#AF52DE]/20' : 'border-[rgba(84,84,88,0.65)]'
-            }`}>
-              <div className="flex items-center gap-2 mb-2">
-                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                  ev.type === 'investigation'
-                    ? 'bg-[#007AFF]/20 text-[#007AFF]'
-                    : ev.type === 'note'
-                      ? 'bg-[#FF9F0A]/20 text-[#FF9F0A]'
-                      : 'bg-[#AF52DE]/20 text-[#AF52DE]'
+          {evidence.map((ev) => {
+            const isSelected = selectedCards.has(ev.id);
+            return (
+              <div
+                key={ev.id}
+                onClick={() => toggleCard(ev.id)}
+                className={`bg-[#1C1C1E] border rounded-2xl p-4 cursor-pointer transition-all ${
+                  isSelected
+                    ? 'border-[#007AFF] ring-1 ring-[#007AFF]/30'
+                    : ev.type === 'fact_check'
+                      ? 'border-[#AF52DE]/50 ring-1 ring-[#AF52DE]/20'
+                      : 'border-[rgba(84,84,88,0.65)] hover:border-[rgba(84,84,88,0.9)]'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="shrink-0 text-[rgba(235,235,245,0.2)]">
+                    {isSelected
+                      ? <CheckSquare size={14} className="text-[#007AFF]" />
+                      : <Square size={14} />
+                    }
+                  </div>
+                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                    ev.type === 'investigation'
+                      ? 'bg-[#007AFF]/20 text-[#007AFF]'
+                      : ev.type === 'note'
+                        ? 'bg-[#FF9F0A]/20 text-[#FF9F0A]'
+                        : 'bg-[#AF52DE]/20 text-[#AF52DE]'
+                  }`}>
+                    {ev.type === 'investigation' ? 'Investigation' : ev.type === 'note' ? 'Note' : 'Consolidated Report'}
+                  </span>
+                  <span className="text-[11px] text-[rgba(235,235,245,0.3)]">
+                    {new Date(ev.created_at).toLocaleString()}
+                  </span>
+                </div>
+                <div className={`text-[13px] ${
+                  ev.type === 'note'
+                    ? 'text-[rgba(235,235,245,0.8)]'
+                    : 'text-[rgba(235,235,245,0.6)]'
                 }`}>
-                  {ev.type === 'investigation' ? 'Investigation' : ev.type === 'note' ? 'Note' : 'Consolidated Report'}
-                </span>
-                <span className="text-[11px] text-[rgba(235,235,245,0.3)]">
-                  {new Date(ev.created_at).toLocaleString()}
-                </span>
+                  <EvidenceText content={ev.content} />
+                </div>
               </div>
-              <div className={`text-[13px] ${
-                ev.type === 'note'
-                  ? 'text-[rgba(235,235,245,0.8)]'
-                  : 'text-[rgba(235,235,245,0.6)]'
-              }`}>
-                <EvidenceText content={ev.content} />
-              </div>
-            </div>
-          ))}
+            );
+          })}
 
           {evidence.length === 0 && !isInvestigating && (
             <div className="text-center py-10">
@@ -423,6 +464,28 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
           )}
 
           <div ref={bottomRef} />
+
+          {/* Floating copy bar */}
+          {selectedCards.size > 0 && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl px-4 py-2.5 shadow-2xl z-50">
+              <span className="text-[13px] text-[rgba(235,235,245,0.6)] font-medium">
+                {selectedCards.size} selected
+              </span>
+              <button
+                onClick={copySelected}
+                className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] px-3 py-1.5 rounded-xl text-[13px] font-semibold transition-colors"
+              >
+                <Copy size={13} />
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+              <button
+                onClick={() => { setSelectedCards(new Set()); setCopied(false); }}
+                className="p-1.5 hover:bg-[#2C2C2E] rounded-lg transition-colors"
+              >
+                <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
