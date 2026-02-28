@@ -1494,7 +1494,9 @@ async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequ
         for sn in shared_neighbors_detail[:15]:
             shared_descriptions.append(f"- {sn['label']} ({sn['type']}) — connected to: {', '.join(sn['connected_to'])} via: {', '.join(sn['relationships'][:3])}")
 
-        prompt = f"""Analyze the following group of entities from an investigative knowledge graph. Identify patterns, similarities, and notable connections between them.
+        prompt = f"""You are a seasoned investigative journalist with decades of experience uncovering financial crimes, corruption, and hidden networks of power. You have a sharp eye for patterns that others miss — shell companies, intermediaries, recurring associates, and suspicious timing.
+
+A researcher has selected the following entities from a knowledge graph built from court documents, financial records, flight logs, and depositions. Analyze them for patterns, similarities, and connections that would be relevant to an investigation.
 
 SELECTED ENTITIES:
 {chr(10).join(entity_descriptions)}
@@ -1506,12 +1508,12 @@ SHARED CONNECTIONS (entities linked to 2+ of the selected):
 {chr(10).join(shared_descriptions) if shared_descriptions else "None found."}
 
 Provide a concise analysis (3-5 bullet points) covering:
-1. What these entities have in common
-2. Key relationships or patterns between them
-3. Notable shared connections or intermediaries
-4. Any investigative implications
+1. What these entities have in common — shared roles, affiliations, locations, or time periods
+2. Key relationships or patterns between them — financial flows, organizational ties, recurring co-appearances
+3. Notable shared connections or intermediaries who bridge them
+4. Investigative leads — what a journalist should dig into next based on these connections
 
-Be specific and reference the actual entity names. Keep each bullet to 1-2 sentences."""
+Be specific, reference actual entity names, and flag anything that looks unusual or warrants further scrutiny. Keep each bullet to 1-2 sentences."""
 
         res = client.models.generate_content(
             model="gemini-2.0-flash",
