@@ -415,22 +415,24 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
             return (
               <div
                 key={ev.id}
-                onClick={() => toggleCard(ev.id)}
-                className={`bg-[#1C1C1E] border rounded-2xl p-4 cursor-pointer transition-all ${
+                className={`bg-[#1C1C1E] border rounded-2xl p-4 transition-all ${
                   isSelected
                     ? 'border-[#007AFF] ring-1 ring-[#007AFF]/30'
                     : ev.type === 'fact_check'
                       ? 'border-[#AF52DE]/50 ring-1 ring-[#AF52DE]/20'
-                      : 'border-[rgba(84,84,88,0.65)] hover:border-[rgba(84,84,88,0.9)]'
+                      : 'border-[rgba(84,84,88,0.65)]'
                 }`}
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <div className="shrink-0 text-[rgba(235,235,245,0.2)]">
+                  <button
+                    onClick={() => toggleCard(ev.id)}
+                    className="shrink-0 p-0.5 rounded hover:bg-[#2C2C2E] transition-colors"
+                  >
                     {isSelected
-                      ? <CheckSquare size={14} className="text-[#007AFF]" />
-                      : <Square size={14} />
+                      ? <CheckSquare size={16} className="text-[#007AFF]" />
+                      : <Square size={16} className="text-[rgba(235,235,245,0.2)] hover:text-[rgba(235,235,245,0.4)]" />
                     }
-                  </div>
+                  </button>
                   <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                     ev.type === 'investigation'
                       ? 'bg-[#007AFF]/20 text-[#007AFF]'
