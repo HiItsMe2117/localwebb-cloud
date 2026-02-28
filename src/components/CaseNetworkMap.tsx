@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node } from 'reactflow';
-import { Search, Plus, X, Expand, Trash2, Loader2, Share2 } from 'lucide-react';
+import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -59,12 +59,39 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   const [isExpanding, setIsExpanding] = useState(false);
   const [isAddingNeighbors, setIsAddingNeighbors] = useState(false);
 
-  // Node context menu
+  // Node selection + context menu
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [copied, setCopied] = useState(false);
   const [contextNode, setContextNode] = useState<Node | null>(null);
   const contextRef = useRef<HTMLDivElement>(null);
 
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
+
+  // Apply selection styling to nodes
+  const displayNodes = useMemo(() =>
+    nodes.map(n => ({ ...n, selected: selectedNodeIds.has(n.id) })),
+    [nodes, selectedNodeIds]
+  );
+
+  // Copy selected node details
+  const copySelectedNodes = useCallback(async () => {
+    const selected = nodes.filter(n => selectedNodeIds.has(n.id));
+    const text = selected.map(n => {
+      const type = (n.data?.entityType || 'UNKNOWN').toUpperCase();
+      const desc = n.data?.description ? `\n${n.data.description}` : '';
+      return `${n.data?.label} (${type})${desc}`;
+    }).join('\n\n');
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [nodes, selectedNodeIds]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedNodeIds(new Set());
+    setContextNode(null);
+    setCopied(false);
+  }, []);
 
   // Load the case subgraph
   const loadGraph = useCallback(async () => {
@@ -173,9 +200,24 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     }
   }, [caseId, loadGraph]);
 
-  // Node click → show context popover
+  // Node click → toggle selection. Second click on a lone selected node opens context menu.
   const onNodeClick = useCallback((node: Node) => {
-    setContextNode(prev => prev?.id === node.id ? null : node);
+    setSelectedNodeIds(prev => {
+      const next = new Set(prev);
+      if (next.has(node.id)) {
+        // Already selected — if it's the only one, show context menu; otherwise deselect
+        if (next.size === 1) {
+          setContextNode(c => c?.id === node.id ? null : node);
+          return next; // keep it selected
+        }
+        next.delete(node.id);
+      } else {
+        next.add(node.id);
+      }
+      setContextNode(null);
+      return next;
+    });
+    setCopied(false);
     setExpandNode(null);
     setNeighbors([]);
     setSelectedNeighbors(new Set());
@@ -379,7 +421,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       {/* ReactFlow canvas */}
       <div className="flex-1 relative">
         <NexusCanvas
-          nodes={nodes}
+          nodes={displayNodes}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
@@ -503,11 +545,31 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
         )}
       </div>
 
-      {/* Footer stats */}
+      {/* Footer stats + selection bar */}
       <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex items-center justify-between">
         <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
           {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} \u00B7 {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
         </span>
+        {selectedNodeIds.size > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-[rgba(235,235,245,0.6)] font-medium">
+              {selectedNodeIds.size} selected
+            </span>
+            <button
+              onClick={copySelectedNodes}
+              className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+            >
+              <Copy size={11} />
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+            <button
+              onClick={clearSelection}
+              className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
+            >
+              <X size={12} className="text-[rgba(235,235,245,0.4)]" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
