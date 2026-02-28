@@ -419,6 +419,10 @@ class SavePositionsRequest(BaseModel):
 class AnalyzeEntitiesRequest(BaseModel):
     node_ids: List[str]
 
+class GraphChatRequest(BaseModel):
+    node_ids: List[str]
+    messages: List[Dict[str, str]]  # [{"role": "user"|"assistant", "content": "..."}]
+
 # --- Endpoints ---
 
 @app.get("/api")
@@ -1528,6 +1532,93 @@ Be specific, reference actual entity names, and flag anything that looks unusual
         }
     except Exception as e:
         print(f"Analysis failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/chat")
+async def chat_case_graph(case_id: str, request: GraphChatRequest):
+    """Chat about a group of selected entities with full graph context."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    try:
+        node_ids = request.node_ids
+
+        # Fetch node details
+        nodes_res = supabase.table("nodes").select("id, label, type, description, aliases").in_("id", node_ids).execute()
+        nodes_by_id = {n["id"]: n for n in (nodes_res.data or [])}
+
+        # Fetch direct edges
+        direct_edges = supabase.table("edges").select("source, target, label, predicate, evidence_text, confidence").in_("source", node_ids).in_("target", node_ids).execute()
+
+        # Fetch shared neighbors
+        all_neighbor_edges = []
+        for nid in node_ids:
+            out = supabase.table("edges").select("source, target, label").eq("source", nid).execute()
+            inc = supabase.table("edges").select("source, target, label").eq("target", nid).execute()
+            all_neighbor_edges.extend(out.data or [])
+            all_neighbor_edges.extend(inc.data or [])
+
+        neighbor_connections = defaultdict(lambda: {"connected_to": set(), "labels": []})
+        for e in all_neighbor_edges:
+            other = e["target"] if e["source"] in node_ids else e["source"]
+            if other in node_ids:
+                continue
+            selected_end = e["source"] if e["source"] in node_ids else e["target"]
+            neighbor_connections[other]["connected_to"].add(selected_end)
+            neighbor_connections[other]["labels"].append(e.get("label", ""))
+
+        shared_neighbor_ids = [nid for nid, info in neighbor_connections.items() if len(info["connected_to"]) >= 2]
+        shared_detail = []
+        if shared_neighbor_ids:
+            sn_res = supabase.table("nodes").select("id, label, type").in_("id", shared_neighbor_ids[:30]).execute()
+            for sn in (sn_res.data or []):
+                info = neighbor_connections[sn["id"]]
+                connected_labels = [nodes_by_id[c]["label"] for c in info["connected_to"] if c in nodes_by_id]
+                shared_detail.append(f"{sn.get('label', sn['id'])} ({sn.get('type', '?')}) — connects: {', '.join(connected_labels)}")
+
+        # Build context block
+        entity_lines = []
+        for nid in node_ids:
+            n = nodes_by_id.get(nid, {})
+            desc = (n.get("description") or "")[:300]
+            entity_lines.append(f"- {n.get('label', nid)} ({n.get('type', 'UNKNOWN')}): {desc}")
+
+        edge_lines = []
+        for e in (direct_edges.data or []):
+            src = nodes_by_id.get(e["source"], {}).get("label", e["source"])
+            tgt = nodes_by_id.get(e["target"], {}).get("label", e["target"])
+            evidence = (e.get("evidence_text") or "")[:150]
+            edge_lines.append(f"- {src} → {e.get('label', e.get('predicate', '?'))} → {tgt}" + (f" [{evidence}]" if evidence else ""))
+
+        system_context = f"""You are a seasoned investigative journalist with decades of experience uncovering financial crimes, corruption, and hidden power networks. You're having a conversation with a researcher about a specific group of entities from a knowledge graph built from court documents, financial records, flight logs, and depositions.
+
+ENTITIES UNDER DISCUSSION:
+{chr(10).join(entity_lines)}
+
+DIRECT CONNECTIONS BETWEEN THEM:
+{chr(10).join(edge_lines) if edge_lines else "None found."}
+
+SHARED CONNECTIONS (linked to 2+ of the selected):
+{chr(10).join(shared_detail[:15]) if shared_detail else "None found."}
+
+Answer the researcher's questions using this context. Be specific, cite entity names, and think like an investigative journalist — look for patterns, follow the money, identify intermediaries, and suggest leads. Keep responses concise and actionable."""
+
+        # Build conversation for Gemini
+        contents = [system_context]
+        for msg in request.messages:
+            contents.append(f"{'Researcher' if msg['role'] == 'user' else 'Journalist'}: {msg['content']}")
+
+        res = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents="\n\n".join(contents),
+        )
+
+        return {"response": res.text}
+    except Exception as e:
+        print(f"Graph chat failed: {e}")
         import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 

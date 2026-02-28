@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node } from 'reactflow';
-import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles } from 'lucide-react';
+import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -65,10 +65,15 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   const [contextNode, setContextNode] = useState<Node | null>(null);
   const contextRef = useRef<HTMLDivElement>(null);
 
-  // Analysis state
+  // Analysis + chat state
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisShared, setAnalysisShared] = useState<{ label: string; type: string; connected_to: string[] }[]>([]);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatting, setIsChatting] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const analysisNodeIds = useRef<string[]>([]);
 
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
@@ -98,6 +103,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     setCopied(false);
     setAnalysisResult(null);
     setAnalysisShared([]);
+    setChatMessages([]);
+    setChatInput('');
   }, []);
 
   const analyzeSelected = useCallback(async () => {
@@ -105,12 +112,16 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     setIsAnalyzing(true);
     setAnalysisResult(null);
     setAnalysisShared([]);
+    setChatMessages([]);
+    const ids = Array.from(selectedNodeIds);
+    analysisNodeIds.current = ids;
     try {
-      const res = await axios.post(`/api/cases/${caseId}/graph/analyze`, {
-        node_ids: Array.from(selectedNodeIds),
-      });
-      setAnalysisResult(res.data.analysis || 'No analysis returned.');
+      const res = await axios.post(`/api/cases/${caseId}/graph/analyze`, { node_ids: ids });
+      const analysis = res.data.analysis || 'No analysis returned.';
+      setAnalysisResult(analysis);
       setAnalysisShared(res.data.shared_neighbors || []);
+      // Seed chat history with the initial analysis
+      setChatMessages([{ role: 'assistant', content: analysis }]);
     } catch (err) {
       console.error('Analysis failed:', err);
       setAnalysisResult('Analysis failed. Please try again.');
@@ -118,6 +129,29 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       setIsAnalyzing(false);
     }
   }, [caseId, selectedNodeIds]);
+
+  const sendChatMessage = useCallback(async () => {
+    const msg = chatInput.trim();
+    if (!msg || isChatting) return;
+    const newMessages = [...chatMessages, { role: 'user' as const, content: msg }];
+    setChatMessages(newMessages);
+    setChatInput('');
+    setIsChatting(true);
+    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/graph/chat`, {
+        node_ids: analysisNodeIds.current,
+        messages: newMessages,
+      });
+      setChatMessages(prev => [...prev, { role: 'assistant', content: res.data.response }]);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    } catch (err) {
+      console.error('Chat failed:', err);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: 'Failed to get a response. Try again.' }]);
+    } finally {
+      setIsChatting(false);
+    }
+  }, [caseId, chatInput, chatMessages, isChatting]);
 
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -578,54 +612,91 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
         )}
       </div>
 
-      {/* Analysis panel */}
+      {/* Analysis + chat panel */}
       {(analysisResult || isAnalyzing) && (
-        <div className="shrink-0 max-h-[40vh] overflow-y-auto border-t border-[rgba(84,84,88,0.65)] bg-[#1C1C1E]">
-          <div className="px-4 py-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Sparkles size={14} className="text-[#AF52DE]" />
-                <span className="text-[13px] font-semibold text-white">Similarity Analysis</span>
-              </div>
-              <button onClick={() => { setAnalysisResult(null); setAnalysisShared([]); }} className="p-1 hover:bg-[#2C2C2E] rounded-lg">
-                <X size={14} className="text-[rgba(235,235,245,0.4)]" />
-              </button>
+        <div className="shrink-0 max-h-[50vh] flex flex-col border-t border-[rgba(84,84,88,0.65)] bg-[#1C1C1E]">
+          {/* Header */}
+          <div className="shrink-0 px-4 py-2.5 flex items-center justify-between border-b border-[rgba(84,84,88,0.35)]">
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-[#AF52DE]" />
+              <span className="text-[13px] font-semibold text-white">Similarity Analysis</span>
             </div>
-            {isAnalyzing ? (
-              <div className="flex items-center gap-2 py-4 justify-center">
-                <Loader2 size={16} className="text-[#AF52DE] animate-spin" />
-                <span className="text-[13px] text-[rgba(235,235,245,0.4)]">Analyzing connections...</span>
-              </div>
-            ) : (
-              <>
-                <div className="text-[13px] text-[rgba(235,235,245,0.6)] whitespace-pre-wrap leading-relaxed">
-                  {analysisResult}
-                </div>
-                {analysisShared.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-[rgba(84,84,88,0.35)]">
-                    <p className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2">
-                      Shared Connections
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {analysisShared.map(sn => {
-                        const color = TYPE_COLORS[sn.type.toUpperCase()] || '#9ca3af';
-                        return (
-                          <span
-                            key={sn.label}
-                            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#2C2C2E] text-[11px] text-[rgba(235,235,245,0.6)]"
-                          >
-                            <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                            {sn.label}
-                            <span className="text-[rgba(235,235,245,0.3)]">({sn.connected_to.length})</span>
-                          </span>
-                        );
-                      })}
+            <button onClick={() => { setAnalysisResult(null); setAnalysisShared([]); setChatMessages([]); }} className="p-1 hover:bg-[#2C2C2E] rounded-lg">
+              <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+            </button>
+          </div>
+
+          {isAnalyzing ? (
+            <div className="flex items-center gap-2 py-6 justify-center">
+              <Loader2 size={16} className="text-[#AF52DE] animate-spin" />
+              <span className="text-[13px] text-[rgba(235,235,245,0.4)]">Analyzing connections...</span>
+            </div>
+          ) : (
+            <>
+              {/* Chat messages */}
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+                {chatMessages.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
+                      msg.role === 'user'
+                        ? 'bg-[#007AFF] text-white'
+                        : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.6)]'
+                    }`}>
+                      <p className="text-[13px] whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                    </div>
+                  </div>
+                ))}
+                {isChatting && (
+                  <div className="flex justify-start">
+                    <div className="bg-[#2C2C2E] rounded-2xl px-3.5 py-2.5">
+                      <Loader2 size={14} className="text-[#AF52DE] animate-spin" />
                     </div>
                   </div>
                 )}
-              </>
-            )}
-          </div>
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Shared connections chips */}
+              {analysisShared.length > 0 && chatMessages.length <= 1 && (
+                <div className="shrink-0 px-4 pb-2">
+                  <p className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider mb-1.5">Shared Connections</p>
+                  <div className="flex flex-wrap gap-1">
+                    {analysisShared.map(sn => {
+                      const color = TYPE_COLORS[sn.type.toUpperCase()] || '#9ca3af';
+                      return (
+                        <span key={sn.label} className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#2C2C2E] text-[10px] text-[rgba(235,235,245,0.5)]">
+                          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                          {sn.label}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Chat input */}
+              <div className="shrink-0 px-3 py-2 border-t border-[rgba(84,84,88,0.35)]">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
+                    placeholder="Ask about these entities..."
+                    disabled={isChatting}
+                    className="flex-1 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none focus:border-[#AF52DE] transition-colors placeholder:text-[rgba(235,235,245,0.2)] disabled:opacity-50"
+                  />
+                  <button
+                    onClick={sendChatMessage}
+                    disabled={!chatInput.trim() || isChatting}
+                    className="w-9 h-9 rounded-xl bg-[#AF52DE] hover:bg-[#9642C0] disabled:opacity-30 flex items-center justify-center transition-colors shrink-0"
+                  >
+                    <Send size={14} />
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
