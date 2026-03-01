@@ -192,6 +192,25 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     }
   }, [setEdges]);
 
+  // Filter out ReactFlow's built-in select changes — we manage selection ourselves
+  const handleNodesChange = useCallback((changes: any[]) => {
+    const filtered = changes.filter((c: any) => c.type !== 'select');
+    if (filtered.length > 0) onNodesChange(filtered);
+  }, [onNodesChange]);
+
+  // Load the case subgraph
+  const loadGraph = useCallback(async () => {
+    try {
+      const res = await axios.get(`/api/cases/${caseId}/graph`);
+      setNodes(res.data.nodes || []);
+      setEdges(res.data.edges || []);
+    } catch (err) {
+      console.error('Failed to load case graph:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [caseId, setNodes, setEdges]);
+
   // Link two selected entities with a case-local edge
   const linkSelectedNodes = useCallback(async () => {
     if (selectedNodeIds.size !== 2) return;
@@ -246,25 +265,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       setIsCreatingEntity(false);
     }
   }, [caseId, newEntityLabel, newEntityType, loadGraph]);
-
-  // Filter out ReactFlow's built-in select changes — we manage selection ourselves
-  const handleNodesChange = useCallback((changes: any[]) => {
-    const filtered = changes.filter((c: any) => c.type !== 'select');
-    if (filtered.length > 0) onNodesChange(filtered);
-  }, [onNodesChange]);
-
-  // Load the case subgraph
-  const loadGraph = useCallback(async () => {
-    try {
-      const res = await axios.get(`/api/cases/${caseId}/graph`);
-      setNodes(res.data.nodes || []);
-      setEdges(res.data.edges || []);
-    } catch (err) {
-      console.error('Failed to load case graph:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [caseId, setNodes, setEdges]);
 
   useEffect(() => {
     loadGraph();
