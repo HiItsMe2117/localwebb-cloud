@@ -54,6 +54,8 @@ function EntityNode({ data, selected }: NodeProps) {
   const config = TYPE_CONFIG[entityType] || { color: '#9ca3af', icon: HelpCircle };
   const Icon = config.icon;
   const communityColor = data.communityColor || config.color;
+  const isCustom = data.isCustom;
+  const borderStyle = isCustom ? 'dashed' : 'solid';
 
   const degree: number = data.degree || 0;
   const tier = getTier(degree);
@@ -106,7 +108,7 @@ function EntityNode({ data, selected }: NodeProps) {
       <div
         className="bg-[#1C1C1E] rounded-lg flex items-center gap-2 px-2.5 py-1.5"
         style={{
-          border: `1.5px solid ${selected ? config.color : communityColor}40`,
+          border: `1.5px ${borderStyle} ${selected ? config.color : communityColor}40`,
           boxShadow: selected ? `0 0 12px ${config.color}30` : 'none',
           maxWidth: 140,
           transform: `scale(${scale})`,
@@ -132,7 +134,7 @@ function EntityNode({ data, selected }: NodeProps) {
       <div
         className="bg-[#1C1C1E] shadow-lg rounded-xl overflow-hidden transition-all duration-150"
         style={{
-          border: `1.5px solid ${selected ? config.color : communityColor}`,
+          border: `1.5px ${borderStyle} ${selected ? config.color : communityColor}`,
           boxShadow: selected ? `0 0 15px ${config.color}30` : 'none',
           minWidth: 120,
           maxWidth: 160,
@@ -174,7 +176,7 @@ function EntityNode({ data, selected }: NodeProps) {
     <div
       className="bg-[#1C1C1E] shadow-lg rounded-xl overflow-hidden transition-all duration-150"
       style={{
-        border: `2px solid ${selected ? config.color : communityColor}`,
+        border: `2px ${borderStyle} ${selected ? config.color : communityColor}`,
         boxShadow: selected
           ? `0 0 25px ${config.color}40`
           : `0 0 15px ${communityColor}15, 0 2px 8px rgba(0,0,0,0.3)`,

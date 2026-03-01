@@ -426,6 +426,14 @@ class GraphChatRequest(BaseModel):
     node_ids: List[str]
     messages: List[Dict[str, str]]  # [{"role": "user"|"assistant", "content": "..."}]
 
+class CreateCaseEdgeRequest(BaseModel):
+    source_node_id: str
+    target_node_id: str
+
+class CreateCustomNodeRequest(BaseModel):
+    label: str
+    type: str = "PERSON"
+
 # --- Endpoints ---
 
 @app.get("/api")
@@ -1335,50 +1343,87 @@ async def get_case_graph(case_id: str):
         # Get pinned entities for this case
         pinned = supabase.table("case_graph_entities").select("*").eq("case_id", case_id).execute()
         pinned_rows = pinned.data or []
-        if not pinned_rows:
+
+        # Also fetch custom case-local nodes
+        custom_res = supabase.table("case_graph_custom_nodes").select("*").eq("case_id", case_id).execute()
+        custom_rows = custom_res.data or []
+
+        if not pinned_rows and not custom_rows:
             return {"nodes": [], "edges": []}
 
         node_ids = [r["node_id"] for r in pinned_rows]
         position_map = {r["node_id"]: {"x": r.get("position_x"), "y": r.get("position_y")} for r in pinned_rows}
 
-        # Fetch node data
-        nodes_res = supabase.table("nodes").select("*").in_("id", node_ids).execute()
+        # Fetch global node data
         nodes = []
-        for n in nodes_res.data or []:
-            meta = n.get("metadata") or {}
-            pos = position_map.get(n["id"], {})
+        if node_ids:
+            nodes_res = supabase.table("nodes").select("*").in_("id", node_ids).execute()
+            for n in nodes_res.data or []:
+                meta = n.get("metadata") or {}
+                pos = position_map.get(n["id"], {})
+                nodes.append({
+                    "id": n["id"],
+                    "type": "entityNode",
+                    "data": {
+                        "label": n.get("label", n["id"]),
+                        "entityType": n.get("type", "UNKNOWN"),
+                        "description": n.get("description", ""),
+                        "aliases": n.get("aliases", []),
+                        "degree": meta.get("degree", 0),
+                        "communityId": meta.get("communityId"),
+                        "communityColor": meta.get("communityColor"),
+                    },
+                    "position": {"x": pos.get("x") or 0, "y": pos.get("y") or 0},
+                })
+
+        # Append custom case-local nodes
+        for cn in custom_rows:
             nodes.append({
-                "id": n["id"],
+                "id": cn["id"],
                 "type": "entityNode",
                 "data": {
-                    "label": n.get("label", n["id"]),
-                    "entityType": n.get("type", "UNKNOWN"),
-                    "description": n.get("description", ""),
-                    "aliases": n.get("aliases", []),
-                    "degree": meta.get("degree", 0),
-                    "communityId": meta.get("communityId"),
-                    "communityColor": meta.get("communityColor"),
+                    "label": cn.get("label", "Untitled"),
+                    "entityType": cn.get("type", "PERSON"),
+                    "description": "",
+                    "aliases": [],
+                    "degree": 0,
+                    "isCustom": True,
                 },
-                "position": {"x": pos.get("x") or 0, "y": pos.get("y") or 0},
+                "position": {"x": cn.get("position_x") or 0, "y": cn.get("position_y") or 0},
             })
 
-        # Get all edges where BOTH endpoints are in the case's entity set
-        edges_res = supabase.table("edges").select("*").in_("source", node_ids).in_("target", node_ids).execute()
+        # Get all global edges where BOTH endpoints are in the case's entity set
         edges = []
-        for e in edges_res.data or []:
+        if node_ids:
+            edges_res = supabase.table("edges").select("*").in_("source", node_ids).in_("target", node_ids).execute()
+            for e in edges_res.data or []:
+                edges.append({
+                    "id": e["id"],
+                    "source": e["source"],
+                    "target": e["target"],
+                    "label": e.get("label", e.get("predicate", "")),
+                    "animated": e.get("confidence") == "INFERRED",
+                    "data": {
+                        "predicate": e.get("predicate", ""),
+                        "evidence_text": e.get("evidence_text", ""),
+                        "source_filename": e.get("source_filename", ""),
+                        "source_page": e.get("source_page", 0),
+                        "confidence": e.get("confidence", "STATED"),
+                        "date_mentioned": e.get("date_mentioned"),
+                    },
+                })
+
+        # Fetch case-local edges
+        case_edges_res = supabase.table("case_graph_edges").select("*").eq("case_id", case_id).execute()
+        for ce in case_edges_res.data or []:
             edges.append({
-                "id": e["id"],
-                "source": e["source"],
-                "target": e["target"],
-                "label": e.get("label", e.get("predicate", "")),
-                "animated": e.get("confidence") == "INFERRED",
+                "id": ce["id"],
+                "source": ce["source_node_id"],
+                "target": ce["target_node_id"],
+                "label": "",
+                "animated": False,
                 "data": {
-                    "predicate": e.get("predicate", ""),
-                    "evidence_text": e.get("evidence_text", ""),
-                    "source_filename": e.get("source_filename", ""),
-                    "source_page": e.get("source_page", 0),
-                    "confidence": e.get("confidence", "STATED"),
-                    "date_mentioned": e.get("date_mentioned"),
+                    "isCaseLocal": True,
                 },
             })
 
@@ -1407,6 +1452,9 @@ async def remove_case_graph_entity(case_id: str, node_id: str):
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
         supabase.table("case_graph_entities").delete().eq("case_id", case_id).eq("node_id", node_id).execute()
+        # Clean up any case-local edges referencing this node
+        supabase.table("case_graph_edges").delete().eq("case_id", case_id).eq("source_node_id", node_id).execute()
+        supabase.table("case_graph_edges").delete().eq("case_id", case_id).eq("target_node_id", node_id).execute()
         return {"removed": node_id}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -1419,10 +1467,17 @@ async def save_case_graph_positions(case_id: str, request: SavePositionsRequest)
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
         for pos in request.positions:
-            supabase.table("case_graph_entities").update({
+            # Try regular pinned node first
+            result = supabase.table("case_graph_entities").update({
                 "position_x": pos["x"],
                 "position_y": pos["y"],
             }).eq("case_id", case_id).eq("node_id", pos["node_id"]).execute()
+            # If no row updated, try custom nodes table
+            if not result.data:
+                supabase.table("case_graph_custom_nodes").update({
+                    "position_x": pos["x"],
+                    "position_y": pos["y"],
+                }).eq("id", pos["node_id"]).eq("case_id", case_id).execute()
         return {"saved": len(request.positions)}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -1472,6 +1527,72 @@ async def expand_case_graph_node(case_id: str, node_id: str):
             })
         neighbors.sort(key=lambda x: x["degree"], reverse=True)
         return {"neighbors": neighbors}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/edges")
+async def create_case_graph_edge(case_id: str, request: CreateCaseEdgeRequest):
+    """Create a case-local edge between two entities."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        record = {
+            "case_id": case_id,
+            "source_node_id": request.source_node_id,
+            "target_node_id": request.target_node_id,
+        }
+        result = supabase.table("case_graph_edges").upsert(
+            record, on_conflict="case_id,source_node_id,target_node_id"
+        ).execute()
+        return {"id": result.data[0]["id"] if result.data else None}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/cases/{case_id}/graph/edges/{edge_id}")
+async def delete_case_graph_edge(case_id: str, edge_id: str):
+    """Delete a case-local edge."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        supabase.table("case_graph_edges").delete().eq("id", edge_id).eq("case_id", case_id).execute()
+        return {"deleted": edge_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/custom-nodes")
+async def create_case_custom_node(case_id: str, request: CreateCustomNodeRequest):
+    """Create a custom case-local entity node."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        record = {
+            "case_id": case_id,
+            "label": request.label,
+            "type": request.type,
+            "position_x": 0,
+            "position_y": 0,
+        }
+        result = supabase.table("case_graph_custom_nodes").insert(record).execute()
+        return {"id": result.data[0]["id"] if result.data else None}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/cases/{case_id}/graph/custom-nodes/{node_id}")
+async def delete_case_custom_node(case_id: str, node_id: str):
+    """Delete a custom case-local entity node and its edges."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        # Delete any case edges involving this custom node
+        supabase.table("case_graph_edges").delete().eq("case_id", case_id).eq("source_node_id", node_id).execute()
+        supabase.table("case_graph_edges").delete().eq("case_id", case_id).eq("target_node_id", node_id).execute()
+        # Delete the custom node itself
+        supabase.table("case_graph_custom_nodes").delete().eq("id", node_id).eq("case_id", case_id).execute()
+        return {"deleted": node_id}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

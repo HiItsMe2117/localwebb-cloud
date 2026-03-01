@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
-import type { Node } from 'reactflow';
-import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send } from 'lucide-react';
+import type { Node, Edge } from 'reactflow';
+import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2 } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -75,6 +75,17 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   const chatEndRef = useRef<HTMLDivElement>(null);
   const analysisNodeIds = useRef<string[]>([]);
 
+  // Edge linking state
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [isLinking, setIsLinking] = useState(false);
+  const [isDeletingEdge, setIsDeletingEdge] = useState(false);
+
+  // Create custom entity state
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newEntityLabel, setNewEntityLabel] = useState('');
+  const [newEntityType, setNewEntityType] = useState('PERSON');
+  const [isCreatingEntity, setIsCreatingEntity] = useState(false);
+
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
 
@@ -99,13 +110,15 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
 
   const clearSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
+    setSelectedEdgeId(null);
     setContextNode(null);
     setCopied(false);
     setAnalysisResult(null);
     setAnalysisShared([]);
     setChatMessages([]);
     setChatInput('');
-  }, []);
+    setEdges(eds => eds.map(e => ({ ...e, selected: false })));
+  }, [setEdges]);
 
   const analyzeSelected = useCallback(async () => {
     if (selectedNodeIds.size < 2) return;
@@ -166,6 +179,73 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       setIsChatting(false);
     }
   }, [caseId, chatInput, chatMessages, isChatting]);
+
+  // Edge click: select/deselect case-local edges
+  const onEdgeClick = useCallback((edge: Edge) => {
+    if (edge.data?.isCaseLocal) {
+      setSelectedEdgeId(prev => prev === edge.id ? null : edge.id);
+      setEdges(eds => eds.map(e => ({
+        ...e,
+        selected: e.data?.isCaseLocal ? e.id === edge.id && !e.selected : false,
+      })));
+      setSelectedNodeIds(new Set());
+    }
+  }, [setEdges]);
+
+  // Link two selected entities with a case-local edge
+  const linkSelectedNodes = useCallback(async () => {
+    if (selectedNodeIds.size !== 2) return;
+    setIsLinking(true);
+    const [sourceId, targetId] = Array.from(selectedNodeIds);
+    try {
+      await axios.post(`/api/cases/${caseId}/graph/edges`, {
+        source_node_id: sourceId,
+        target_node_id: targetId,
+      });
+      await loadGraph();
+      clearSelection();
+    } catch (err) {
+      console.error('Failed to create edge:', err);
+    } finally {
+      setIsLinking(false);
+    }
+  }, [caseId, selectedNodeIds, loadGraph, clearSelection]);
+
+  // Delete a selected case-local edge
+  const deleteSelectedEdge = useCallback(async () => {
+    if (!selectedEdgeId) return;
+    setIsDeletingEdge(true);
+    try {
+      await axios.delete(`/api/cases/${caseId}/graph/edges/${selectedEdgeId}`);
+      setSelectedEdgeId(null);
+      await loadGraph();
+    } catch (err) {
+      console.error('Failed to delete edge:', err);
+    } finally {
+      setIsDeletingEdge(false);
+    }
+  }, [caseId, selectedEdgeId, loadGraph]);
+
+  // Create a custom case-local entity
+  const createCustomNode = useCallback(async () => {
+    const label = newEntityLabel.trim();
+    if (!label) return;
+    setIsCreatingEntity(true);
+    try {
+      await axios.post(`/api/cases/${caseId}/graph/custom-nodes`, {
+        label,
+        type: newEntityType,
+      });
+      setShowCreateForm(false);
+      setNewEntityLabel('');
+      setNewEntityType('PERSON');
+      await loadGraph();
+    } catch (err) {
+      console.error('Failed to create custom entity:', err);
+    } finally {
+      setIsCreatingEntity(false);
+    }
+  }, [caseId, newEntityLabel, newEntityType, loadGraph]);
 
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -336,11 +416,15 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     }
   }, [caseId, selectedNeighbors, loadGraph]);
 
-  // Remove entity
+  // Remove entity (routes custom nodes to the custom-nodes endpoint)
   const handleRemove = useCallback(async (node: Node) => {
     setContextNode(null);
     try {
-      await axios.delete(`/api/cases/${caseId}/graph/entities/${node.id}`);
+      if (node.data?.isCustom) {
+        await axios.delete(`/api/cases/${caseId}/graph/custom-nodes/${node.id}`);
+      } else {
+        await axios.delete(`/api/cases/${caseId}/graph/entities/${node.id}`);
+      }
       await loadGraph();
     } catch (err) {
       console.error('Failed to remove entity:', err);
@@ -473,29 +557,73 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden relative">
-      {/* Search bar */}
+      {/* Search bar + create entity */}
       <div className="shrink-0 px-4 py-3 border-b border-[rgba(84,84,88,0.65)] bg-black z-10">
-        <div ref={searchRef} className="relative">
-          <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-2 rounded-xl border border-[rgba(84,84,88,0.65)] focus-within:border-[#007AFF] transition-colors">
-            <Search size={14} className="text-[rgba(235,235,245,0.3)] shrink-0" />
+        <div className="flex items-center gap-2">
+          <div ref={searchRef} className="relative flex-1">
+            <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-2 rounded-xl border border-[rgba(84,84,88,0.65)] focus-within:border-[#007AFF] transition-colors">
+              <Search size={14} className="text-[rgba(235,235,245,0.3)] shrink-0" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => { setSearchQuery(e.target.value); setSearchIndex(0); }}
+                onKeyDown={e => {
+                  if (e.key === 'Escape') { setSearchQuery(''); setSearchResults([]); }
+                  if (!searchResults.length) return;
+                  if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex(i => (i + 1) % searchResults.length); }
+                  if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex(i => (i - 1 + searchResults.length) % searchResults.length); }
+                  if (e.key === 'Enter') { e.preventDefault(); addEntity(searchResults[searchIndex]); }
+                }}
+                placeholder="Search entities to add..."
+                className="bg-transparent text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none w-full"
+              />
+              {isSearching && <Loader2 size={14} className="text-[rgba(235,235,245,0.3)] animate-spin" />}
+            </div>
+            {searchResults.length > 0 && <SearchDropdown results={searchResults} activeIndex={searchIndex} onSelect={addEntity} onHover={setSearchIndex} />}
+          </div>
+          <button
+            onClick={() => setShowCreateForm(prev => !prev)}
+            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
+              showCreateForm ? 'bg-[#007AFF] text-white' : 'bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.4)] hover:border-[#007AFF]'
+            }`}
+            title="Create custom entity"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+
+        {showCreateForm && (
+          <div className="mt-2 flex items-center gap-2">
             <input
               type="text"
-              value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); setSearchIndex(0); }}
-              onKeyDown={e => {
-                if (e.key === 'Escape') { setSearchQuery(''); setSearchResults([]); }
-                if (!searchResults.length) return;
-                if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex(i => (i + 1) % searchResults.length); }
-                if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex(i => (i - 1 + searchResults.length) % searchResults.length); }
-                if (e.key === 'Enter') { e.preventDefault(); addEntity(searchResults[searchIndex]); }
-              }}
-              placeholder="Search entities to add..."
-              className="bg-transparent text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none w-full"
+              value={newEntityLabel}
+              onChange={e => setNewEntityLabel(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') createCustomNode(); if (e.key === 'Escape') setShowCreateForm(false); }}
+              placeholder="Entity name..."
+              autoFocus
+              className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
             />
-            {isSearching && <Loader2 size={14} className="text-[rgba(235,235,245,0.3)] animate-spin" />}
+            <select
+              value={newEntityType}
+              onChange={e => setNewEntityType(e.target.value)}
+              className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-2 py-2 text-[12px] text-white focus:outline-none focus:border-[#007AFF] transition-colors appearance-none"
+            >
+              <option value="PERSON">Person</option>
+              <option value="ORGANIZATION">Organization</option>
+              <option value="LOCATION">Location</option>
+              <option value="EVENT">Event</option>
+              <option value="DOCUMENT">Document</option>
+              <option value="FINANCIAL_ENTITY">Financial</option>
+            </select>
+            <button
+              onClick={createCustomNode}
+              disabled={!newEntityLabel.trim() || isCreatingEntity}
+              className="bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-30 px-3 py-2 rounded-xl text-[13px] font-semibold transition-colors shrink-0"
+            >
+              {isCreatingEntity ? <Loader2 size={14} className="animate-spin" /> : 'Add'}
+            </button>
           </div>
-          {searchResults.length > 0 && <SearchDropdown results={searchResults} activeIndex={searchIndex} onSelect={addEntity} onHover={setSearchIndex} />}
-        </div>
+        )}
       </div>
 
       {/* ReactFlow canvas */}
@@ -507,6 +635,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
           onEdgesChange={onEdgesChange}
           onNodeDragStop={onNodeDragStop}
           onNodeClick={onNodeClick}
+          onEdgeClick={onEdgeClick}
           onPaneClick={clearSelection}
           showEdgeLabels={false}
         />
@@ -519,17 +648,24 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
           >
             <div className="px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)]">
               <p className="text-[13px] font-semibold text-white truncate">{contextNode.data?.label}</p>
-              <p className="text-[10px] uppercase tracking-wider font-bold" style={{ color: TYPE_COLORS[(contextNode.data?.entityType || '').toUpperCase()] || '#9ca3af' }}>
-                {(contextNode.data?.entityType || 'unknown').toUpperCase()}
-              </p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] uppercase tracking-wider font-bold" style={{ color: TYPE_COLORS[(contextNode.data?.entityType || '').toUpperCase()] || '#9ca3af' }}>
+                  {(contextNode.data?.entityType || 'unknown').toUpperCase()}
+                </p>
+                {contextNode.data?.isCustom && (
+                  <span className="text-[8px] font-bold uppercase tracking-wider text-[rgba(235,235,245,0.3)]">CUSTOM</span>
+                )}
+              </div>
             </div>
-            <button
-              onClick={() => handleExpand(contextNode)}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
-            >
-              <Expand size={14} className="text-[#007AFF]" />
-              <span className="text-[13px] text-white">Expand neighbors</span>
-            </button>
+            {!contextNode.data?.isCustom && (
+              <button
+                onClick={() => handleExpand(contextNode)}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
+              >
+                <Expand size={14} className="text-[#007AFF]" />
+                <span className="text-[13px] text-white">Expand neighbors</span>
+              </button>
+            )}
             <button
               onClick={() => handleRemove(contextNode)}
               className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#FF453A]/10 transition-colors"
@@ -717,14 +853,24 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       {/* Footer stats + selection bar */}
       <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex items-center justify-between">
         <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
-          {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} \u00B7 {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
-          {selectedNodeIds.size === 0 && nodes.length > 0 && ' \u00B7 Shift+click to select'}
+          {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
+          {selectedNodeIds.size === 0 && !selectedEdgeId && nodes.length > 0 && ' · Shift+click to select'}
         </span>
         {selectedNodeIds.size > 0 && (
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-[rgba(235,235,245,0.6)] font-medium">
               {selectedNodeIds.size} selected
             </span>
+            {selectedNodeIds.size === 2 && (
+              <button
+                onClick={linkSelectedNodes}
+                disabled={isLinking}
+                className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+              >
+                {isLinking ? <Loader2 size={11} className="animate-spin" /> : <Link2 size={11} />}
+                Link
+              </button>
+            )}
             {selectedNodeIds.size >= 2 && (
               <button
                 onClick={analyzeSelected}
@@ -741,6 +887,27 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
             >
               <Copy size={11} />
               {copied ? 'Copied!' : 'Copy'}
+            </button>
+            <button
+              onClick={clearSelection}
+              className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
+            >
+              <X size={12} className="text-[rgba(235,235,245,0.4)]" />
+            </button>
+          </div>
+        )}
+        {selectedEdgeId && selectedNodeIds.size === 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-[rgba(235,235,245,0.6)] font-medium">
+              Link selected
+            </span>
+            <button
+              onClick={deleteSelectedEdge}
+              disabled={isDeletingEdge}
+              className="flex items-center gap-1.5 bg-[#FF453A] hover:bg-[#FF3B30] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+            >
+              {isDeletingEdge ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+              Delete Link
             </button>
             <button
               onClick={clearSelection}
