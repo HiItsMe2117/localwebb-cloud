@@ -130,6 +130,8 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
         elevateNodesOnSelect={false}
         elevateEdgesOnSelect={false}
+        edgesFocusable={true}
+        edgesUpdatable={true}
         onlyRenderVisibleElements={true}
         zoomOnDoubleClick={false}
       >
