@@ -185,20 +185,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     }
   }, [caseId, chatInput, chatMessages, isChatting]);
 
-  // Edge click: select/deselect case-local edges
-  const onEdgeClick = useCallback((edge: Edge) => {
-    if (edge.data?.isCaseLocal) {
-      const isDeselecting = selectedEdgeId === edge.id;
-      setSelectedEdgeId(isDeselecting ? null : edge.id);
-      setEditEdgeLabel(isDeselecting ? '' : (edge.label as string || ''));
-      setEdges(eds => eds.map(e => ({
-        ...e,
-        selected: e.data?.isCaseLocal ? e.id === edge.id && !e.selected : false,
-      })));
-      setSelectedNodeIds(new Set());
-    }
-  }, [setEdges, selectedEdgeId]);
-
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
     const filtered = changes.filter((c: any) => c.type !== 'select');
@@ -217,6 +203,34 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       setIsLoading(false);
     }
   }, [caseId, setNodes, setEdges]);
+
+  // Edge click: select case-local edges, or promote gray edges to case-local
+  const onEdgeClick = useCallback(async (edge: Edge) => {
+    if (edge.data?.isCaseLocal) {
+      // Already case-local: toggle selection for editing
+      const isDeselecting = selectedEdgeId === edge.id;
+      setSelectedEdgeId(isDeselecting ? null : edge.id);
+      setEditEdgeLabel(isDeselecting ? '' : (edge.label as string || ''));
+      setEdges(eds => eds.map(e => ({
+        ...e,
+        selected: e.data?.isCaseLocal ? e.id === edge.id && !e.selected : false,
+      })));
+      setSelectedNodeIds(new Set());
+    } else {
+      // Gray edge: promote to case-local
+      try {
+        const label = (edge.label as string) || edge.data?.predicate || '';
+        await axios.post(`/api/cases/${caseId}/graph/edges`, {
+          source_node_id: edge.source,
+          target_node_id: edge.target,
+          label,
+        });
+        await loadGraph();
+      } catch (err) {
+        console.error('Failed to promote edge:', err);
+      }
+    }
+  }, [caseId, setEdges, selectedEdgeId, loadGraph]);
 
   // Link two selected entities with a case-local edge
   const linkSelectedNodes = useCallback(async () => {

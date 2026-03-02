@@ -88,7 +88,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
         labelBgStyle: EDGE_LABEL_BG_STYLE,
         labelBgPadding: EDGE_LABEL_BG_PADDING,
         labelBgBorderRadius: EDGE_LABEL_BG_BORDER_RADIUS,
-        interactionWidth: isCaseLocal ? 20 : 0,
+        interactionWidth: 20,
         style: {
           ...(e.style || {}),
           stroke: e.selected
@@ -98,8 +98,8 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
               : (e.data?.confidence === 'INFERRED' ? 'rgba(235,235,245,0.3)' : 'rgba(84,84,88,0.65)'),
           strokeWidth: e.selected ? 2.5 : (isCaseLocal ? 2 : 1.5),
           strokeDasharray: e.data?.confidence === 'INFERRED' ? '4 4' : undefined,
-          cursor: isCaseLocal ? 'pointer' : 'default',
-          pointerEvents: isCaseLocal ? 'auto' : 'none',
+          cursor: 'pointer',
+          pointerEvents: 'auto',
         },
         markerEnd: isCaseLocal ? undefined : EDGE_MARKER_END,
       };
