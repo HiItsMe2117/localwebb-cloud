@@ -83,7 +83,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
       const isCaseLocal = e.data?.isCaseLocal;
       return {
         ...e,
-        label: (isHeavy || !showEdgeLabels) ? undefined : e.label,
+        label: isCaseLocal ? (e.label || undefined) : ((isHeavy || !showEdgeLabels) ? undefined : e.label),
         labelStyle: EDGE_LABEL_STYLE,
         labelBgStyle: EDGE_LABEL_BG_STYLE,
         labelBgPadding: EDGE_LABEL_BG_PADDING,

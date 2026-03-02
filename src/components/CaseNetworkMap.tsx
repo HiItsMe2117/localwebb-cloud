@@ -79,6 +79,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [isLinking, setIsLinking] = useState(false);
   const [isDeletingEdge, setIsDeletingEdge] = useState(false);
+  const [linkLabel, setLinkLabel] = useState('');
+  const [editEdgeLabel, setEditEdgeLabel] = useState('');
+  const [isSavingEdgeLabel, setIsSavingEdgeLabel] = useState(false);
 
   // Create custom entity state
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -117,6 +120,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     setAnalysisShared([]);
     setChatMessages([]);
     setChatInput('');
+    setLinkLabel('');
+    setEditEdgeLabel('');
     setEdges(eds => eds.map(e => ({ ...e, selected: false })));
   }, [setEdges]);
 
@@ -183,14 +188,16 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   // Edge click: select/deselect case-local edges
   const onEdgeClick = useCallback((edge: Edge) => {
     if (edge.data?.isCaseLocal) {
-      setSelectedEdgeId(prev => prev === edge.id ? null : edge.id);
+      const isDeselecting = selectedEdgeId === edge.id;
+      setSelectedEdgeId(isDeselecting ? null : edge.id);
+      setEditEdgeLabel(isDeselecting ? '' : (edge.label as string || ''));
       setEdges(eds => eds.map(e => ({
         ...e,
         selected: e.data?.isCaseLocal ? e.id === edge.id && !e.selected : false,
       })));
       setSelectedNodeIds(new Set());
     }
-  }, [setEdges]);
+  }, [setEdges, selectedEdgeId]);
 
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -220,7 +227,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       await axios.post(`/api/cases/${caseId}/graph/edges`, {
         source_node_id: sourceId,
         target_node_id: targetId,
+        label: linkLabel,
       });
+      setLinkLabel('');
       await loadGraph();
       clearSelection();
     } catch (err) {
@@ -228,7 +237,25 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     } finally {
       setIsLinking(false);
     }
-  }, [caseId, selectedNodeIds, loadGraph, clearSelection]);
+  }, [caseId, selectedNodeIds, linkLabel, loadGraph, clearSelection]);
+
+  // Save edge label
+  const saveEdgeLabel = useCallback(async () => {
+    if (!selectedEdgeId) return;
+    setIsSavingEdgeLabel(true);
+    try {
+      await axios.patch(`/api/cases/${caseId}/graph/edges/${selectedEdgeId}`, {
+        label: editEdgeLabel,
+      });
+      await loadGraph();
+      setSelectedEdgeId(null);
+      setEditEdgeLabel('');
+    } catch (err) {
+      console.error('Failed to update edge label:', err);
+    } finally {
+      setIsSavingEdgeLabel(false);
+    }
+  }, [caseId, selectedEdgeId, editEdgeLabel, loadGraph]);
 
   // Delete a selected case-local edge
   const deleteSelectedEdge = useCallback(async () => {
@@ -862,14 +889,24 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
               {selectedNodeIds.size} selected
             </span>
             {selectedNodeIds.size === 2 && (
-              <button
-                onClick={linkSelectedNodes}
-                disabled={isLinking}
-                className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
-              >
-                {isLinking ? <Loader2 size={11} className="animate-spin" /> : <Link2 size={11} />}
-                Link
-              </button>
+              <>
+                <input
+                  type="text"
+                  value={linkLabel}
+                  onChange={e => setLinkLabel(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') linkSelectedNodes(); }}
+                  placeholder="Label (optional)"
+                  className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-lg px-2 py-1 text-[11px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors w-28"
+                />
+                <button
+                  onClick={linkSelectedNodes}
+                  disabled={isLinking}
+                  className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+                >
+                  {isLinking ? <Loader2 size={11} className="animate-spin" /> : <Link2 size={11} />}
+                  Link
+                </button>
+              </>
             )}
             {selectedNodeIds.size >= 2 && (
               <button
@@ -898,16 +935,31 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
         )}
         {selectedEdgeId && selectedNodeIds.size === 0 && (
           <div className="flex items-center gap-2">
-            <span className="text-[11px] text-[rgba(235,235,245,0.6)] font-medium">
+            <span className="text-[11px] text-[rgba(235,235,245,0.6)] font-medium shrink-0">
               Link selected
             </span>
+            <input
+              type="text"
+              value={editEdgeLabel}
+              onChange={e => setEditEdgeLabel(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') saveEdgeLabel(); }}
+              placeholder="Edge label..."
+              className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-lg px-2 py-1 text-[11px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors w-28"
+            />
+            <button
+              onClick={saveEdgeLabel}
+              disabled={isSavingEdgeLabel}
+              className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+            >
+              {isSavingEdgeLabel ? <Loader2 size={11} className="animate-spin" /> : 'Save'}
+            </button>
             <button
               onClick={deleteSelectedEdge}
               disabled={isDeletingEdge}
               className="flex items-center gap-1.5 bg-[#FF453A] hover:bg-[#FF3B30] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
             >
               {isDeletingEdge ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
-              Delete Link
+              Delete
             </button>
             <button
               onClick={clearSelection}

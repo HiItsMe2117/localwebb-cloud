@@ -429,6 +429,10 @@ class GraphChatRequest(BaseModel):
 class CreateCaseEdgeRequest(BaseModel):
     source_node_id: str
     target_node_id: str
+    label: str = ""
+
+class UpdateCaseEdgeRequest(BaseModel):
+    label: str = ""
 
 class CreateCustomNodeRequest(BaseModel):
     label: str
@@ -1420,7 +1424,7 @@ async def get_case_graph(case_id: str):
                 "id": ce["id"],
                 "source": ce["source_node_id"],
                 "target": ce["target_node_id"],
-                "label": "",
+                "label": ce.get("label", "") or "",
                 "animated": False,
                 "data": {
                     "isCaseLocal": True,
@@ -1541,6 +1545,7 @@ async def create_case_graph_edge(case_id: str, request: CreateCaseEdgeRequest):
             "case_id": case_id,
             "source_node_id": request.source_node_id,
             "target_node_id": request.target_node_id,
+            "label": request.label,
         }
         result = supabase.table("case_graph_edges").upsert(
             record, on_conflict="case_id,source_node_id,target_node_id"
@@ -1558,6 +1563,22 @@ async def delete_case_graph_edge(case_id: str, edge_id: str):
     try:
         supabase.table("case_graph_edges").delete().eq("id", edge_id).eq("case_id", case_id).execute()
         return {"deleted": edge_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/{case_id}/graph/edges/{edge_id}")
+async def update_case_graph_edge(case_id: str, edge_id: str, request: UpdateCaseEdgeRequest):
+    """Update a case-local edge's label."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        result = supabase.table("case_graph_edges").update(
+            {"label": request.label}
+        ).eq("id", edge_id).eq("case_id", case_id).execute()
+        if not result.data:
+            return JSONResponse(status_code=404, content={"error": "Edge not found."})
+        return {"id": edge_id, "label": request.label}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
