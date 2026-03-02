@@ -13,6 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
+try:
+    from api.llm import generate, generate_stream
+except ImportError:
+    from llm import generate, generate_stream
+
 # Direct Cloud SDKs
 from pinecone import Pinecone
 from google import genai
@@ -623,7 +628,8 @@ async def get_insights(depth: str = "standard", focus: Optional[str] = None, str
         )
 
         print("DEBUG: Sending extraction prompt to Gemini...")
-        res = client.models.generate_content(
+        res = generate(
+            client,
             model="gemini-2.5-pro",
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -896,7 +902,8 @@ async def query_index(request: FilteredQueryRequest):
 
             async def event_stream():
                 try:
-                    stream = client.models.generate_content_stream(
+                    stream = generate_stream(
+                        client,
                         model="gemini-2.5-pro",
                         contents=prompt
                     )
@@ -913,7 +920,8 @@ async def query_index(request: FilteredQueryRequest):
         print("DEBUG: Generating Gemini response...")
         prompt = QUERY_PROMPT_TEMPLATE.format(context=full_context, query=request.query)
 
-        response = client.models.generate_content(
+        response = generate(
+            client,
             model="gemini-2.5-pro",
             contents=prompt
         )
@@ -1205,8 +1213,9 @@ SYNTHESIS INSTRUCTIONS:
 
 Produce a professional, final investigative product."""
 
-        # 3. Generate with Gemini
-        res = client.models.generate_content(
+        # 3. Generate with Gemini (Groq fallback on rate limit)
+        res = generate(
+            client,
             model="gemini-2.5-pro",
             contents=prompt,
         )
@@ -1692,7 +1701,8 @@ Provide a concise analysis (3-5 bullet points) covering:
 
 Be specific, reference actual entity names, and flag anything that looks unusual or warrants further scrutiny. Keep each bullet to 1-2 sentences."""
 
-        res = client.models.generate_content(
+        res = generate(
+            client,
             model="gemini-2.0-flash",
             contents=prompt,
         )
@@ -1708,7 +1718,8 @@ Analysis:
 Example output: ["Knight Capital", "Cereplast management", "John Doe"]"""
 
         try:
-            extract_res = client.models.generate_content(
+            extract_res = generate(
+                client,
                 model="gemini-2.0-flash",
                 contents=extract_prompt,
             )
@@ -1781,7 +1792,8 @@ Based on these new findings, provide a follow-up report:
 Be specific, name names, and think like a journalist building a story. Keep it concise — 3-5 bullet points."""
 
             try:
-                follow_up_res = client.models.generate_content(
+                follow_up_res = generate(
+                    client,
                     model="gemini-2.0-flash",
                     contents=follow_up_prompt,
                 )
@@ -1879,7 +1891,8 @@ Answer the researcher's questions using this context. Be specific, cite entity n
         for msg in request.messages:
             contents.append(f"{'Researcher' if msg['role'] == 'user' else 'Journalist'}: {msg['content']}")
 
-        res = client.models.generate_content(
+        res = generate(
+            client,
             model="gemini-2.0-flash",
             contents="\n\n".join(contents),
         )
@@ -1994,7 +2007,8 @@ async def targeted_search(request: TargetedSearchRequest):
             "Return JSON with 'entities' and 'triples' keys."
         )
 
-        res = client.models.generate_content(
+        res = generate(
+            client,
             model="gemini-2.5-pro",
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -2141,7 +2155,8 @@ def extract_text_from_pdf(file_path, filename):
 def _extract_chunk_metadata(chunk_text):
     """Use Gemini Flash to extract structured metadata from a text chunk."""
     try:
-        res = client.models.generate_content(
+        res = generate(
+            client,
             model="gemini-2.0-flash",
             contents=(
                 "Extract metadata from this text. Return JSON with these keys:\n"
@@ -2407,7 +2422,8 @@ async def deduplicate_graph():
                 )
 
                 try:
-                    res = client.models.generate_content(
+                    res = generate(
+                        client,
                         model="gemini-2.0-flash",
                         contents=merge_prompt,
                         config=types.GenerateContentConfig(

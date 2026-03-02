@@ -6,6 +6,7 @@ pypdf
 python-multipart
 python-dotenv
 flashrank
+groq
 networkx
 requests
 beautifulsoup4

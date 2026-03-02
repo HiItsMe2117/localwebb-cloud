@@ -19,6 +19,11 @@ from typing import AsyncGenerator
 
 from google.genai import types
 
+try:
+    from api.llm import generate, generate_stream
+except ImportError:
+    from llm import generate, generate_stream
+
 
 def _sse(event_type: str, data: dict) -> str:
     """Format a server-sent event."""
@@ -180,9 +185,10 @@ async def _run_investigation_inner(
             "Return JSON only."
         )
 
-        # Use asyncio.to_thread for blocking GenAI call
+        # Use asyncio.to_thread for blocking GenAI call (Groq fallback on rate limit)
         analysis_res = await asyncio.to_thread(
-            genai_client.models.generate_content,
+            generate,
+            genai_client,
             model="gemini-2.0-flash",
             contents=analysis_prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json"),
@@ -563,7 +569,7 @@ async def _run_investigation_inner(
                 )
                 if synthesis_config:
                     kwargs["config"] = synthesis_config
-                stream = genai_client.models.generate_content_stream(**kwargs)
+                stream = generate_stream(genai_client, **kwargs)
                 for chunk in stream:
                     if chunk.text:
                         chunk_queue.put(("text", chunk.text))
@@ -655,7 +661,8 @@ async def _run_investigation_inner(
         if synthesis_summary:
             followup_prompt += f"\n\nKey findings so far:\n{synthesis_summary}"
         followup_res = await asyncio.to_thread(
-            genai_client.models.generate_content,
+            generate,
+            genai_client,
             model="gemini-2.0-flash",
             contents=followup_prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json"),
