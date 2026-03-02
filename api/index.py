@@ -1396,26 +1396,8 @@ async def get_case_graph(case_id: str):
                 "position": {"x": cn.get("position_x") or 0, "y": cn.get("position_y") or 0},
             })
 
-        # Get all global edges where BOTH endpoints are in the case's entity set
+        # Only show user-created case-local edges (no knowledge-graph edges)
         edges = []
-        if node_ids:
-            edges_res = supabase.table("edges").select("*").in_("source", node_ids).in_("target", node_ids).execute()
-            for e in edges_res.data or []:
-                edges.append({
-                    "id": e["id"],
-                    "source": e["source"],
-                    "target": e["target"],
-                    "label": e.get("label", e.get("predicate", "")),
-                    "animated": e.get("confidence") == "INFERRED",
-                    "data": {
-                        "predicate": e.get("predicate", ""),
-                        "evidence_text": e.get("evidence_text", ""),
-                        "source_filename": e.get("source_filename", ""),
-                        "source_page": e.get("source_page", 0),
-                        "confidence": e.get("confidence", "STATED"),
-                        "date_mentioned": e.get("date_mentioned"),
-                    },
-                })
 
         # Fetch case-local edges
         case_edges_res = supabase.table("case_graph_edges").select("*").eq("case_id", case_id).execute()
