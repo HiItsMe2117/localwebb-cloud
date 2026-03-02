@@ -23,10 +23,10 @@ const TYPE_COLORS: Record<string, string> = {
   FINANCIAL_ENTITY: '#f87171',
 };
 
-const EDGE_LABEL_STYLE = { fill: 'rgba(235,235,245,0.6)', fontSize: 11, fontWeight: 600 };
-const EDGE_LABEL_BG_STYLE = { fill: '#1C1C1E', fillOpacity: 0.9 };
-const EDGE_LABEL_BG_PADDING: [number, number] = [8, 4] as [number, number];
-const EDGE_LABEL_BG_BORDER_RADIUS = 6;
+const EDGE_LABEL_STYLE = { fill: 'rgba(235,235,245,0.5)', fontSize: 7, fontWeight: 500 };
+const EDGE_LABEL_BG_STYLE = { fill: '#1C1C1E', fillOpacity: 0.85 };
+const EDGE_LABEL_BG_PADDING: [number, number] = [4, 2] as [number, number];
+const EDGE_LABEL_BG_BORDER_RADIUS = 3;
 const EDGE_MARKER_END = { type: MarkerType.Arrow, color: 'rgba(84,84,88,0.65)' };
 const DEFAULT_EDGE_OPTIONS = { type: 'default', animated: false };
 
