@@ -98,7 +98,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
           strokeWidth: e.selected ? 2.5 : (isCaseLocal ? 2 : 1.5),
           strokeDasharray: e.data?.confidence === 'INFERRED' ? '4 4' : undefined,
           cursor: isCaseLocal ? 'pointer' : 'default',
-          pointerEvents: (isCaseLocal ? 'visibleStroke' : 'none') as 'visibleStroke' | 'none',
+          pointerEvents: isCaseLocal ? 'auto' : 'none',
           ...(e.style || {}),
         },
         markerEnd: isCaseLocal ? undefined : EDGE_MARKER_END,
