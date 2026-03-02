@@ -38,12 +38,13 @@ interface NexusProps {
   onNodeDragStop: any;
   onNodeClick?: (node: Node, event?: React.MouseEvent) => void;
   onEdgeClick?: (edge: Edge) => void;
+  onEdgeUpdate?: (oldEdge: Edge, newConnection: Connection) => void;
   onPaneClick?: () => void;
   height?: string;
   showEdgeLabels?: boolean;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, onPaneClick, height, showEdgeLabels = true }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, height, showEdgeLabels = true }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
@@ -72,6 +73,13 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
       onEdgeClick?.(edge);
     },
     [onEdgeClick]
+  );
+
+  const handleEdgeUpdate = useCallback(
+    (oldEdge: Edge, newConnection: Connection) => {
+      onEdgeUpdate?.(oldEdge, newConnection);
+    },
+    [onEdgeUpdate]
   );
 
   const styledEdges = useMemo<Edge[]>(() => {
@@ -122,7 +130,9 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
         onConnect={onConnect}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
+        onEdgeUpdate={handleEdgeUpdate}
         onPaneClick={onPaneClick}
+        reconnectRadius={30}
         nodeTypes={nodeTypes}
         fitView
         minZoom={0.1}

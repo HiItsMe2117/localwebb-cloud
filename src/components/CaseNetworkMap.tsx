@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
-import type { Node, Edge } from 'reactflow';
+import type { Node, Edge, Connection } from 'reactflow';
 import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2 } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
@@ -231,6 +231,26 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       }
     }
   }, [caseId, setEdges, selectedEdgeId, loadGraph]);
+
+  // Reconnect: drag a case-local edge endpoint to a different node
+  const handleEdgeUpdate = useCallback(async (oldEdge: Edge, newConnection: Connection) => {
+    if (!oldEdge.data?.isCaseLocal) return;
+    if (!newConnection.source || !newConnection.target) return;
+    if (newConnection.source === newConnection.target) return;
+    try {
+      const label = (oldEdge.label as string) || '';
+      await axios.delete(`/api/cases/${caseId}/graph/edges/${oldEdge.id}`);
+      await axios.post(`/api/cases/${caseId}/graph/edges`, {
+        source_node_id: newConnection.source,
+        target_node_id: newConnection.target,
+        label,
+      });
+      await loadGraph();
+    } catch (err) {
+      console.error('Failed to reconnect edge:', err);
+      await loadGraph();
+    }
+  }, [caseId, loadGraph]);
 
   // Link two selected entities with a case-local edge
   const linkSelectedNodes = useCallback(async () => {
@@ -677,6 +697,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
           onNodeDragStop={onNodeDragStop}
           onNodeClick={onNodeClick}
           onEdgeClick={onEdgeClick}
+          onEdgeUpdate={handleEdgeUpdate}
           onPaneClick={clearSelection}
           showEdgeLabels={false}
         />
