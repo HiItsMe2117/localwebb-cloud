@@ -90,6 +90,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
         labelBgBorderRadius: EDGE_LABEL_BG_BORDER_RADIUS,
         interactionWidth: isCaseLocal ? 20 : 0,
         style: {
+          ...(e.style || {}),
           stroke: e.selected
             ? (isCaseLocal ? '#FF453A' : '#007AFF')
             : isCaseLocal
@@ -99,7 +100,6 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
           strokeDasharray: e.data?.confidence === 'INFERRED' ? '4 4' : undefined,
           cursor: isCaseLocal ? 'pointer' : 'default',
           pointerEvents: isCaseLocal ? 'auto' : 'none',
-          ...(e.style || {}),
         },
         markerEnd: isCaseLocal ? undefined : EDGE_MARKER_END,
       };
