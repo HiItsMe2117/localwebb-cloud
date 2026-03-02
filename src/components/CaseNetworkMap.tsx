@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2 } from 'lucide-react';
+import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -89,6 +89,12 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   const [newEntityType, setNewEntityType] = useState('PERSON');
   const [isCreatingEntity, setIsCreatingEntity] = useState(false);
 
+  // Description panel state
+  const [descriptionNode, setDescriptionNode] = useState<Node | null>(null);
+  const [descriptionText, setDescriptionText] = useState('');
+  const [isSavingDescription, setIsSavingDescription] = useState(false);
+  const [descriptionSaved, setDescriptionSaved] = useState(false);
+
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
 
@@ -122,6 +128,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     setChatInput('');
     setLinkLabel('');
     setEditEdgeLabel('');
+    setDescriptionNode(null);
     setEdges(eds => eds.map(e => ({ ...e, selected: false })));
   }, [setEdges]);
 
@@ -441,6 +448,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       setExpandNode(null);
       setNeighbors([]);
       setSelectedNeighbors(new Set());
+      setDescriptionNode(null);
     }
   }, []);
 
@@ -491,6 +499,66 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       console.error('Failed to remove entity:', err);
     }
   }, [caseId, loadGraph]);
+
+  // Chat about a single entity
+  const chatAboutEntity = useCallback(async (node: Node) => {
+    setContextNode(null);
+    setAnalysisResult(null);
+    setAnalysisShared([]);
+    setChatMessages([]);
+    setChatInput('');
+    analysisNodeIds.current = [node.id];
+    setIsAnalyzing(true);
+    try {
+      const initialMessage = { role: 'user' as const, content: `Tell me about ${node.data?.label} and their connections in the knowledge graph.` };
+      const res = await axios.post(`/api/cases/${caseId}/graph/chat`, {
+        node_ids: [node.id],
+        messages: [initialMessage],
+      });
+      setChatMessages([
+        initialMessage,
+        { role: 'assistant', content: res.data.response },
+      ]);
+      setAnalysisResult(res.data.response);
+    } catch (err) {
+      console.error('Chat failed:', err);
+      setChatMessages([{ role: 'assistant', content: 'Failed to start chat. Please try again.' }]);
+      setAnalysisResult('Failed to start chat.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [caseId]);
+
+  // Open description panel for a node
+  const openDescription = useCallback((node: Node) => {
+    setContextNode(null);
+    setDescriptionNode(node);
+    setDescriptionText(node.data?.caseDescription || node.data?.description || '');
+    setDescriptionSaved(false);
+  }, []);
+
+  // Save entity description
+  const saveDescription = useCallback(async () => {
+    if (!descriptionNode) return;
+    setIsSavingDescription(true);
+    try {
+      await axios.patch(`/api/cases/${caseId}/graph/entities/${descriptionNode.id}/description`, {
+        description: descriptionText,
+      });
+      // Update the node data locally so it persists without a full reload
+      setNodes(prev => prev.map(n =>
+        n.id === descriptionNode.id
+          ? { ...n, data: { ...n.data, caseDescription: descriptionText } }
+          : n
+      ));
+      setDescriptionSaved(true);
+      setTimeout(() => setDescriptionSaved(false), 2000);
+    } catch (err) {
+      console.error('Failed to save description:', err);
+    } finally {
+      setIsSavingDescription(false);
+    }
+  }, [caseId, descriptionNode, descriptionText, setNodes]);
 
   // Save position on drag stop
   const onNodeDragStop = useCallback(async (_: any, node: Node) => {
@@ -729,6 +797,20 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
               </button>
             )}
             <button
+              onClick={() => chatAboutEntity(contextNode)}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
+            >
+              <MessageCircle size={14} className="text-[#AF52DE]" />
+              <span className="text-[13px] text-white">Chat about entity</span>
+            </button>
+            <button
+              onClick={() => openDescription(contextNode)}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
+            >
+              <FileText size={14} className="text-[#30D158]" />
+              <span className="text-[13px] text-white">Description</span>
+            </button>
+            <button
               onClick={() => handleRemove(contextNode)}
               className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#FF453A]/10 transition-colors"
             >
@@ -820,6 +902,49 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* Description panel */}
+        {descriptionNode && (
+          <div className="absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl z-20 w-72 flex flex-col">
+            <div className="px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between shrink-0">
+              <div className="overflow-hidden">
+                <p className="text-[13px] font-semibold text-white truncate">{descriptionNode.data?.label}</p>
+                <p className="text-[10px] uppercase tracking-wider font-bold" style={{ color: TYPE_COLORS[(descriptionNode.data?.entityType || '').toUpperCase()] || '#9ca3af' }}>
+                  Description
+                </p>
+              </div>
+              <button onClick={() => setDescriptionNode(null)} className="p-1 hover:bg-[#2C2C2E] rounded-lg">
+                <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+              </button>
+            </div>
+            <div className="p-3">
+              <textarea
+                value={descriptionText}
+                onChange={e => { setDescriptionText(e.target.value); setDescriptionSaved(false); }}
+                placeholder="Add a description or notes about this entity..."
+                rows={5}
+                className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#30D158] rounded-xl px-3 py-2.5 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors resize-none leading-relaxed"
+              />
+              <div className="flex items-center justify-between mt-2">
+                <p className="text-[10px] text-[rgba(235,235,245,0.2)]">
+                  {descriptionNode.data?.description && !descriptionNode.data?.caseDescription ? 'Source: extracted from files' : ''}
+                </p>
+                <button
+                  onClick={saveDescription}
+                  disabled={isSavingDescription}
+                  className="flex items-center gap-1.5 bg-[#30D158] hover:bg-[#28B84C] disabled:opacity-50 px-3 py-1.5 rounded-lg text-[12px] font-semibold text-white transition-colors"
+                >
+                  {isSavingDescription ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : descriptionSaved ? (
+                    <Check size={12} />
+                  ) : null}
+                  {descriptionSaved ? 'Saved' : 'Save'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -443,6 +443,9 @@ class CreateCustomNodeRequest(BaseModel):
     label: str
     type: str = "PERSON"
 
+class UpdateEntityDescriptionRequest(BaseModel):
+    description: str = ""
+
 # --- Endpoints ---
 
 @app.get("/api")
@@ -1367,6 +1370,10 @@ async def get_case_graph(case_id: str):
         node_ids = [r["node_id"] for r in pinned_rows]
         position_map = {r["node_id"]: {"x": r.get("position_x"), "y": r.get("position_y")} for r in pinned_rows}
 
+        # Fetch case-level description overrides
+        desc_res = supabase.table("case_entity_descriptions").select("node_id, description").eq("case_id", case_id).execute()
+        case_descriptions = {r["node_id"]: r["description"] for r in (desc_res.data or [])}
+
         # Fetch global node data
         nodes = []
         if node_ids:
@@ -1381,6 +1388,7 @@ async def get_case_graph(case_id: str):
                         "label": n.get("label", n["id"]),
                         "entityType": n.get("type", "UNKNOWN"),
                         "description": n.get("description", ""),
+                        "caseDescription": case_descriptions.get(n["id"], ""),
                         "aliases": n.get("aliases", []),
                         "degree": meta.get("degree", 0),
                         "communityId": meta.get("communityId"),
@@ -1398,6 +1406,7 @@ async def get_case_graph(case_id: str):
                     "label": cn.get("label", "Untitled"),
                     "entityType": cn.get("type", "PERSON"),
                     "description": "",
+                    "caseDescription": case_descriptions.get(cn["id"], ""),
                     "aliases": [],
                     "degree": 0,
                     "isCustom": True,
@@ -1605,6 +1614,23 @@ async def delete_case_custom_node(case_id: str, node_id: str):
         # Delete the custom node itself
         supabase.table("case_graph_custom_nodes").delete().eq("id", node_id).eq("case_id", case_id).execute()
         return {"deleted": node_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/{case_id}/graph/entities/{node_id}/description")
+async def update_entity_description(case_id: str, node_id: str, request: UpdateEntityDescriptionRequest):
+    """Upsert a case-level description for any entity (global or custom)."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        supabase.table("case_entity_descriptions").upsert({
+            "case_id": case_id,
+            "node_id": node_id,
+            "description": request.description,
+            "updated_at": "now()",
+        }, on_conflict="case_id,node_id").execute()
+        return {"saved": True}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -1826,14 +1852,41 @@ async def chat_case_graph(case_id: str, request: GraphChatRequest):
     try:
         node_ids = request.node_ids
 
-        # Fetch node details
+        # Fetch node details (global nodes)
         nodes_res = supabase.table("nodes").select("id, label, type, description, aliases").in_("id", node_ids).execute()
         nodes_by_id = {n["id"]: n for n in (nodes_res.data or [])}
 
-        # Fetch direct edges
+        # Also fetch custom case-local nodes that may not be in the global table
+        missing_ids = [nid for nid in node_ids if nid not in nodes_by_id]
+        if missing_ids:
+            custom_res = supabase.table("case_graph_custom_nodes").select("id, label, type").in_("id", missing_ids).execute()
+            for cn in (custom_res.data or []):
+                nodes_by_id[cn["id"]] = {
+                    "id": cn["id"],
+                    "label": cn.get("label", "Untitled"),
+                    "type": cn.get("type", "PERSON"),
+                    "description": "",
+                    "aliases": [],
+                }
+
+        # Fetch case-level description overrides
+        case_desc_res = supabase.table("case_entity_descriptions").select("node_id, description").eq("case_id", case_id).in_("node_id", node_ids).execute()
+        case_descriptions = {r["node_id"]: r["description"] for r in (case_desc_res.data or [])}
+
+        # Fetch direct edges between selected nodes
         direct_edges = supabase.table("edges").select("source, target, label, predicate, evidence_text, confidence").in_("source", node_ids).in_("target", node_ids).execute()
 
-        # Fetch shared neighbors
+        # Also include case-local edges
+        case_edges = supabase.table("case_graph_edges").select("source_node_id, target_node_id, label").eq("case_id", case_id).execute()
+        case_edge_lines = []
+        for ce in (case_edges.data or []):
+            src_id, tgt_id = ce["source_node_id"], ce["target_node_id"]
+            if src_id in set(node_ids) and tgt_id in set(node_ids):
+                src = nodes_by_id.get(src_id, {}).get("label", src_id)
+                tgt = nodes_by_id.get(tgt_id, {}).get("label", tgt_id)
+                case_edge_lines.append(f"- {src} → {ce.get('label', '?')} → {tgt} [case note]")
+
+        # Fetch shared neighbors (for multi-entity chats)
         all_neighbor_edges = []
         for nid in node_ids:
             out = supabase.table("edges").select("source, target, label").eq("source", nid).execute()
@@ -1850,20 +1903,29 @@ async def chat_case_graph(case_id: str, request: GraphChatRequest):
             neighbor_connections[other]["connected_to"].add(selected_end)
             neighbor_connections[other]["labels"].append(e.get("label", ""))
 
-        shared_neighbor_ids = [nid for nid, info in neighbor_connections.items() if len(info["connected_to"]) >= 2]
+        # For single-entity chat, show all direct connections (not just shared)
+        single_entity = len(node_ids) == 1
+        if single_entity:
+            neighbor_threshold = 1
+        else:
+            neighbor_threshold = 2
+        shared_neighbor_ids = [nid for nid, info in neighbor_connections.items() if len(info["connected_to"]) >= neighbor_threshold]
         shared_detail = []
         if shared_neighbor_ids:
             sn_res = supabase.table("nodes").select("id, label, type").in_("id", shared_neighbor_ids[:30]).execute()
             for sn in (sn_res.data or []):
                 info = neighbor_connections[sn["id"]]
                 connected_labels = [nodes_by_id[c]["label"] for c in info["connected_to"] if c in nodes_by_id]
-                shared_detail.append(f"{sn.get('label', sn['id'])} ({sn.get('type', '?')}) — connects: {', '.join(connected_labels)}")
+                rel_labels = [l for l in info["labels"] if l][:3]
+                rel_hint = f" via {', '.join(rel_labels)}" if rel_labels else ""
+                shared_detail.append(f"{sn.get('label', sn['id'])} ({sn.get('type', '?')}){rel_hint}")
 
         # Build context block
         entity_lines = []
         for nid in node_ids:
             n = nodes_by_id.get(nid, {})
-            desc = (n.get("description") or "")[:300]
+            # Prefer case-level description, fall back to global
+            desc = case_descriptions.get(nid, "") or (n.get("description") or "")[:300]
             entity_lines.append(f"- {n.get('label', nid)} ({n.get('type', 'UNKNOWN')}): {desc}")
 
         edge_lines = []
@@ -1872,17 +1934,21 @@ async def chat_case_graph(case_id: str, request: GraphChatRequest):
             tgt = nodes_by_id.get(e["target"], {}).get("label", e["target"])
             evidence = (e.get("evidence_text") or "")[:150]
             edge_lines.append(f"- {src} → {e.get('label', e.get('predicate', '?'))} → {tgt}" + (f" [{evidence}]" if evidence else ""))
+        edge_lines.extend(case_edge_lines)
 
-        system_context = f"""You are a seasoned investigative journalist with decades of experience uncovering financial crimes, corruption, and hidden power networks. You're having a conversation with a researcher about a specific group of entities from a knowledge graph built from court documents, financial records, flight logs, and depositions.
+        connections_label = "DIRECT CONNECTIONS" if single_entity else "DIRECT CONNECTIONS BETWEEN THEM"
+        neighbors_label = "CONNECTED ENTITIES" if single_entity else "SHARED CONNECTIONS (linked to 2+ of the selected)"
+
+        system_context = f"""You are a seasoned investigative journalist with decades of experience uncovering financial crimes, corruption, and hidden power networks. You're having a conversation with a researcher about {"an entity" if single_entity else "a specific group of entities"} from a knowledge graph built from court documents, financial records, flight logs, and depositions.
 
 ENTITIES UNDER DISCUSSION:
 {chr(10).join(entity_lines)}
 
-DIRECT CONNECTIONS BETWEEN THEM:
+{connections_label}:
 {chr(10).join(edge_lines) if edge_lines else "None found."}
 
-SHARED CONNECTIONS (linked to 2+ of the selected):
-{chr(10).join(shared_detail[:15]) if shared_detail else "None found."}
+{neighbors_label}:
+{chr(10).join(shared_detail[:20]) if shared_detail else "None found."}
 
 Answer the researcher's questions using this context. Be specific, cite entity names, and think like an investigative journalist — look for patterns, follow the money, identify intermediaries, and suggest leads. Keep responses concise and actionable."""
 
