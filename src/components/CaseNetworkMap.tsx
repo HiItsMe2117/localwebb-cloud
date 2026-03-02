@@ -878,8 +878,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       )}
 
       {/* Footer stats + selection bar */}
-      <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex items-center justify-between">
-        <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
+      <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex items-center justify-between overflow-x-auto gap-2">
+        <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono shrink-0">
           {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
           {selectedNodeIds.size === 0 && !selectedEdgeId && nodes.length > 0 && ' · Shift+click to select'}
         </span>
@@ -934,36 +934,33 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
           </div>
         )}
         {selectedEdgeId && selectedNodeIds.size === 0 && (
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-[rgba(235,235,245,0.6)] font-medium shrink-0">
-              Link selected
-            </span>
+          <div className="flex items-center gap-1.5 shrink-0">
             <input
               type="text"
               value={editEdgeLabel}
               onChange={e => setEditEdgeLabel(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') saveEdgeLabel(); }}
               placeholder="Edge label..."
-              className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-lg px-2 py-1 text-[11px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors w-28"
+              className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-lg px-2 py-1 text-[11px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors w-24"
             />
             <button
               onClick={saveEdgeLabel}
               disabled={isSavingEdgeLabel}
-              className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+              className="shrink-0 flex items-center gap-1 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors"
             >
               {isSavingEdgeLabel ? <Loader2 size={11} className="animate-spin" /> : 'Save'}
             </button>
             <button
               onClick={deleteSelectedEdge}
               disabled={isDeletingEdge}
-              className="flex items-center gap-1.5 bg-[#FF453A] hover:bg-[#FF3B30] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+              className="shrink-0 flex items-center gap-1 bg-[#FF453A] hover:bg-[#FF3B30] disabled:opacity-50 px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors"
             >
               {isDeletingEdge ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
               Delete
             </button>
             <button
               onClick={clearSelection}
-              className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
+              className="shrink-0 p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
             >
               <X size={12} className="text-[rgba(235,235,245,0.4)]" />
             </button>
