@@ -3,6 +3,8 @@ import re
 import json
 import shutil
 import tempfile
+import time
+import platform
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
@@ -29,6 +31,7 @@ from supabase import create_client, Client
 load_dotenv()
 
 app = FastAPI(title="LocalWebb Cloud API")
+_server_start_time = time.time()
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -2368,6 +2371,104 @@ async def get_datasets():
     except Exception as e:
         print(f"Error reading pipeline status: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/infrastructure-health")
+async def infrastructure_health():
+    """Probe GCS, Pinecone, Supabase, and API server health in parallel."""
+    import asyncio
+
+    async def check_gcs():
+        t0 = time.time()
+        try:
+            if not bucket:
+                return {"service": "gcs", "status": "down", "latency_ms": 0, "error": "Bucket not initialized", "metrics": {}}
+
+            def _check():
+                blob = bucket.blob("pipeline_status.json")
+                if not blob.exists():
+                    return {"blob_count": 0, "size_mb": 0}
+                data = json.loads(blob.download_as_text())
+                totals = data.get("totals", {})
+                return {"blob_count": totals.get("scraped", 0), "size_mb": totals.get("size_mb", 0)}
+
+            metrics = await asyncio.wait_for(asyncio.to_thread(_check), timeout=5.0)
+            return {"service": "gcs", "status": "healthy", "latency_ms": round((time.time() - t0) * 1000), "metrics": metrics}
+        except asyncio.TimeoutError:
+            return {"service": "gcs", "status": "down", "latency_ms": 5000, "error": "Timeout", "metrics": {}}
+        except Exception as e:
+            return {"service": "gcs", "status": "down", "latency_ms": round((time.time() - t0) * 1000), "error": str(e), "metrics": {}}
+
+    async def check_pinecone():
+        t0 = time.time()
+        try:
+            if not index:
+                return {"service": "pinecone", "status": "down", "latency_ms": 0, "error": "Index not initialized", "metrics": {}}
+
+            def _check():
+                stats = index.describe_index_stats()
+                return {
+                    "total_vectors": stats.total_vector_count,
+                    "index_fullness": round(stats.index_fullness * 100, 2),
+                    "namespaces": {ns: {"vector_count": ns_stats.vector_count} for ns, ns_stats in (stats.namespaces or {}).items()},
+                    "dimension": stats.dimension,
+                }
+
+            metrics = await asyncio.wait_for(asyncio.to_thread(_check), timeout=5.0)
+            return {"service": "pinecone", "status": "healthy", "latency_ms": round((time.time() - t0) * 1000), "metrics": metrics}
+        except asyncio.TimeoutError:
+            return {"service": "pinecone", "status": "down", "latency_ms": 5000, "error": "Timeout", "metrics": {}}
+        except Exception as e:
+            return {"service": "pinecone", "status": "down", "latency_ms": round((time.time() - t0) * 1000), "error": str(e), "metrics": {}}
+
+    async def check_supabase():
+        t0 = time.time()
+        try:
+            if not supabase:
+                return {"service": "supabase", "status": "down", "latency_ms": 0, "error": "Client not initialized", "metrics": {}}
+
+            def _check():
+                chunks_res = supabase.table("document_chunks").select("*", count="exact").limit(0).execute()
+                nodes_res = supabase.table("nodes").select("*", count="exact").limit(0).execute()
+                edges_res = supabase.table("edges").select("*", count="exact").limit(0).execute()
+                return {"document_chunks": chunks_res.count or 0, "nodes": nodes_res.count or 0, "edges": edges_res.count or 0}
+
+            metrics = await asyncio.wait_for(asyncio.to_thread(_check), timeout=5.0)
+            return {"service": "supabase", "status": "healthy", "latency_ms": round((time.time() - t0) * 1000), "metrics": metrics}
+        except asyncio.TimeoutError:
+            return {"service": "supabase", "status": "down", "latency_ms": 5000, "error": "Timeout", "metrics": {}}
+        except Exception as e:
+            return {"service": "supabase", "status": "down", "latency_ms": round((time.time() - t0) * 1000), "error": str(e), "metrics": {}}
+
+    # API server info (instant, no thread needed)
+    uptime_seconds = time.time() - _server_start_time
+    if uptime_seconds < 3600:
+        uptime_str = f"{uptime_seconds / 60:.0f}m"
+    elif uptime_seconds < 86400:
+        uptime_str = f"{uptime_seconds / 3600:.1f}h"
+    else:
+        uptime_str = f"{uptime_seconds / 86400:.1f}d"
+
+    api_result = {
+        "service": "api",
+        "status": "healthy",
+        "latency_ms": 0,
+        "metrics": {
+            "uptime": uptime_str,
+            "uptime_seconds": round(uptime_seconds),
+            "python_version": platform.python_version(),
+            "server_time": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+
+    gcs_result, pinecone_result, supabase_result = await asyncio.gather(
+        check_gcs(), check_pinecone(), check_supabase()
+    )
+
+    return {
+        "services": [gcs_result, pinecone_result, supabase_result, api_result],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.post("/api/graph/communities")

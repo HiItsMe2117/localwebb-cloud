@@ -5,6 +5,11 @@ import {
   RefreshCw,
   Loader2,
   Download,
+  Activity,
+  Cloud,
+  Database,
+  Server,
+  ChevronDown,
 } from 'lucide-react';
 
 const DATASET_INFO: Record<string, { name: string; description: string }> = {
@@ -250,6 +255,178 @@ function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress;
   );
 }
 
+interface ServiceHealth {
+  service: string;
+  status: 'healthy' | 'down';
+  latency_ms: number;
+  error?: string;
+  metrics: Record<string, any>;
+}
+
+interface InfraHealth {
+  services: ServiceHealth[];
+  checked_at: string;
+}
+
+const SERVICE_META: Record<string, { label: string; icon: typeof Cloud; color: string }> = {
+  gcs: { label: 'GCS', icon: Cloud, color: '#0A84FF' },
+  pinecone: { label: 'Pinecone', icon: Database, color: '#AF52DE' },
+  supabase: { label: 'Supabase', icon: Database, color: '#30D158' },
+  api: { label: 'API', icon: Server, color: '#FF9F0A' },
+};
+
+function formatMetric(service: string, metrics: Record<string, any>): string {
+  switch (service) {
+    case 'gcs': {
+      const count = metrics.blob_count || 0;
+      const sizeMb = metrics.size_mb || 0;
+      const sizeStr = sizeMb >= 1024 ? `${(sizeMb / 1024).toFixed(1)} GB` : `${sizeMb} MB`;
+      return `${count >= 1000 ? `${(count / 1000).toFixed(1)}K` : count} blobs · ${sizeStr}`;
+    }
+    case 'pinecone': {
+      const v = metrics.total_vectors || 0;
+      const vStr = v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1000 ? `${(v / 1000).toFixed(1)}K` : String(v);
+      return `${vStr} vectors · ${metrics.index_fullness ?? 0}% full`;
+    }
+    case 'supabase': {
+      const chunks = metrics.document_chunks || 0;
+      const cStr = chunks >= 1000 ? `${(chunks / 1000).toFixed(1)}K` : String(chunks);
+      return `${cStr} chunks · ${metrics.nodes || 0} nodes · ${metrics.edges || 0} edges`;
+    }
+    case 'api':
+      return `Up ${metrics.uptime || '?'} · Python ${metrics.python_version || '?'}`;
+    default:
+      return '';
+  }
+}
+
+function InfrastructureCard() {
+  const [health, setHealth] = useState<InfraHealth | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchHealth = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/infrastructure-health');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: InfraHealth = await res.json();
+      setHealth(data);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchHealth(); }, []);
+
+  const statusColor = (s: string) =>
+    s === 'healthy' ? '#30D158' : s === 'down' ? '#FF453A' : 'rgba(235,235,245,0.3)';
+
+  return (
+    <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 mb-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Activity size={14} className="text-[rgba(235,235,245,0.6)]" />
+          <h3 className="text-[15px] font-semibold text-white">Infrastructure</h3>
+        </div>
+        <button
+          onClick={fetchHealth}
+          disabled={loading}
+          className="text-[11px] text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)] transition-colors"
+        >
+          {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+        </button>
+      </div>
+
+      {error && !health && (
+        <p className="text-[12px] text-[#FF453A]">Failed to check: {error}</p>
+      )}
+
+      {loading && !health && (
+        <div className="flex items-center gap-2 py-2">
+          <Loader2 size={14} className="text-[rgba(235,235,245,0.4)] animate-spin" />
+          <span className="text-[13px] text-[rgba(235,235,245,0.4)]">Checking services...</span>
+        </div>
+      )}
+
+      {health && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            {health.services.map((svc) => {
+              const meta = SERVICE_META[svc.service] || { label: svc.service, icon: Server, color: '#8E8E93' };
+              const Icon = meta.icon;
+              return (
+                <div key={svc.service} className="flex items-start gap-2.5">
+                  <div className="mt-0.5">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColor(svc.status) }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <Icon size={11} style={{ color: meta.color }} />
+                      <span className="text-[13px] font-medium text-white">{meta.label}</span>
+                      <span className="text-[11px] font-mono text-[rgba(235,235,245,0.3)] ml-auto">
+                        {svc.latency_ms > 0 ? `${svc.latency_ms}ms` : ''}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-[rgba(235,235,245,0.4)] truncate mt-0.5">
+                      {svc.status === 'down' ? (svc.error || 'Unreachable') : formatMetric(svc.service, svc.metrics)}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-1 mt-3 text-[11px] text-[rgba(235,235,245,0.3)] hover:text-[rgba(235,235,245,0.5)] transition-colors"
+          >
+            <ChevronDown size={10} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
+            {expanded ? 'Hide details' : 'Show details'}
+          </button>
+
+          {expanded && (
+            <div className="mt-3 space-y-3 border-t border-[rgba(84,84,88,0.35)] pt-3">
+              {health.services.map((svc) => (
+                <div key={`${svc.service}-detail`}>
+                  <p className="text-[11px] font-medium text-[rgba(235,235,245,0.6)] mb-1">
+                    {(SERVICE_META[svc.service]?.label || svc.service).toUpperCase()}
+                  </p>
+                  <div className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono space-y-0.5">
+                    {Object.entries(svc.metrics).map(([key, val]) => (
+                      <div key={key} className="flex justify-between">
+                        <span>{key}</span>
+                        <span className="text-[rgba(235,235,245,0.5)]">
+                          {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                        </span>
+                      </div>
+                    ))}
+                    {svc.error && (
+                      <div className="flex justify-between text-[#FF453A]">
+                        <span>error</span>
+                        <span>{svc.error}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {health.checked_at && (
+                <p className="text-[10px] text-[rgba(235,235,245,0.2)] text-right">
+                  Checked {new Date(health.checked_at).toLocaleTimeString()}
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function DatasetCard({ num, stats }: { num: string; stats: DatasetStats }) {
   const info = DATASET_INFO[num] || { name: `Dataset ${num}`, description: '' };
   const scrapeMax = Math.max(stats.discovered, stats.scraped, 1);
@@ -372,6 +549,8 @@ export default function DataPanel() {
           {scrapeProgress && (
             <ScrapeProgressCard progress={scrapeProgress} onRefresh={fetchScrapeProgress} />
           )}
+
+          <InfrastructureCard />
 
           {status?.totals && (
             <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 mb-4">
