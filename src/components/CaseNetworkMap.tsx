@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check } from 'lucide-react';
+import { Search, Plus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -60,6 +60,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   const [isAddingNeighbors, setIsAddingNeighbors] = useState(false);
 
   // Node selection + context menu
+  const [selectMode, setSelectMode] = useState(false);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
   const [contextNode, setContextNode] = useState<Node | null>(null);
@@ -122,6 +123,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     setSelectedEdgeId(null);
     setContextNode(null);
     setCopied(false);
+    setSelectMode(false);
     setAnalysisResult(null);
     setAnalysisShared([]);
     setChatMessages([]);
@@ -428,10 +430,10 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     }
   }, [caseId, loadGraph]);
 
-  // Node click: plain click → context menu (expand/remove). Shift+click → toggle multi-select.
+  // Node click: plain click → context menu (expand/remove). Shift+click or select mode → toggle multi-select.
   const onNodeClick = useCallback((node: Node, event?: React.MouseEvent) => {
-    if (event?.shiftKey) {
-      // Shift+click: toggle selection for copy
+    if (event?.shiftKey || selectMode) {
+      // Shift+click or select mode: toggle selection
       setSelectedNodeIds(prev => {
         const next = new Set(prev);
         if (next.has(node.id)) next.delete(node.id);
@@ -1039,10 +1041,25 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
 
       {/* Footer stats + selection bar */}
       <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex items-center justify-between overflow-x-auto gap-2">
-        <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono shrink-0">
-          {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
-          {selectedNodeIds.size === 0 && !selectedEdgeId && nodes.length > 0 && ' · Shift+click to select'}
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          {nodes.length > 0 && (
+            <button
+              onClick={() => setSelectMode(m => !m)}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+                selectMode
+                  ? 'bg-[#007AFF] text-white'
+                  : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)]'
+              }`}
+            >
+              <MousePointerClick size={11} />
+              Select
+            </button>
+          )}
+          <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
+            {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
+            {selectMode && selectedNodeIds.size === 0 && ' · Tap entities to select'}
+          </span>
+        </div>
         {selectedNodeIds.size > 0 && (
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-[rgba(235,235,245,0.6)] font-medium">
