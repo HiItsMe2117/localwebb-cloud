@@ -452,7 +452,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       setSelectedNeighbors(new Set());
       setDescriptionNode(null);
     }
-  }, []);
+  }, [selectMode]);
 
   // Expand: fetch neighbors
   const handleExpand = useCallback(async (node: Node) => {
