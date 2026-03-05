@@ -11,6 +11,7 @@ interface CaseDetailProps {
   caseId: string;
   onBack: () => void;
   onStatusChange: (caseId: string, status: string) => void;
+  onUpdate: (caseId: string, fields: Partial<Pick<Case, 'title' | 'category' | 'summary'>>) => Promise<void>;
   onDelete: (caseId: string) => void;
   readOnly?: boolean;
 }
@@ -60,7 +61,7 @@ function EvidenceText({ content }: { content: string }) {
   );
 }
 
-export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete, readOnly = false }: CaseDetailProps) {
+export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, onDelete, readOnly = false }: CaseDetailProps) {
   const [caseData, setCaseData] = useState<Case | null>(null);
   const [evidence, setEvidence] = useState<CaseEvidence[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -76,6 +77,11 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete, r
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteText, setEditingNoteText] = useState('');
   const [isSavingNote, setIsSavingNote] = useState(false);
+  const [isEditingCase, setIsEditingCase] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editSummary, setEditSummary] = useState('');
+  const [isSavingCase, setIsSavingCase] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const autoResize = useCallback((el: HTMLTextAreaElement | null) => {
@@ -223,6 +229,36 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete, r
     }
   };
 
+  const startEditingCase = () => {
+    if (!caseData) return;
+    setEditTitle(caseData.title);
+    setEditCategory(caseData.category);
+    setEditSummary(caseData.summary || '');
+    setIsEditingCase(true);
+  };
+
+  const saveCase = async () => {
+    if (!caseData || isSavingCase) return;
+    const fields: Partial<Pick<Case, 'title' | 'category' | 'summary'>> = {};
+    if (editTitle.trim() && editTitle.trim() !== caseData.title) fields.title = editTitle.trim();
+    if (editCategory !== caseData.category) fields.category = editCategory;
+    if (editSummary.trim() !== (caseData.summary || '')) fields.summary = editSummary.trim();
+    if (Object.keys(fields).length === 0) {
+      setIsEditingCase(false);
+      return;
+    }
+    setIsSavingCase(true);
+    try {
+      await onUpdate(caseId, fields);
+      setCaseData(prev => prev ? { ...prev, ...fields } : prev);
+      setIsEditingCase(false);
+    } catch (err) {
+      console.error('Failed to save case:', err);
+    } finally {
+      setIsSavingCase(false);
+    }
+  };
+
   const toggleCard = (id: string) => {
     setSelectedCards(prev => {
       const next = new Set(prev);
@@ -278,21 +314,82 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete, r
             <ArrowLeft size={16} className="text-[rgba(235,235,245,0.6)]" />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="text-[20px] font-bold text-white truncate">{caseData.title}</h1>
-            <div className="flex items-center gap-2 mt-1">
-              <span
-                className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                style={{ backgroundColor: config.color + '20', color: config.color }}
-              >
-                {config.label}
-              </span>
-              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                isClosed ? 'bg-[#8E8E93]/20 text-[#8E8E93]' : 'bg-[#30D158]/20 text-[#30D158]'
-              }`}>
-                {isClosed ? 'Closed' : 'Active'}
-              </span>
-              <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">{confidencePct}% confidence</span>
-            </div>
+            {isEditingCase ? (
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={e => setEditTitle(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveCase(); if (e.key === 'Escape') setIsEditingCase(false); }}
+                  autoFocus
+                  className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-lg px-3 py-1.5 text-[18px] font-bold text-white focus:outline-none focus:border-[#007AFF] transition-colors"
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(CASE_CATEGORIES).map(([key, cfg]) => (
+                    <button
+                      key={key}
+                      onClick={() => setEditCategory(key)}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                        editCategory === key
+                          ? 'ring-2 ring-offset-1 ring-offset-black'
+                          : 'opacity-50 hover:opacity-80'
+                      }`}
+                      style={{
+                        backgroundColor: cfg.color + '20',
+                        color: cfg.color,
+                      }}
+                    >
+                      {cfg.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsEditingCase(false)}
+                    className="px-3 py-1.5 rounded-lg text-[12px] text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveCase}
+                    disabled={!editTitle.trim() || isSavingCase}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-30 text-[12px] font-semibold transition-colors"
+                  >
+                    {isSavingCase ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                    Save
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-[20px] font-bold text-white truncate">{caseData.title}</h1>
+                  {!readOnly && (
+                    <button
+                      onClick={startEditingCase}
+                      className="shrink-0 p-1 rounded-lg hover:bg-[#2C2C2E] transition-colors"
+                      title="Edit case"
+                    >
+                      <Pencil size={14} className="text-[rgba(235,235,245,0.3)] hover:text-[rgba(235,235,245,0.6)]" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <span
+                    className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ backgroundColor: config.color + '20', color: config.color }}
+                  >
+                    {config.label}
+                  </span>
+                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                    isClosed ? 'bg-[#8E8E93]/20 text-[#8E8E93]' : 'bg-[#30D158]/20 text-[#30D158]'
+                  }`}>
+                    {isClosed ? 'Closed' : 'Active'}
+                  </span>
+                  <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">{confidencePct}% confidence</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -387,7 +484,17 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete, r
           {/* Case summary */}
           <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4">
             <h3 className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2">Summary</h3>
-            <p className="text-[13px] text-[rgba(235,235,245,0.6)] leading-relaxed">{caseData.summary}</p>
+            {isEditingCase ? (
+              <textarea
+                value={editSummary}
+                onChange={e => setEditSummary(e.target.value)}
+                rows={4}
+                className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors resize-none leading-relaxed"
+                placeholder="Case summary..."
+              />
+            ) : (
+              <p className="text-[13px] text-[rgba(235,235,245,0.6)] leading-relaxed">{caseData.summary}</p>
+            )}
             {caseData.entities && caseData.entities.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-3">
                 {caseData.entities.map((e) => (

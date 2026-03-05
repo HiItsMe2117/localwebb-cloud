@@ -466,6 +466,8 @@ class CreateCaseRequest(BaseModel):
 class UpdateCaseRequest(BaseModel):
     status: Optional[str] = None
     title: Optional[str] = None
+    category: Optional[str] = None
+    summary: Optional[str] = None
 
 class AddNoteRequest(BaseModel):
     content: str
@@ -1408,6 +1410,10 @@ async def update_case(case_id: str, request: UpdateCaseRequest):
             updates["status"] = request.status
         if request.title is not None:
             updates["title"] = request.title
+        if request.category is not None:
+            updates["category"] = request.category
+        if request.summary is not None:
+            updates["summary"] = request.summary
         if not updates:
             return JSONResponse(status_code=400, content={"error": "No fields to update"})
 

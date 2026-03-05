@@ -664,6 +664,16 @@ function AppContent() {
     }
   };
 
+  const updateCaseFields = async (caseId: string, fields: Partial<Pick<Case, 'title' | 'category' | 'summary'>>) => {
+    try {
+      const res = await axios.patch(`/api/cases/${caseId}`, fields);
+      const updated = res.data.case;
+      setCases(prev => prev.map(c => c.id === caseId ? { ...c, ...updated } : c));
+    } catch (err) {
+      console.error('Failed to update case:', err);
+    }
+  };
+
   const deleteCase = async (caseId: string) => {
     try {
       await axios.delete(`/api/cases/${caseId}`);
@@ -1274,6 +1284,7 @@ function AppContent() {
               caseId={activeCaseId}
               onBack={() => setActiveCaseId(null)}
               onStatusChange={updateCaseStatus}
+              onUpdate={updateCaseFields}
               onDelete={deleteCase}
               readOnly={readOnly}
             />
