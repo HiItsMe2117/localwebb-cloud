@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus, FlaskConical, ChevronDown, AlertTriangle, HelpCircle } from 'lucide-react';
-import type { Case, ScanFinding, TheoryResult, TheoryVerdict } from '../types';
+import type { Case, ScanFinding, TheoryResult } from '../types';
 import { CASE_CATEGORIES } from '../types';
 import InvestigationSteps from './InvestigationSteps';
 
