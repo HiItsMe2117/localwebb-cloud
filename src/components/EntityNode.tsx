@@ -59,7 +59,8 @@ function EntityNode({ data, selected }: NodeProps) {
 
   const degree: number = data.degree || 0;
   const tier = getTier(degree);
-  const scale = getScale(degree, tier);
+  const baseScale = getScale(degree, tier);
+  const scale = baseScale * (data.scale || 1);
 
   // --- LOD: Extreme Performance Mode (Zoomed Out) ---
   if (isZoomedOut) {
