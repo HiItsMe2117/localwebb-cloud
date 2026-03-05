@@ -1049,7 +1049,7 @@ async def investigate(request: InvestigateRequest):
 
 # ---- Cases endpoints ----
 
-@app.post("/api/cases/scan")
+@app.post("/api/cases/scan", dependencies=[Depends(require_admin)])
 async def scan_for_cases():
     """Run the suspicious activity scanner across graph + documents."""
     if not client:
@@ -1076,7 +1076,7 @@ async def scan_for_cases():
         return JSONResponse(status_code=500, content={"error": f"Scan failed: {str(e)}"})
 
 
-@app.post("/api/theories/investigate")
+@app.post("/api/theories/investigate", dependencies=[Depends(require_admin)])
 async def investigate_theory(request: TheoryInvestigateRequest):
     """Test a theory against the evidence corpus. Returns SSE stream."""
     if not index:
@@ -1189,7 +1189,7 @@ async def get_case(case_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/investigate")
+@app.post("/api/cases/{case_id}/investigate", dependencies=[Depends(require_admin)])
 async def investigate_case(case_id: str):
     """Run scoped investigation for a case. Returns SSE stream."""
     if not index:
@@ -1417,7 +1417,7 @@ async def update_case(case_id: str, request: UpdateCaseRequest):
         if not updates:
             return JSONResponse(status_code=400, content={"error": "No fields to update"})
 
-        updates["updated_at"] = "now()"
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         res = supabase.table("cases").update(updates).eq("id", case_id).execute()
         if not res.data:
             return JSONResponse(status_code=404, content={"error": "Case not found"})
@@ -1741,14 +1741,14 @@ async def update_entity_description(case_id: str, node_id: str, request: UpdateE
             "case_id": case_id,
             "node_id": node_id,
             "description": request.description,
-            "updated_at": "now()",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }, on_conflict="case_id,node_id").execute()
         return {"saved": True}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/analyze")
+@app.post("/api/cases/{case_id}/graph/analyze", dependencies=[Depends(require_admin)])
 async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequest):
     """Analyze a group of selected entities for similarities and patterns."""
     if not supabase:
@@ -1955,7 +1955,7 @@ Be specific, name names, and think like a journalist building a story. Keep it c
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/chat")
+@app.post("/api/cases/{case_id}/graph/chat", dependencies=[Depends(require_admin)])
 async def chat_case_graph(case_id: str, request: GraphChatRequest):
     """Chat about a group of selected entities with full graph context."""
     if not supabase:
