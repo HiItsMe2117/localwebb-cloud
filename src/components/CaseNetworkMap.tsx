@@ -1088,7 +1088,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                     <Minus size={11} />
                   </button>
                   <span className="text-[10px] text-[rgba(235,235,245,0.4)] font-mono px-1">
-                    Size
+                    {Math.round(([...selectedNodeIds].reduce((sum, id) => sum + (nodeScales[id] ?? 1), 0) / selectedNodeIds.size) * 100)}%
                   </span>
                   <button
                     onClick={() => setNodeScales(prev => {
