@@ -20,6 +20,8 @@ import {
   Shield,
   Search,
   CircleOff,
+  Lock,
+  LogOut,
 } from 'lucide-react';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -28,11 +30,17 @@ import { getLayoutedElements, computeDegreeMap } from './utils/layout';
 import { getFileUrl } from './utils/files';
 import CasesPanel from './components/CasesPanel';
 import CaseDetail from './components/CaseDetail';
+import LoginModal from './components/LoginModal';
+import { useAuth } from './contexts/AuthContext';
 import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, InvestigationStep, Source } from './types';
 
 type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
 function AppContent() {
+  const { isAdmin, login, logout } = useAuth();
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const readOnly = !isAdmin;
+
   const [activeView, setActiveView] = useState<View>('chat');
 
   // Chat state
@@ -736,6 +744,7 @@ function AppContent() {
               onPersonFilterChange={setPersonFilter}
               orgFilter={orgFilter}
               onOrgFilterChange={setOrgFilter}
+              readOnly={readOnly}
             />
           </>
         )}
@@ -1246,6 +1255,7 @@ function AppContent() {
               onBack={() => setActiveCaseId(null)}
               onStatusChange={updateCaseStatus}
               onDelete={deleteCase}
+              readOnly={readOnly}
             />
           ) : (
             <CasesPanel
@@ -1263,6 +1273,7 @@ function AppContent() {
               theoryResult={theoryResult}
               onAcceptTheory={acceptTheory}
               onDismissTheory={dismissTheory}
+              readOnly={readOnly}
             />
           )
         )}
@@ -1300,8 +1311,31 @@ function AppContent() {
               </button>
             );
           })}
+          <button
+            onClick={() => isAdmin ? logout() : setShowLoginModal(true)}
+            className="flex flex-col items-center justify-center gap-0.5 w-12 h-full transition-colors"
+          >
+            {isAdmin ? (
+              <>
+                <LogOut size={20} className="text-[#30D158]" />
+                <span className="text-[10px] font-medium text-[#30D158]">Admin</span>
+              </>
+            ) : (
+              <>
+                <Lock size={20} className="text-[rgba(235,235,245,0.3)]" />
+                <span className="text-[10px] font-medium text-[rgba(235,235,245,0.3)]">Login</span>
+              </>
+            )}
+          </button>
         </div>
       </nav>
+
+      {showLoginModal && (
+        <LoginModal
+          onLogin={login}
+          onClose={() => setShowLoginModal(false)}
+        />
+      )}
     </div>
   );
 }

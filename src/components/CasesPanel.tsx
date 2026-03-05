@@ -19,6 +19,7 @@ interface CasesPanelProps {
   theoryResult: TheoryResult | null;
   onAcceptTheory: () => void;
   onDismissTheory: () => void;
+  readOnly?: boolean;
 }
 
 function CategoryBadge({ category }: { category: string }) {
@@ -251,6 +252,7 @@ export default function CasesPanel({
   cases, scanFindings, isScanning,
   onScan, onAccept, onDismiss, onAcceptAll, onOpenCase, onCreateCase,
   onTheoryInvestigate, isTestingTheory, theoryResult, onAcceptTheory, onDismissTheory,
+  readOnly = false,
 }: CasesPanelProps) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -280,7 +282,7 @@ export default function CasesPanel({
     <div className="flex-1 flex flex-col overflow-hidden">
       <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between">
         <h1 className="text-[28px] font-bold tracking-tight text-white">Cases</h1>
-        <div className="flex items-center gap-2">
+        {!readOnly && <div className="flex items-center gap-2">
           <button
             onClick={() => { setShowTheoryForm(v => !v); setShowCreateForm(false); }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
@@ -313,7 +315,7 @@ export default function CasesPanel({
               </span>
             </button>
           )}
-        </div>
+        </div>}
       </header>
 
       <div className="flex-1 overflow-y-auto px-5 pb-6">

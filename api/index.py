@@ -9,7 +9,8 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request, Query
+import jwt as pyjwt
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request, Query, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -48,6 +49,57 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Auth Configuration ---
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+JWT_SECRET = os.getenv("JWT_SECRET", ADMIN_PASSWORD or "dev-secret-change-me")
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+async def require_admin(authorization: str = Header(None)):
+    """Dependency that blocks unauthenticated write requests."""
+    if not ADMIN_PASSWORD:
+        return  # Auth disabled if no password set
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    token = authorization.split(" ", 1)[1]
+    try:
+        pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except pyjwt.InvalidTokenError:
+        raise HTTPException(status_code=403, detail="Invalid or expired token")
+
+
+@app.post("/api/auth/login")
+async def auth_login(request: LoginRequest):
+    if not ADMIN_PASSWORD:
+        raise HTTPException(status_code=404, detail="Auth not configured")
+    if request.username == ADMIN_USERNAME and request.password == ADMIN_PASSWORD:
+        token = pyjwt.encode(
+            {"sub": "admin", "exp": time.time() + 86400 * 7},
+            JWT_SECRET, algorithm="HS256",
+        )
+        return {"token": token}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@app.get("/api/auth/me")
+async def auth_me(authorization: str = Header(None)):
+    if not ADMIN_PASSWORD:
+        return {"admin": True}  # No auth configured = everyone is admin
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = authorization.split(" ", 1)[1]
+    try:
+        pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return {"admin": True}
+    except pyjwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
 
 # --- Configuration ---
 GCS_BUCKET = os.getenv("GCS_BUCKET_NAME", "").strip()
@@ -276,7 +328,7 @@ class SupabaseStore:
 graph_store = SupabaseStore()
 
 # Endpoint to migrate GCS graph to Supabase
-@app.post("/api/graph/migrate")
+@app.post("/api/graph/migrate", dependencies=[Depends(require_admin)])
 async def migrate_graph_to_supabase():
     if not supabase:
         return JSONResponse(status_code=500, content={"message": "Supabase client not initialized."})
@@ -501,7 +553,7 @@ async def get_file(filename: str, page: Optional[str] = Query(None)):
 async def get_graph():
     return graph_store.load()
 
-@app.post("/api/graph/positions")
+@app.post("/api/graph/positions", dependencies=[Depends(require_admin)])
 async def update_positions(updates: List[PositionUpdate]):
     for update in updates:
         graph_store.update_node_position(update.id, update.x, update.y)
@@ -1082,7 +1134,7 @@ async def list_cases():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases")
+@app.post("/api/cases", dependencies=[Depends(require_admin)])
 async def create_case(request: CreateCaseRequest):
     """Accept a finding — insert into cases table."""
     if not supabase:
@@ -1226,7 +1278,7 @@ async def investigate_case(case_id: str):
     return StreamingResponse(stream_and_save(), media_type="text/event-stream")
 
 
-@app.post("/api/cases/{case_id}/consolidate")
+@app.post("/api/cases/{case_id}/consolidate", dependencies=[Depends(require_admin)])
 async def consolidate_case_evidence(case_id: str):
     """Synthesize all evidence into a single master report."""
     if not supabase or not client:
@@ -1294,7 +1346,7 @@ Produce a professional, final investigative product."""
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/notes")
+@app.post("/api/cases/{case_id}/notes", dependencies=[Depends(require_admin)])
 async def add_case_note(case_id: str, request: AddNoteRequest):
     """Add a note to a case."""
     if not supabase:
@@ -1320,7 +1372,7 @@ async def add_case_note(case_id: str, request: AddNoteRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}/evidence/{evidence_id}")
+@app.patch("/api/cases/{case_id}/evidence/{evidence_id}", dependencies=[Depends(require_admin)])
 async def update_evidence(case_id: str, evidence_id: str, request: UpdateNoteRequest):
     """Update the content of a note."""
     if not supabase:
@@ -1345,7 +1397,7 @@ async def update_evidence(case_id: str, evidence_id: str, request: UpdateNoteReq
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}")
+@app.patch("/api/cases/{case_id}", dependencies=[Depends(require_admin)])
 async def update_case(case_id: str, request: UpdateCaseRequest):
     """Update case status or title."""
     if not supabase:
@@ -1368,7 +1420,7 @@ async def update_case(case_id: str, request: UpdateCaseRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/cases/{case_id}")
+@app.delete("/api/cases/{case_id}", dependencies=[Depends(require_admin)])
 async def delete_case(case_id: str):
     """Delete a case and cascade evidence."""
     if not supabase:
@@ -1491,7 +1543,7 @@ async def get_case_graph(case_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/entities")
+@app.post("/api/cases/{case_id}/graph/entities", dependencies=[Depends(require_admin)])
 async def add_case_graph_entities(case_id: str, request: AddGraphEntitiesRequest):
     """Add entities to a case graph."""
     if not supabase:
@@ -1504,7 +1556,7 @@ async def add_case_graph_entities(case_id: str, request: AddGraphEntitiesRequest
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/cases/{case_id}/graph/entities/{node_id}")
+@app.delete("/api/cases/{case_id}/graph/entities/{node_id}", dependencies=[Depends(require_admin)])
 async def remove_case_graph_entity(case_id: str, node_id: str):
     """Remove an entity from a case graph."""
     if not supabase:
@@ -1519,7 +1571,7 @@ async def remove_case_graph_entity(case_id: str, node_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/positions")
+@app.post("/api/cases/{case_id}/graph/positions", dependencies=[Depends(require_admin)])
 async def save_case_graph_positions(case_id: str, request: SavePositionsRequest):
     """Save dragged node positions for a case graph."""
     if not supabase:
@@ -1590,7 +1642,7 @@ async def expand_case_graph_node(case_id: str, node_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/edges")
+@app.post("/api/cases/{case_id}/graph/edges", dependencies=[Depends(require_admin)])
 async def create_case_graph_edge(case_id: str, request: CreateCaseEdgeRequest):
     """Create a case-local edge between two entities."""
     if not supabase:
@@ -1610,7 +1662,7 @@ async def create_case_graph_edge(case_id: str, request: CreateCaseEdgeRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/cases/{case_id}/graph/edges/{edge_id}")
+@app.delete("/api/cases/{case_id}/graph/edges/{edge_id}", dependencies=[Depends(require_admin)])
 async def delete_case_graph_edge(case_id: str, edge_id: str):
     """Delete a case-local edge."""
     if not supabase:
@@ -1622,7 +1674,7 @@ async def delete_case_graph_edge(case_id: str, edge_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}/graph/edges/{edge_id}")
+@app.patch("/api/cases/{case_id}/graph/edges/{edge_id}", dependencies=[Depends(require_admin)])
 async def update_case_graph_edge(case_id: str, edge_id: str, request: UpdateCaseEdgeRequest):
     """Update a case-local edge's label."""
     if not supabase:
@@ -1638,7 +1690,7 @@ async def update_case_graph_edge(case_id: str, edge_id: str, request: UpdateCase
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/custom-nodes")
+@app.post("/api/cases/{case_id}/graph/custom-nodes", dependencies=[Depends(require_admin)])
 async def create_case_custom_node(case_id: str, request: CreateCustomNodeRequest):
     """Create a custom case-local entity node."""
     if not supabase:
@@ -1657,7 +1709,7 @@ async def create_case_custom_node(case_id: str, request: CreateCustomNodeRequest
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/cases/{case_id}/graph/custom-nodes/{node_id}")
+@app.delete("/api/cases/{case_id}/graph/custom-nodes/{node_id}", dependencies=[Depends(require_admin)])
 async def delete_case_custom_node(case_id: str, node_id: str):
     """Delete a custom case-local entity node and its edges."""
     if not supabase:
@@ -1673,7 +1725,7 @@ async def delete_case_custom_node(case_id: str, node_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}/graph/entities/{node_id}/description")
+@app.patch("/api/cases/{case_id}/graph/entities/{node_id}/description", dependencies=[Depends(require_admin)])
 async def update_entity_description(case_id: str, node_id: str, request: UpdateEntityDescriptionRequest):
     """Upsert a case-level description for any entity (global or custom)."""
     if not supabase:
@@ -2025,7 +2077,7 @@ Answer the researcher's questions using this context. Be specific, cite entity n
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/search/targeted")
+@app.post("/api/search/targeted", dependencies=[Depends(require_admin)])
 async def targeted_search(request: TargetedSearchRequest):
     """Keyword search + optional network extraction using Supabase full-text search."""
     if not supabase:
@@ -2220,7 +2272,7 @@ async def targeted_search(request: TargetedSearchRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/upload")
+@app.post("/api/upload", dependencies=[Depends(require_admin)])
 async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     temp_dir = tempfile.mkdtemp()
     file_path = os.path.join(temp_dir, file.filename)
@@ -2523,7 +2575,7 @@ async def infrastructure_health():
     }
 
 
-@app.post("/api/graph/communities")
+@app.post("/api/graph/communities", dependencies=[Depends(require_admin)])
 async def detect_communities():
     try:
         from api.graph_ops import compute_communities
@@ -2561,7 +2613,7 @@ async def detect_communities():
         return graph_store.load()
 
 
-@app.post("/api/graph/deduplicate")
+@app.post("/api/graph/deduplicate", dependencies=[Depends(require_admin)])
 async def deduplicate_graph():
     """Two-pass entity deduplication: heuristic merge then Gemini fuzzy merge."""
     if not supabase:

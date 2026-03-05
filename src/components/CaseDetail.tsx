@@ -12,6 +12,7 @@ interface CaseDetailProps {
   onBack: () => void;
   onStatusChange: (caseId: string, status: string) => void;
   onDelete: (caseId: string) => void;
+  readOnly?: boolean;
 }
 
 function EvidenceText({ content }: { content: string }) {
@@ -59,7 +60,7 @@ function EvidenceText({ content }: { content: string }) {
   );
 }
 
-export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }: CaseDetailProps) {
+export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete, readOnly = false }: CaseDetailProps) {
   const [caseData, setCaseData] = useState<Case | null>(null);
   const [evidence, setEvidence] = useState<CaseEvidence[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -295,53 +296,55 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={runInvestigation}
-            disabled={isInvestigating || isConsolidating}
-            className="flex-1 flex items-center justify-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors"
-          >
-            {isInvestigating ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <Search size={14} />
-            )}
-            {isInvestigating ? 'Investigating...' : 'Investigate Further'}
-          </button>
-          
-          <button
-            onClick={consolidateEvidence}
-            disabled={isConsolidating || isInvestigating || evidence.length < 2}
-            className="flex items-center justify-center gap-2 bg-[#AF52DE] hover:bg-[#9642C0] disabled:opacity-30 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors text-white"
-            title="Synthesize all findings into one master report"
-          >
-            {isConsolidating ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <Wand2 size={14} />
-            )}
-            {isConsolidating ? 'Synthesizing...' : 'Synthesize Report'}
-          </button>
+        {!readOnly && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={runInvestigation}
+              disabled={isInvestigating || isConsolidating}
+              className="flex-1 flex items-center justify-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors"
+            >
+              {isInvestigating ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Search size={14} />
+              )}
+              {isInvestigating ? 'Investigating...' : 'Investigate Further'}
+            </button>
 
-          <button
-            onClick={() => onStatusChange(caseId, isClosed ? 'active' : 'closed')}
-            className="w-10 h-10 rounded-xl bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] flex items-center justify-center hover:bg-[#2C2C2E] transition-colors"
-            title={isClosed ? 'Reopen Case' : 'Close Case'}
-          >
-            {isClosed ? (
-              <Unlock size={16} className="text-[#30D158]" />
-            ) : (
-              <Lock size={16} className="text-[rgba(235,235,245,0.4)]" />
-            )}
-          </button>
-          <button
-            onClick={() => { if (confirm('Delete this case and all evidence?')) onDelete(caseId); }}
-            className="w-10 h-10 rounded-xl bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] flex items-center justify-center hover:bg-[#FF453A]/20 transition-colors"
-            title="Delete Case"
-          >
-            <Trash2 size={16} className="text-[#FF453A]" />
-          </button>
-        </div>
+            <button
+              onClick={consolidateEvidence}
+              disabled={isConsolidating || isInvestigating || evidence.length < 2}
+              className="flex items-center justify-center gap-2 bg-[#AF52DE] hover:bg-[#9642C0] disabled:opacity-30 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors text-white"
+              title="Synthesize all findings into one master report"
+            >
+              {isConsolidating ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Wand2 size={14} />
+              )}
+              {isConsolidating ? 'Synthesizing...' : 'Synthesize Report'}
+            </button>
+
+            <button
+              onClick={() => onStatusChange(caseId, isClosed ? 'active' : 'closed')}
+              className="w-10 h-10 rounded-xl bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] flex items-center justify-center hover:bg-[#2C2C2E] transition-colors"
+              title={isClosed ? 'Reopen Case' : 'Close Case'}
+            >
+              {isClosed ? (
+                <Unlock size={16} className="text-[#30D158]" />
+              ) : (
+                <Lock size={16} className="text-[rgba(235,235,245,0.4)]" />
+              )}
+            </button>
+            <button
+              onClick={() => { if (confirm('Delete this case and all evidence?')) onDelete(caseId); }}
+              className="w-10 h-10 rounded-xl bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] flex items-center justify-center hover:bg-[#FF453A]/20 transition-colors"
+              title="Delete Case"
+            >
+              <Trash2 size={16} className="text-[#FF453A]" />
+            </button>
+          </div>
+        )}
       </header>
 
       {/* Tab bar */}
@@ -378,7 +381,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
 
       {/* Tab content */}
       {detailTab === 'network' ? (
-        <CaseNetworkMap caseId={caseId} caseEntities={caseData.entities || []} />
+        <CaseNetworkMap caseId={caseId} caseEntities={caseData.entities || []} readOnly={readOnly} />
       ) : (
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 pb-32">
           {/* Case summary */}
@@ -415,24 +418,26 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onDelete }:
           )}
 
           {/* Note input */}
-          <div className="flex items-end gap-2">
-            <textarea
-              value={noteText}
-              onChange={(e) => { setNoteText(e.target.value); autoResize(e.target); }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addNote(); } }}
-              placeholder="Add a note..."
-              rows={1}
-              ref={(el) => { if (el) autoResize(el); }}
-              className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-[rgba(235,235,245,0.2)] resize-none overflow-hidden"
-            />
-            <button
-              onClick={addNote}
-              disabled={!noteText.trim() || isAddingNote}
-              className="w-10 h-10 shrink-0 rounded-xl bg-[#007AFF] disabled:opacity-30 flex items-center justify-center transition-colors"
-            >
-              <Plus size={18} />
-            </button>
-          </div>
+          {!readOnly && (
+            <div className="flex items-end gap-2">
+              <textarea
+                value={noteText}
+                onChange={(e) => { setNoteText(e.target.value); autoResize(e.target); }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addNote(); } }}
+                placeholder="Add a note..."
+                rows={1}
+                ref={(el) => { if (el) autoResize(el); }}
+                className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-[rgba(235,235,245,0.2)] resize-none overflow-hidden"
+              />
+              <button
+                onClick={addNote}
+                disabled={!noteText.trim() || isAddingNote}
+                className="w-10 h-10 shrink-0 rounded-xl bg-[#007AFF] disabled:opacity-30 flex items-center justify-center transition-colors"
+              >
+                <Plus size={18} />
+              </button>
+            </div>
+          )}
 
           {/* Evidence entries */}
           {evidence.map((ev) => {

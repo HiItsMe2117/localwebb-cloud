@@ -8,6 +8,7 @@ import axios from 'axios';
 interface CaseNetworkMapProps {
   caseId: string;
   caseEntities?: string[];
+  readOnly?: boolean;
 }
 
 interface SearchResult {
@@ -34,7 +35,7 @@ const TYPE_COLORS: Record<string, string> = {
   FINANCIAL_ENTITY: '#f87171',
 };
 
-function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps) {
+function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: CaseNetworkMapProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -606,6 +607,16 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
     );
   }
 
+  // Empty state (read-only: just show message)
+  if (readOnly && nodes.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-8">
+        <Share2 size={28} className="text-[rgba(235,235,245,0.2)]" />
+        <p className="text-[15px] font-semibold text-[rgba(235,235,245,0.6)]">No entities in this network map</p>
+      </div>
+    );
+  }
+
   // Empty state
   if (nodes.length === 0 && !expandNode) {
     return (
@@ -695,74 +706,76 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden relative">
-      {/* Search bar + create entity */}
-      <div className="shrink-0 px-4 py-3 border-b border-[rgba(84,84,88,0.65)] bg-black z-10">
-        <div className="flex items-center gap-2">
-          <div ref={searchRef} className="relative flex-1">
-            <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-2 rounded-xl border border-[rgba(84,84,88,0.65)] focus-within:border-[#007AFF] transition-colors">
-              <Search size={14} className="text-[rgba(235,235,245,0.3)] shrink-0" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => { setSearchQuery(e.target.value); setSearchIndex(0); }}
-                onKeyDown={e => {
-                  if (e.key === 'Escape') { setSearchQuery(''); setSearchResults([]); }
-                  if (!searchResults.length) return;
-                  if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex(i => (i + 1) % searchResults.length); }
-                  if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex(i => (i - 1 + searchResults.length) % searchResults.length); }
-                  if (e.key === 'Enter') { e.preventDefault(); addEntity(searchResults[searchIndex]); }
-                }}
-                placeholder="Search entities to add..."
-                className="bg-transparent text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none w-full"
-              />
-              {isSearching && <Loader2 size={14} className="text-[rgba(235,235,245,0.3)] animate-spin" />}
+      {/* Search bar + create entity (admin only) */}
+      {!readOnly && (
+        <div className="shrink-0 px-4 py-3 border-b border-[rgba(84,84,88,0.65)] bg-black z-10">
+          <div className="flex items-center gap-2">
+            <div ref={searchRef} className="relative flex-1">
+              <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-2 rounded-xl border border-[rgba(84,84,88,0.65)] focus-within:border-[#007AFF] transition-colors">
+                <Search size={14} className="text-[rgba(235,235,245,0.3)] shrink-0" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => { setSearchQuery(e.target.value); setSearchIndex(0); }}
+                  onKeyDown={e => {
+                    if (e.key === 'Escape') { setSearchQuery(''); setSearchResults([]); }
+                    if (!searchResults.length) return;
+                    if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex(i => (i + 1) % searchResults.length); }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex(i => (i - 1 + searchResults.length) % searchResults.length); }
+                    if (e.key === 'Enter') { e.preventDefault(); addEntity(searchResults[searchIndex]); }
+                  }}
+                  placeholder="Search entities to add..."
+                  className="bg-transparent text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none w-full"
+                />
+                {isSearching && <Loader2 size={14} className="text-[rgba(235,235,245,0.3)] animate-spin" />}
+              </div>
+              {searchResults.length > 0 && <SearchDropdown results={searchResults} activeIndex={searchIndex} onSelect={addEntity} onHover={setSearchIndex} />}
             </div>
-            {searchResults.length > 0 && <SearchDropdown results={searchResults} activeIndex={searchIndex} onSelect={addEntity} onHover={setSearchIndex} />}
-          </div>
-          <button
-            onClick={() => setShowCreateForm(prev => !prev)}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
-              showCreateForm ? 'bg-[#007AFF] text-white' : 'bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.4)] hover:border-[#007AFF]'
-            }`}
-            title="Create custom entity"
-          >
-            <Plus size={16} />
-          </button>
-        </div>
-
-        {showCreateForm && (
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              type="text"
-              value={newEntityLabel}
-              onChange={e => setNewEntityLabel(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') createCustomNode(); if (e.key === 'Escape') setShowCreateForm(false); }}
-              placeholder="Entity name..."
-              autoFocus
-              className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
-            />
-            <select
-              value={newEntityType}
-              onChange={e => setNewEntityType(e.target.value)}
-              className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-2 py-2 text-[12px] text-white focus:outline-none focus:border-[#007AFF] transition-colors appearance-none"
-            >
-              <option value="PERSON">Person</option>
-              <option value="ORGANIZATION">Organization</option>
-              <option value="LOCATION">Location</option>
-              <option value="EVENT">Event</option>
-              <option value="DOCUMENT">Document</option>
-              <option value="FINANCIAL_ENTITY">Financial</option>
-            </select>
             <button
-              onClick={createCustomNode}
-              disabled={!newEntityLabel.trim() || isCreatingEntity}
-              className="bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-30 px-3 py-2 rounded-xl text-[13px] font-semibold transition-colors shrink-0"
+              onClick={() => setShowCreateForm(prev => !prev)}
+              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
+                showCreateForm ? 'bg-[#007AFF] text-white' : 'bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.4)] hover:border-[#007AFF]'
+              }`}
+              title="Create custom entity"
             >
-              {isCreatingEntity ? <Loader2 size={14} className="animate-spin" /> : 'Add'}
+              <Plus size={16} />
             </button>
           </div>
-        )}
-      </div>
+
+          {showCreateForm && (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="text"
+                value={newEntityLabel}
+                onChange={e => setNewEntityLabel(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') createCustomNode(); if (e.key === 'Escape') setShowCreateForm(false); }}
+                placeholder="Entity name..."
+                autoFocus
+                className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+              />
+              <select
+                value={newEntityType}
+                onChange={e => setNewEntityType(e.target.value)}
+                className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-2 py-2 text-[12px] text-white focus:outline-none focus:border-[#007AFF] transition-colors appearance-none"
+              >
+                <option value="PERSON">Person</option>
+                <option value="ORGANIZATION">Organization</option>
+                <option value="LOCATION">Location</option>
+                <option value="EVENT">Event</option>
+                <option value="DOCUMENT">Document</option>
+                <option value="FINANCIAL_ENTITY">Financial</option>
+              </select>
+              <button
+                onClick={createCustomNode}
+                disabled={!newEntityLabel.trim() || isCreatingEntity}
+                className="bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-30 px-3 py-2 rounded-xl text-[13px] font-semibold transition-colors shrink-0"
+              >
+                {isCreatingEntity ? <Loader2 size={14} className="animate-spin" /> : 'Add'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ReactFlow canvas */}
       <div className="flex-1 relative">
@@ -1049,7 +1062,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
       {/* Footer stats + selection bar */}
       <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex items-center justify-between overflow-x-auto gap-2">
         <div className="flex items-center gap-2 shrink-0">
-          {nodes.length > 0 && (
+          {nodes.length > 0 && !readOnly && (
             <>
               <button
                 onClick={() => setSelectMode(m => !m)}

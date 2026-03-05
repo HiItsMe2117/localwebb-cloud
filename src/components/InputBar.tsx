@@ -15,6 +15,7 @@ interface InputBarProps {
   onPersonFilterChange: (v: string) => void;
   orgFilter: string;
   onOrgFilterChange: (v: string) => void;
+  readOnly?: boolean;
 }
 
 export default function InputBar({
@@ -23,6 +24,7 @@ export default function InputBar({
   docTypeFilter, onDocTypeFilterChange,
   personFilter, onPersonFilterChange,
   orgFilter, onOrgFilterChange,
+  readOnly = false,
 }: InputBarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -159,15 +161,16 @@ export default function InputBar({
               value={value}
               onChange={(e) => onChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Start an investigation..."
-              className="flex-1 bg-transparent text-[15px] text-white placeholder:text-[rgba(235,235,245,0.2)] resize-none focus:outline-none min-h-[36px] max-h-[160px] py-2"
+              placeholder={readOnly ? "Login to chat..." : "Start an investigation..."}
+              disabled={readOnly}
+              className="flex-1 bg-transparent text-[15px] text-white placeholder:text-[rgba(235,235,245,0.2)] resize-none focus:outline-none min-h-[36px] max-h-[160px] py-2 disabled:opacity-50"
             />
 
             <button
               onClick={onSend}
-              disabled={!value.trim() || isStreaming}
+              disabled={!value.trim() || isStreaming || readOnly}
               className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                value.trim() && !isStreaming
+                value.trim() && !isStreaming && !readOnly
                   ? 'bg-[#007AFF] text-white active:scale-90'
                   : 'bg-[#3A3A3C] text-[rgba(235,235,245,0.2)] cursor-not-allowed'
               }`}
