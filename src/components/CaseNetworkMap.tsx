@@ -99,9 +99,13 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
 
-  // Apply selection styling to nodes
+  // Apply selection styling and uniform sizing to nodes
   const displayNodes = useMemo(() =>
-    nodes.map(n => ({ ...n, selected: selectedNodeIds.has(n.id) })),
+    nodes.map(n => ({
+      ...n,
+      data: { ...n.data, degree: 10 },
+      selected: selectedNodeIds.has(n.id),
+    })),
     [nodes, selectedNodeIds]
   );
 
