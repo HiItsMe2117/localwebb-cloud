@@ -90,8 +90,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   const [newEntityType, setNewEntityType] = useState('PERSON');
   const [isCreatingEntity, setIsCreatingEntity] = useState(false);
 
-  // Node size state
-  const [nodeScale, setNodeScale] = useState(1);
+  // Per-node scale overrides
+  const [nodeScales, setNodeScales] = useState<Record<string, number>>({});
 
   // Description panel state
   const [descriptionNode, setDescriptionNode] = useState<Node | null>(null);
@@ -102,14 +102,14 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
 
-  // Apply selection styling, uniform sizing, and user-controlled scale to nodes
+  // Apply selection styling, uniform sizing, and per-node scale to nodes
   const displayNodes = useMemo(() =>
     nodes.map(n => ({
       ...n,
-      data: { ...n.data, degree: 10, scale: nodeScale },
+      data: { ...n.data, degree: 10, scale: nodeScales[n.id] ?? 1 },
       selected: selectedNodeIds.has(n.id),
     })),
-    [nodes, selectedNodeIds, nodeScale]
+    [nodes, selectedNodeIds, nodeScales]
   );
 
   // Copy selected node details
@@ -1062,23 +1062,33 @@ function CaseNetworkMapInner({ caseId, caseEntities = [] }: CaseNetworkMapProps)
                 <MousePointerClick size={11} />
                 Select
               </button>
-              <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setNodeScale(s => Math.max(0.4, s - 0.15))}
-                  className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
-                >
-                  <Minus size={11} />
-                </button>
-                <span className="text-[10px] text-[rgba(235,235,245,0.4)] font-mono px-1 min-w-[28px] text-center">
-                  {Math.round(nodeScale * 100)}%
-                </span>
-                <button
-                  onClick={() => setNodeScale(s => Math.min(2, s + 0.15))}
-                  className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
-                >
-                  <Plus size={11} />
-                </button>
-              </div>
+              {selectedNodeIds.size > 0 && (
+                <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setNodeScales(prev => {
+                      const next = { ...prev };
+                      selectedNodeIds.forEach(id => { next[id] = Math.max(0.4, (next[id] ?? 1) - 0.15); });
+                      return next;
+                    })}
+                    className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
+                  >
+                    <Minus size={11} />
+                  </button>
+                  <span className="text-[10px] text-[rgba(235,235,245,0.4)] font-mono px-1">
+                    Size
+                  </span>
+                  <button
+                    onClick={() => setNodeScales(prev => {
+                      const next = { ...prev };
+                      selectedNodeIds.forEach(id => { next[id] = Math.min(2, (next[id] ?? 1) + 0.15); });
+                      return next;
+                    })}
+                    className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
+                  >
+                    <Plus size={11} />
+                  </button>
+                </div>
+              )}
             </>
           )}
           <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
