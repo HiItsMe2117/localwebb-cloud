@@ -22,6 +22,7 @@ import {
   CircleOff,
   Lock,
   LogOut,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -102,6 +103,7 @@ function AppContent() {
   const [graphSearch, setGraphSearch] = useState('');
   const [graphSearchIndex, setGraphSearchIndex] = useState(0);
   const graphSearchRef = useRef<HTMLDivElement>(null);
+  const [graphFiltersOpen, setGraphFiltersOpen] = useState(false);
 
   // --- Helpers ---
 
@@ -751,125 +753,143 @@ function AppContent() {
 
         {activeView === 'graph' && (
           <div className="flex-1 flex flex-col h-full relative">
-            <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between gap-3">
-              <h1 className="text-[28px] font-bold tracking-tight text-white shrink-0">Graph</h1>
+            <header className="shrink-0 bg-black">
+              {/* Row 1: Title + Search + Filter toggle */}
+              <div className="flex items-center gap-3 px-5 pt-4 pb-2">
+                <h1 className="text-[28px] font-bold tracking-tight text-white shrink-0">Graph</h1>
 
-              {/* Search */}
-              <div ref={graphSearchRef} className="relative max-w-[260px] flex-1">
-                <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)] focus-within:border-[#007AFF] transition-colors">
-                  <Search size={14} className="text-[rgba(235,235,245,0.3)] shrink-0" />
-                  <input
-                    type="text"
-                    value={graphSearch}
-                    onChange={(e) => { setGraphSearch(e.target.value); setGraphSearchIndex(0); }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') { setGraphSearch(''); setGraphSearchIndex(0); }
-                      if (!graphSearchResults.length) return;
-                      if (e.key === 'ArrowDown') { e.preventDefault(); setGraphSearchIndex(i => (i + 1) % graphSearchResults.length); }
-                      if (e.key === 'ArrowUp') { e.preventDefault(); setGraphSearchIndex(i => (i - 1 + graphSearchResults.length) % graphSearchResults.length); }
-                      if (e.key === 'Enter') { e.preventDefault(); selectSearchResult(graphSearchResults[graphSearchIndex]); }
-                    }}
-                    placeholder="Search entities..."
-                    className="bg-transparent text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none w-full"
-                  />
-                </div>
-
-                {/* Search results dropdown */}
-                {graphSearchResults.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl overflow-hidden shadow-2xl z-50 max-h-[320px] overflow-y-auto">
-                    {graphSearchResults.map((node, i) => {
-                      const entityType = (node.data?.entityType || '').toUpperCase();
-                      const typeColors: Record<string, string> = {
-                        PERSON: '#60a5fa', ORGANIZATION: '#fbbf24', LOCATION: '#4ade80',
-                        EVENT: '#a78bfa', DOCUMENT: '#fb923c', FINANCIAL_ENTITY: '#f87171',
-                      };
-                      const color = typeColors[entityType] || '#9ca3af';
-                      return (
-                        <button
-                          key={node.id}
-                          onClick={() => selectSearchResult(node)}
-                          onMouseEnter={() => setGraphSearchIndex(i)}
-                          className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
-                            i === graphSearchIndex ? 'bg-[#007AFF]/20' : 'hover:bg-[#2C2C2E]'
-                          }`}
-                        >
-                          <div
-                            className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
-                            style={{ backgroundColor: `${color}20` }}
-                          >
-                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-                          </div>
-                          <div className="flex-1 overflow-hidden">
-                            <p className="text-[13px] font-medium text-white truncate">{node.data?.label}</p>
-                            <p className="text-[10px] uppercase tracking-wider font-bold" style={{ color }}>{entityType}</p>
-                          </div>
-                          <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono shrink-0">{node.data?.degree || 0}</span>
-                        </button>
-                      );
-                    })}
+                {/* Search */}
+                <div ref={graphSearchRef} className="relative flex-1 min-w-0">
+                  <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)] focus-within:border-[#007AFF] transition-colors">
+                    <Search size={14} className="text-[rgba(235,235,245,0.3)] shrink-0" />
+                    <input
+                      type="text"
+                      value={graphSearch}
+                      onChange={(e) => { setGraphSearch(e.target.value); setGraphSearchIndex(0); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') { setGraphSearch(''); setGraphSearchIndex(0); }
+                        if (!graphSearchResults.length) return;
+                        if (e.key === 'ArrowDown') { e.preventDefault(); setGraphSearchIndex(i => (i + 1) % graphSearchResults.length); }
+                        if (e.key === 'ArrowUp') { e.preventDefault(); setGraphSearchIndex(i => (i - 1 + graphSearchResults.length) % graphSearchResults.length); }
+                        if (e.key === 'Enter') { e.preventDefault(); selectSearchResult(graphSearchResults[graphSearchIndex]); }
+                      }}
+                      placeholder="Search entities..."
+                      className="bg-transparent text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none w-full"
+                    />
                   </div>
-                )}
+
+                  {/* Search results dropdown */}
+                  {graphSearchResults.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl overflow-hidden shadow-2xl z-50 max-h-[320px] overflow-y-auto">
+                      {graphSearchResults.map((node, i) => {
+                        const entityType = (node.data?.entityType || '').toUpperCase();
+                        const typeColors: Record<string, string> = {
+                          PERSON: '#60a5fa', ORGANIZATION: '#fbbf24', LOCATION: '#4ade80',
+                          EVENT: '#a78bfa', DOCUMENT: '#fb923c', FINANCIAL_ENTITY: '#f87171',
+                        };
+                        const color = typeColors[entityType] || '#9ca3af';
+                        return (
+                          <button
+                            key={node.id}
+                            onClick={() => selectSearchResult(node)}
+                            onMouseEnter={() => setGraphSearchIndex(i)}
+                            className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                              i === graphSearchIndex ? 'bg-[#007AFF]/20' : 'hover:bg-[#2C2C2E]'
+                            }`}
+                          >
+                            <div
+                              className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+                              style={{ backgroundColor: `${color}20` }}
+                            >
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                            </div>
+                            <div className="flex-1 overflow-hidden">
+                              <p className="text-[13px] font-medium text-white truncate">{node.data?.label}</p>
+                              <p className="text-[10px] uppercase tracking-wider font-bold" style={{ color }}>{entityType}</p>
+                            </div>
+                            <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono shrink-0">{node.data?.degree || 0}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setGraphFiltersOpen(!graphFiltersOpen)}
+                  className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                    graphFiltersOpen
+                      ? 'bg-[#007AFF] text-white'
+                      : 'bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)] hover:text-white'
+                  }`}
+                  title="Graph Filters"
+                >
+                  <SlidersHorizontal size={16} />
+                </button>
               </div>
 
-              <div className="flex items-center gap-3 shrink-0">
-                <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
-                  <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
-                    {yearFilter >= 2026 ? 'All' : yearFilter}
-                  </span>
-                  <input
-                    type="range" min="1980" max="2026" value={yearFilter}
-                    onChange={(e) => setYearFilter(parseInt(e.target.value))}
-                    className="w-20 h-1 bg-[#3A3A3C] rounded-lg appearance-none cursor-pointer accent-[#007AFF]"
-                  />
-                </div>
-                <div className="flex items-center gap-1 bg-[#1C1C1E] px-2 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
+              {/* Collapsible filter drawer */}
+              {graphFiltersOpen && (
+                <div className="flex flex-wrap items-center gap-2 px-5 pb-3 pt-1 border-t border-[rgba(84,84,88,0.3)]">
+                  <div className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
+                    <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
+                      {yearFilter >= 2026 ? 'All' : yearFilter}
+                    </span>
+                    <input
+                      type="range" min="1980" max="2026" value={yearFilter}
+                      onChange={(e) => setYearFilter(parseInt(e.target.value))}
+                      className="w-20 h-1 bg-[#3A3A3C] rounded-lg appearance-none cursor-pointer accent-[#007AFF]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1 bg-[#1C1C1E] px-2 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
+                    <button
+                      onClick={() => setMinDegree(Math.max(0, minDegree - 1))}
+                      className="p-1 hover:bg-[#2C2C2E] rounded-full transition-colors text-[rgba(235,235,245,0.6)]"
+                      title="Decrease connections threshold"
+                    >
+                      <Minus size={14} />
+                    </button>
+                    <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)] min-w-[40px] text-center">
+                      {minDegree === 0 ? 'All' : `${minDegree}+`}
+                    </span>
+                    <button
+                      onClick={() => setMinDegree(minDegree + 1)}
+                      className="p-1 hover:bg-[#2C2C2E] rounded-full transition-colors text-[rgba(235,235,245,0.6)]"
+                      title="Increase connections threshold"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
                   <button
-                    onClick={() => setMinDegree(Math.max(0, minDegree - 1))}
-                    className="p-1 hover:bg-[#2C2C2E] rounded-full transition-colors text-[rgba(235,235,245,0.6)]"
-                    title="Decrease connections threshold"
+                    onClick={() => setShowOutliers(!showOutliers)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border border-[rgba(84,84,88,0.65)] ${
+                      showOutliers ? 'bg-[#1C1C1E] text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E]' : 'bg-[#FF9F0A] text-white border-[#FF9F0A]'
+                    }`}
+                    title={showOutliers ? "Hide Outliers (1 connection)" : "Show All Outliers"}
                   >
-                    <Minus size={14} />
+                    <CircleOff size={14} />
+                    {showOutliers ? 'Outliers On' : 'Outliers Off'}
                   </button>
-                  <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)] min-w-[40px] text-center">
-                    {minDegree === 0 ? 'All' : `${minDegree}+`}
-                  </span>
                   <button
-                    onClick={() => setMinDegree(minDegree + 1)}
-                    className="p-1 hover:bg-[#2C2C2E] rounded-full transition-colors text-[rgba(235,235,245,0.6)]"
-                    title="Increase connections threshold"
+                    onClick={() => setShowEdgeLabels(!showEdgeLabels)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border border-[rgba(84,84,88,0.65)] ${
+                      showEdgeLabels ? 'bg-[#007AFF] text-white border-[#007AFF]' : 'bg-[#1C1C1E] text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E]'
+                    }`}
+                    title={showEdgeLabels ? "Hide Relationship Labels" : "Show Relationship Labels"}
                   >
-                    <Plus size={14} />
+                    <Type size={14} />
+                    {showEdgeLabels ? 'Labels On' : 'Labels Off'}
+                  </button>
+                  <button
+                    onClick={onLayout}
+                    disabled={isLayouting}
+                    className="flex items-center gap-1.5 bg-[#1C1C1E] hover:bg-[#2C2C2E] px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)] disabled:opacity-50"
+                  >
+                    {isLayouting && <Loader2 size={12} className="animate-spin" />}
+                    Web Layout
                   </button>
                 </div>
-                <button
-                  onClick={() => setShowOutliers(!showOutliers)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border border-[rgba(84,84,88,0.65)] ${
-                    showOutliers ? 'bg-[#1C1C1E] text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E]' : 'bg-[#FF9F0A] text-white border-[#FF9F0A]'
-                  }`}
-                  title={showOutliers ? "Hide Outliers (1 connection)" : "Show All Outliers"}
-                >
-                  <CircleOff size={14} />
-                  {showOutliers ? 'Outliers On' : 'Outliers Off'}
-                </button>
-                <button
-                  onClick={() => setShowEdgeLabels(!showEdgeLabels)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border border-[rgba(84,84,88,0.65)] ${
-                    showEdgeLabels ? 'bg-[#007AFF] text-white border-[#007AFF]' : 'bg-[#1C1C1E] text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E]'
-                  }`}
-                  title={showEdgeLabels ? "Hide Relationship Labels" : "Show Relationship Labels"}
-                >
-                  <Type size={14} />
-                  {showEdgeLabels ? 'Labels On' : 'Labels Off'}
-                </button>
-                <button
-                  onClick={onLayout}
-                  disabled={isLayouting}
-                  className="flex items-center gap-1.5 bg-[#1C1C1E] hover:bg-[#2C2C2E] px-3 py-1.5 rounded-full text-[13px] font-medium transition-colors border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)] disabled:opacity-50"
-                >
-                  {isLayouting && <Loader2 size={12} className="animate-spin" />}
-                  Web Layout
-                </button>
-              </div>
+              )}
             </header>
             <div className="flex-1 relative">
               {/* Loading overlay */}
