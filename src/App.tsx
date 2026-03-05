@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
+import { toast } from 'sonner';
 import ChatArea from './components/ChatArea';
 import InputBar from './components/InputBar';
 import GraphPanel from './components/GraphPanel';
@@ -409,11 +410,14 @@ function AppContent() {
     setInputValue('');
     setIsStreaming(true);
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
       const res = await fetch('/api/investigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: text }),
+        signal: controller.signal,
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -489,10 +493,13 @@ function AppContent() {
       }
     } catch (err: any) {
       console.error(err);
+      const msg = err.name === 'AbortError' ? 'Investigation timed out' : `Analysis failed: ${err.message}`;
+      toast.error(msg);
       setMessages(prev => prev.map(m =>
-        m.id === assistantId ? { ...m, error: `Analysis failed: ${err.message}`, isStreaming: false } : m
+        m.id === assistantId ? { ...m, error: msg, isStreaming: false } : m
       ));
     } finally {
+      clearTimeout(timeout);
       setIsStreaming(false);
     }
   };
@@ -518,6 +525,7 @@ function AppContent() {
       setScanFindings(res.data.findings || []);
     } catch (err) {
       console.error('Scan failed:', err);
+      toast.error('Scan failed');
     } finally {
       setIsScanning(false);
     }
@@ -539,6 +547,7 @@ function AppContent() {
       setActiveCaseId(newCase.id);
     } catch (err) {
       console.error('Failed to create case:', err);
+      toast.error('Failed to create case');
     }
   };
 
@@ -559,6 +568,7 @@ function AppContent() {
       setActiveCaseId(newCase.id);
     } catch (err) {
       console.error('Failed to create case:', err);
+      toast.error('Failed to accept finding');
     }
   };
 
@@ -575,11 +585,14 @@ function AppContent() {
   const investigateTheory = async (theory: string, caseIds: string[]) => {
     setIsTestingTheory(true);
     setTheoryResult({ verdict: null, reportText: '', sources: [], steps: [], theory });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
       const res = await fetch('/api/theories/investigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ theory, case_ids: caseIds }),
+        signal: controller.signal,
       });
       const reader = res.body?.getReader();
       if (!reader) throw new Error('No reader');
@@ -622,9 +635,11 @@ function AppContent() {
           } catch { /* skip malformed */ }
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Theory investigation failed:', err);
+      toast.error(err.name === 'AbortError' ? 'Theory investigation timed out' : 'Theory investigation failed');
     } finally {
+      clearTimeout(timeout);
       setIsTestingTheory(false);
     }
   };
@@ -648,6 +663,7 @@ function AppContent() {
       setTheoryResult(null);
     } catch (err) {
       console.error('Failed to create case from theory:', err);
+      toast.error('Failed to create case from theory');
     }
   };
 
@@ -661,6 +677,7 @@ function AppContent() {
       setCases(prev => prev.map(c => c.id === caseId ? { ...c, status: status as Case['status'] } : c));
     } catch (err) {
       console.error('Failed to update case:', err);
+      toast.error('Failed to update case');
     }
   };
 
@@ -671,6 +688,7 @@ function AppContent() {
       setCases(prev => prev.map(c => c.id === caseId ? { ...c, ...updated } : c));
     } catch (err) {
       console.error('Failed to update case:', err);
+      toast.error('Failed to update case');
     }
   };
 
@@ -681,6 +699,7 @@ function AppContent() {
       if (activeCaseId === caseId) setActiveCaseId(null);
     } catch (err) {
       console.error('Failed to delete case:', err);
+      toast.error('Failed to delete case');
     }
   };
 

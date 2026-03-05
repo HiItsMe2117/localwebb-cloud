@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Shield, Database, Globe, MessageSquare, Loader2, ArrowUp } from 'lucide-react';
 import type { ChatMessage, Source, WebSource } from '../types';
 import InvestigationSteps from './InvestigationSteps';
@@ -58,6 +59,8 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
     setInputValue('');
     setIsStreaming(true);
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
       const res = await fetch('/api/investigate', {
         method: 'POST',
@@ -67,6 +70,7 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
           entity_id: entityId,
           mode,
         }),
+        signal: controller.signal,
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -138,10 +142,13 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
       ));
     } catch (err: any) {
       console.error(err);
+      const msg = err.name === 'AbortError' ? 'Investigation timed out' : `Analysis failed: ${err.message}`;
+      toast.error(msg);
       setMessages(prev => prev.map(m =>
-        m.id === assistantId ? { ...m, error: `Analysis failed: ${err.message}`, isStreaming: false } : m
+        m.id === assistantId ? { ...m, error: msg, isStreaming: false } : m
       ));
     } finally {
+      clearTimeout(timeout);
       setIsStreaming(false);
     }
   };

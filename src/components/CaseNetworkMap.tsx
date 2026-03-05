@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
 import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick } from 'lucide-react';
@@ -173,6 +174,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       setChatMessages(messages);
     } catch (err) {
       console.error('Analysis failed:', err);
+      toast.error('Analysis failed');
       setAnalysisResult('Analysis failed. Please try again.');
     } finally {
       setIsAnalyzing(false);
@@ -285,6 +287,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       clearSelection();
     } catch (err) {
       console.error('Failed to create edge:', err);
+      toast.error('Failed to create connection');
     } finally {
       setIsLinking(false);
     }
@@ -318,6 +321,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       await loadGraph();
     } catch (err) {
       console.error('Failed to delete edge:', err);
+      toast.error('Failed to delete connection');
     } finally {
       setIsDeletingEdge(false);
     }
@@ -339,6 +343,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       await loadGraph();
     } catch (err) {
       console.error('Failed to create custom entity:', err);
+      toast.error('Failed to create entity');
     } finally {
       setIsCreatingEntity(false);
     }
@@ -435,6 +440,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       await loadGraph();
     } catch (err) {
       console.error('Failed to add entity:', err);
+      toast.error('Failed to add entity');
     }
   }, [caseId, loadGraph]);
 
@@ -507,6 +513,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       await loadGraph();
     } catch (err) {
       console.error('Failed to remove entity:', err);
+      toast.error('Failed to remove entity');
     }
   }, [caseId, loadGraph]);
 

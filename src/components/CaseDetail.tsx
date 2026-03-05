@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { toast } from 'sonner';
 import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
@@ -119,10 +120,13 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
     setInvestigationSteps([]);
     setStreamingText('');
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
       const res = await fetch(`/api/cases/${caseId}/investigate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -177,9 +181,11 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
 
       // Reload case to get saved evidence
       await loadCase();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Investigation failed:', err);
+      toast.error(err.name === 'AbortError' ? 'Investigation timed out' : 'Investigation failed');
     } finally {
+      clearTimeout(timeout);
       setIsInvestigating(false);
       setStreamingText('');
       setInvestigationSteps([]);
@@ -195,6 +201,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
       setNoteText('');
     } catch (err) {
       console.error('Failed to add note:', err);
+      toast.error('Failed to add note');
     } finally {
       setIsAddingNote(false);
     }
@@ -210,6 +217,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
       setEditingNoteText('');
     } catch (err) {
       console.error('Failed to save note:', err);
+      toast.error('Failed to save note');
     } finally {
       setIsSavingNote(false);
     }
@@ -224,6 +232,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
       // Scroll to top of list
     } catch (err) {
       console.error('Consolidation failed:', err);
+      toast.error('Report synthesis failed');
     } finally {
       setIsConsolidating(false);
     }
@@ -254,6 +263,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
       setIsEditingCase(false);
     } catch (err) {
       console.error('Failed to save case:', err);
+      toast.error('Failed to save case');
     } finally {
       setIsSavingCase(false);
     }
