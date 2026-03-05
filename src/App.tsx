@@ -602,9 +602,12 @@ function AppContent() {
             } else if (evt.type === 'text') {
               setTheoryResult(prev => prev ? { ...prev, reportText: prev.reportText + (evt.text || '') } : prev);
             } else if (evt.type === 'sources') {
-              setTheoryResult(prev => prev ? { ...prev, sources: evt.sources as Source[] } : prev);
+              setTheoryResult(prev => prev ? { ...prev, sources: (evt.sources || []) as Source[] } : prev);
             } else if (evt.type === 'theory_verdict') {
-              setTheoryResult(prev => prev ? { ...prev, verdict: evt.verdict } : prev);
+              const { type: _, ...verdictData } = evt;
+              setTheoryResult(prev => prev ? { ...prev, verdict: verdictData } : prev);
+            } else if (evt.type === 'done') {
+              // stream finished, no-op
             }
           } catch { /* skip malformed */ }
         }
