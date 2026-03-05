@@ -600,7 +600,7 @@ function AppContent() {
                 return { ...prev, steps };
               });
             } else if (evt.type === 'text') {
-              setTheoryResult(prev => prev ? { ...prev, reportText: prev.reportText + evt.content } : prev);
+              setTheoryResult(prev => prev ? { ...prev, reportText: prev.reportText + (evt.text || '') } : prev);
             } else if (evt.type === 'sources') {
               setTheoryResult(prev => prev ? { ...prev, sources: evt.sources as Source[] } : prev);
             } else if (evt.type === 'theory_verdict') {
