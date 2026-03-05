@@ -70,6 +70,25 @@ export interface CaseEvidence {
   created_at: string;
 }
 
+export interface TheoryVerdict {
+  verdict: 'supported' | 'partially_supported' | 'inconclusive' | 'contradicted';
+  confidence: number;
+  supporting_count: number;
+  contradicting_count: number;
+  entities: string[];
+  claims: { text: string; finding: string; strength: string }[];
+  category: string;
+  suggested_questions: string[];
+}
+
+export interface TheoryResult {
+  verdict: TheoryVerdict | null;
+  reportText: string;
+  sources: Source[];
+  steps: InvestigationStep[];
+  theory: string;
+}
+
 export const CASE_CATEGORIES: Record<string, { label: string; color: string }> = {
   money_laundering: { label: 'Money Laundering', color: '#FF9F0A' },
   fraud:            { label: 'Fraud',            color: '#FF453A' },

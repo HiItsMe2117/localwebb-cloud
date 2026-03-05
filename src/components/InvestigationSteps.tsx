@@ -1,4 +1,4 @@
-import { Search, Network, GitBranch, BookOpen, FileSearch, PenTool, Globe, Loader2, Check, X } from 'lucide-react';
+import { Search, Network, GitBranch, BookOpen, FileSearch, PenTool, Globe, Loader2, Check, X, FlaskConical, ShieldCheck, Scale } from 'lucide-react';
 import type { InvestigationStep } from '../types';
 
 const STEP_CONFIG: Record<string, { icon: typeof Search; color: string }> = {
@@ -9,6 +9,11 @@ const STEP_CONFIG: Record<string, { icon: typeof Search; color: string }> = {
   keyword_search: { icon: FileSearch, color: '#30D158' },
   synthesis: { icon: PenTool, color: '#FF453A' },
   web_search: { icon: Globe, color: '#0A84FF' },
+  theory_decomposition: { icon: FlaskConical, color: '#AF52DE' },
+  supporting_search: { icon: ShieldCheck, color: '#30D158' },
+  counter_search: { icon: Scale, color: '#FF453A' },
+  case_crossref: { icon: Network, color: '#FF9F0A' },
+  verdict_synthesis: { icon: PenTool, color: '#AF52DE' },
 };
 
 interface InvestigationStepsProps {

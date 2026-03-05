@@ -28,7 +28,7 @@ import { getLayoutedElements, computeDegreeMap } from './utils/layout';
 import { getFileUrl } from './utils/files';
 import CasesPanel from './components/CasesPanel';
 import CaseDetail from './components/CaseDetail';
-import type { ChatMessage, Community, Case, ScanFinding } from './types';
+import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, InvestigationStep, Source } from './types';
 
 type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
@@ -87,6 +87,8 @@ function AppContent() {
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanFindings, setScanFindings] = useState<ScanFinding[]>([]);
+  const [isTestingTheory, setIsTestingTheory] = useState(false);
+  const [theoryResult, setTheoryResult] = useState<TheoryResult | null>(null);
 
   // Graph search state
   const [graphSearch, setGraphSearch] = useState('');
@@ -558,6 +560,86 @@ function AppContent() {
     for (const f of scanFindings) {
       await acceptFinding(f);
     }
+  };
+
+  const investigateTheory = async (theory: string, caseIds: string[]) => {
+    setIsTestingTheory(true);
+    setTheoryResult({ verdict: null, reportText: '', sources: [], steps: [], theory });
+    try {
+      const res = await fetch('/api/theories/investigate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theory, case_ids: caseIds }),
+      });
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No reader');
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6);
+          if (raw === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(raw);
+            if (evt.type === 'step_status') {
+              setTheoryResult(prev => {
+                if (!prev) return prev;
+                const existing = prev.steps.findIndex((s: InvestigationStep) => s.step === evt.step);
+                const newStep: InvestigationStep = { step: evt.step, label: evt.label, status: evt.status, detail: evt.detail };
+                const steps = existing >= 0
+                  ? prev.steps.map((s: InvestigationStep, i: number) => i === existing ? newStep : s)
+                  : [...prev.steps, newStep];
+                return { ...prev, steps };
+              });
+            } else if (evt.type === 'text') {
+              setTheoryResult(prev => prev ? { ...prev, reportText: prev.reportText + evt.content } : prev);
+            } else if (evt.type === 'sources') {
+              setTheoryResult(prev => prev ? { ...prev, sources: evt.sources as Source[] } : prev);
+            } else if (evt.type === 'theory_verdict') {
+              setTheoryResult(prev => prev ? { ...prev, verdict: evt.verdict } : prev);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    } catch (err) {
+      console.error('Theory investigation failed:', err);
+    } finally {
+      setIsTestingTheory(false);
+    }
+  };
+
+  const acceptTheory = async () => {
+    if (!theoryResult?.verdict) return;
+    const v = theoryResult.verdict;
+    try {
+      const res = await axios.post('/api/cases', {
+        title: `Theory: ${theoryResult.theory.slice(0, 80)}`,
+        category: v.category || 'other',
+        summary: theoryResult.reportText.slice(0, 2000),
+        confidence: v.confidence,
+        entities: v.entities,
+        suggested_questions: v.suggested_questions,
+        evidence_sources: [],
+      });
+      const newCase = res.data.case;
+      setCases(prev => [newCase, ...prev]);
+      setActiveCaseId(newCase.id);
+      setTheoryResult(null);
+    } catch (err) {
+      console.error('Failed to create case from theory:', err);
+    }
+  };
+
+  const dismissTheory = () => {
+    setTheoryResult(null);
   };
 
   const updateCaseStatus = async (caseId: string, status: string) => {
@@ -1173,6 +1255,11 @@ function AppContent() {
               onAcceptAll={acceptAllFindings}
               onOpenCase={setActiveCaseId}
               onCreateCase={createCase}
+              onTheoryInvestigate={investigateTheory}
+              isTestingTheory={isTestingTheory}
+              theoryResult={theoryResult}
+              onAcceptTheory={acceptTheory}
+              onDismissTheory={dismissTheory}
             />
           )
         )}

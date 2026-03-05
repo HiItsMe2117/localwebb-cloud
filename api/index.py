@@ -449,6 +449,10 @@ class CreateCustomNodeRequest(BaseModel):
 class UpdateEntityDescriptionRequest(BaseModel):
     description: str = ""
 
+class TheoryInvestigateRequest(BaseModel):
+    theory: str
+    case_ids: List[str] = []
+
 # --- Endpoints ---
 
 @app.get("/api")
@@ -1016,6 +1020,54 @@ async def scan_for_cases():
         print(f"CRITICAL: Scan failed: {e}")
         import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": f"Scan failed: {str(e)}"})
+
+
+@app.post("/api/theories/investigate")
+async def investigate_theory(request: TheoryInvestigateRequest):
+    """Test a theory against the evidence corpus. Returns SSE stream."""
+    if not index:
+        return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+
+    # Load cross-reference case data if case_ids provided
+    cross_ref_cases = []
+    for cid in request.case_ids[:5]:
+        try:
+            case_res = supabase.table("cases").select("*").eq("id", cid).execute()
+            if case_res.data:
+                case_data = case_res.data[0]
+                ev_res = supabase.table("case_evidence").select("content").eq("case_id", cid).limit(10).execute()
+                evidence_texts = [e["content"][:500] for e in (ev_res.data or []) if e.get("content")]
+                cross_ref_cases.append({
+                    "id": cid,
+                    "title": case_data["title"],
+                    "summary": case_data.get("summary", ""),
+                    "entities": case_data.get("entities", []),
+                    "evidence_texts": evidence_texts,
+                })
+        except Exception as e:
+            print(f"DEBUG: Failed to load cross-ref case {cid}: {e}")
+
+    try:
+        from api.theory import run_theory_investigation
+    except ImportError:
+        from theory import run_theory_investigation
+
+    return StreamingResponse(
+        run_theory_investigation(
+            theory=request.theory,
+            genai_client=client,
+            pinecone_index=index,
+            supabase_client=supabase,
+            semantic_search_fn=_semantic_search_pass,
+            rerank_fn=None,
+            cross_ref_cases=cross_ref_cases if cross_ref_cases else None,
+        ),
+        media_type="text/event-stream",
+    )
 
 
 @app.get("/api/cases")
