@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -112,6 +112,13 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const [groups, setGroups] = useState<GroupData[]>([]);
   const [editingGroup, setEditingGroup] = useState<GroupData | null>(null);
   const [groupLabel, setGroupLabel] = useState('');
+
+  // Case chat (general AI chat about the whole case)
+  const [caseChatOpen, setCaseChatOpen] = useState(false);
+  const [caseChatMessages, setCaseChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [caseChatInput, setCaseChatInput] = useState('');
+  const [isCaseChatting, setIsCaseChatting] = useState(false);
+  const caseChatEndRef = useRef<HTMLDivElement>(null);
 
   // Per-node scale overrides
   const [nodeScales, setNodeScales] = useState<Record<string, number>>({});
@@ -318,6 +325,27 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       setIsChatting(false);
     }
   }, [caseId, chatInput, chatMessages, isChatting]);
+
+  // Case-level chat send
+  const sendCaseChatMessage = useCallback(async () => {
+    const msg = caseChatInput.trim();
+    if (!msg || isCaseChatting) return;
+    const newMessages = [...caseChatMessages, { role: 'user' as const, content: msg }];
+    setCaseChatMessages(newMessages);
+    setCaseChatInput('');
+    setIsCaseChatting(true);
+    setTimeout(() => caseChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/graph/case-chat`, { messages: newMessages });
+      setCaseChatMessages(prev => [...prev, { role: 'assistant', content: res.data.response }]);
+      setTimeout(() => caseChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    } catch (err) {
+      console.error('Case chat failed:', err);
+      setCaseChatMessages(prev => [...prev, { role: 'assistant', content: 'Failed to get a response. Try again.' }]);
+    } finally {
+      setIsCaseChatting(false);
+    }
+  }, [caseId, caseChatInput, caseChatMessages, isCaseChatting]);
 
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -1334,6 +1362,99 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             </div>
           </div>
         )}
+
+        {/* Case AI chat widget */}
+        <div
+          className="absolute z-20 flex flex-col transition-all"
+          style={{ bottom: 14, left: 14, width: caseChatOpen ? 340 : 'auto' }}
+        >
+          {caseChatOpen ? (
+            <div className="bg-[#1C1C1E]/95 backdrop-blur-md border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl flex flex-col" style={{ height: 360 }}>
+              {/* Header */}
+              <div className="shrink-0 px-3 py-2 flex items-center justify-between border-b border-[rgba(84,84,88,0.35)]">
+                <div className="flex items-center gap-2">
+                  <Bot size={14} className="text-[#5AC8FA]" />
+                  <span className="text-[12px] font-semibold text-white">Case Assistant</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {caseChatMessages.length > 0 && (
+                    <button
+                      onClick={() => setCaseChatMessages([])}
+                      className="p-1 hover:bg-[#2C2C2E] rounded-lg text-[rgba(235,235,245,0.3)] hover:text-white transition-colors"
+                      title="Clear chat"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  )}
+                  <button onClick={() => setCaseChatOpen(false)} className="p-1 hover:bg-[#2C2C2E] rounded-lg">
+                    <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Messages */}
+              <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+                {caseChatMessages.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full text-center gap-2 opacity-50">
+                    <Bot size={24} className="text-[#5AC8FA]" />
+                    <p className="text-[11px] text-[rgba(235,235,245,0.4)] max-w-[200px]">
+                      Ask anything about this case, its entities, connections, or investigation leads.
+                    </p>
+                  </div>
+                )}
+                {caseChatMessages.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] rounded-2xl px-3 py-2 ${
+                      msg.role === 'user'
+                        ? 'bg-[#5AC8FA] text-white'
+                        : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.6)]'
+                    }`}>
+                      <p className="text-[12px] whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                    </div>
+                  </div>
+                ))}
+                {isCaseChatting && (
+                  <div className="flex justify-start">
+                    <div className="bg-[#2C2C2E] rounded-2xl px-3 py-2">
+                      <Loader2 size={14} className="text-[#5AC8FA] animate-spin" />
+                    </div>
+                  </div>
+                )}
+                <div ref={caseChatEndRef} />
+              </div>
+
+              {/* Input */}
+              <div className="shrink-0 px-2.5 py-2 border-t border-[rgba(84,84,88,0.35)]">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={caseChatInput}
+                    onChange={e => setCaseChatInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCaseChatMessage(); } }}
+                    placeholder="Ask about this case..."
+                    disabled={isCaseChatting}
+                    className="flex-1 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-1.5 text-[12px] text-white focus:outline-none focus:border-[#5AC8FA] transition-colors placeholder:text-[rgba(235,235,245,0.2)] disabled:opacity-50"
+                  />
+                  <button
+                    onClick={sendCaseChatMessage}
+                    disabled={!caseChatInput.trim() || isCaseChatting}
+                    className="w-8 h-8 rounded-xl bg-[#5AC8FA] hover:bg-[#4AB8EA] disabled:opacity-30 flex items-center justify-center transition-colors shrink-0"
+                  >
+                    <Send size={12} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setCaseChatOpen(true)}
+              className="w-9 h-9 rounded-xl bg-[#1C1C1E]/90 backdrop-blur-sm border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] flex items-center justify-center transition-colors group"
+              title="Case Assistant"
+            >
+              <Bot size={16} className="text-[#5AC8FA] group-hover:scale-110 transition-transform" />
+            </button>
+          )}
+        </div>
 
         {/* MiniMap collapse/expand toggle */}
         <button

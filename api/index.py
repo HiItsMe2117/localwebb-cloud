@@ -489,6 +489,9 @@ class GraphChatRequest(BaseModel):
     node_ids: List[str]
     messages: List[Dict[str, str]]  # [{"role": "user"|"assistant", "content": "..."}]
 
+class CaseChatRequest(BaseModel):
+    messages: List[Dict[str, str]]
+
 class CreateCaseEdgeRequest(BaseModel):
     source_node_id: str
     target_node_id: str
@@ -2157,6 +2160,95 @@ Answer the researcher's questions using this context. Be specific, cite entity n
         return {"response": res.text}
     except Exception as e:
         print(f"Graph chat failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/case-chat", dependencies=[Depends(require_admin)])
+async def case_general_chat(case_id: str, request: CaseChatRequest):
+    """General chat about the entire case and its network map."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    try:
+        # Load case metadata
+        case_res = supabase.table("cases").select("title, summary, category").eq("id", case_id).execute()
+        case_data = case_res.data[0] if case_res.data else {}
+
+        # Load all entities on the map
+        pinned = supabase.table("case_graph_entities").select("node_id").eq("case_id", case_id).execute()
+        node_ids = [r["node_id"] for r in (pinned.data or [])]
+
+        custom_res = supabase.table("case_graph_custom_nodes").select("id, label, type").eq("case_id", case_id).execute()
+        custom_nodes = custom_res.data or []
+
+        entity_lines = []
+        nodes_by_id = {}
+        if node_ids:
+            nodes_res = supabase.table("nodes").select("id, label, type, description").in_("id", node_ids).execute()
+            for n in (nodes_res.data or []):
+                nodes_by_id[n["id"]] = n
+                desc = (n.get("description") or "")[:200]
+                entity_lines.append(f"- {n.get('label', n['id'])} ({n.get('type', '?')}): {desc}")
+        for cn in custom_nodes:
+            nodes_by_id[cn["id"]] = cn
+            entity_lines.append(f"- {cn.get('label', 'Untitled')} ({cn.get('type', '?')}) [custom]")
+
+        # Load case-level description overrides
+        all_ids = node_ids + [cn["id"] for cn in custom_nodes]
+        if all_ids:
+            desc_res = supabase.table("case_entity_descriptions").select("node_id, description").eq("case_id", case_id).execute()
+            for r in (desc_res.data or []):
+                if r.get("description"):
+                    n = nodes_by_id.get(r["node_id"], {})
+                    label = n.get("label", r["node_id"])
+                    entity_lines.append(f"  Note on {label}: {r['description'][:200]}")
+
+        # Load case-local edges
+        edge_lines = []
+        case_edges_res = supabase.table("case_graph_edges").select("source_node_id, target_node_id, label").eq("case_id", case_id).execute()
+        for ce in (case_edges_res.data or []):
+            src = nodes_by_id.get(ce["source_node_id"], {}).get("label", ce["source_node_id"])
+            tgt = nodes_by_id.get(ce["target_node_id"], {}).get("label", ce["target_node_id"])
+            edge_lines.append(f"- {src} → {ce.get('label', '?')} → {tgt}")
+
+        # Load groups
+        groups_res = supabase.table("case_graph_groups").select("label, node_ids").eq("case_id", case_id).execute()
+        group_lines = []
+        for g in (groups_res.data or []):
+            members = [nodes_by_id.get(nid, {}).get("label", nid) for nid in (g.get("node_ids") or [])]
+            group_lines.append(f"- {g.get('label') or 'Unnamed group'}: {', '.join(members)}")
+
+        system_context = f"""You are a seasoned investigative journalist with decades of experience uncovering financial crimes, corruption, and hidden power networks. You're having a conversation with a researcher about their case and its network map.
+
+CASE: {case_data.get('title', 'Untitled')}
+CATEGORY: {case_data.get('category', 'Unknown')}
+SUMMARY: {case_data.get('summary', 'No summary.')}
+
+ENTITIES ON THE MAP ({len(entity_lines)}):
+{chr(10).join(entity_lines[:50]) if entity_lines else "None yet."}
+
+CASE CONNECTIONS:
+{chr(10).join(edge_lines[:30]) if edge_lines else "None yet."}
+
+{"GROUPS:" + chr(10) + chr(10).join(group_lines) if group_lines else ""}
+
+Answer the researcher's questions using this context. Be specific, cite entity names, and think like an investigative journalist — look for patterns, follow the money, identify intermediaries, and suggest leads. Keep responses concise and actionable."""
+
+        contents = [system_context]
+        for msg in request.messages:
+            contents.append(f"{'Researcher' if msg['role'] == 'user' else 'Journalist'}: {msg['content']}")
+
+        res = generate(
+            client,
+            model="gemini-2.0-flash",
+            contents="\n\n".join(contents),
+        )
+
+        return {"response": res.text}
+    except Exception as e:
+        print(f"Case chat failed: {e}")
         import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 
