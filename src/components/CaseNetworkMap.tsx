@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -943,7 +943,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           style={{ bottom: showMiniMap ? 160 : 14, right: 14 }}
           title={showMiniMap ? 'Collapse minimap' : 'Expand minimap'}
         >
-          <Map size={10} />
+          <MapIcon size={10} />
           {showMiniMap ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
         </button>
 
@@ -1132,7 +1132,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                 : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)]'
             }`}
           >
-            <Map size={11} />
+            <MapIcon size={11} />
             Map
           </button>
           <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">

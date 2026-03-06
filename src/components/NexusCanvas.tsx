@@ -42,9 +42,10 @@ interface NexusProps {
   onPaneClick?: () => void;
   height?: string;
   showEdgeLabels?: boolean;
+  showMiniMap?: boolean;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, height, showEdgeLabels = true }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
@@ -152,7 +153,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
           size={1}
         />
         <Controls showInteractive={false} />
-        {nodes.length < 1000 && (
+        {showMiniMap && nodes.length < 1000 && (
           <MiniMap
             nodeColor={miniMapNodeColor}
             nodeStrokeWidth={2}
