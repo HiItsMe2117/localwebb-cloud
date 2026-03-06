@@ -8,11 +8,91 @@ import ReactFlow, {
   MarkerType,
   useStore,
   useReactFlow,
+  useViewport,
   type ReactFlowState,
 } from 'reactflow';
 import type { Connection, Edge, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import EntityNode from './EntityNode';
+
+// Group ellipse overlay rendered inside the ReactFlow viewport
+function GroupEllipses({ groups, nodes, onGroupClick }: {
+  groups: GroupOverlay[];
+  nodes: Node[];
+  onGroupClick?: (group: GroupOverlay) => void;
+}) {
+  const { x: vx, y: vy, zoom } = useViewport();
+
+  const ellipses = useMemo(() => {
+    if (groups.length === 0) return [];
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    return groups.map(g => {
+      const memberNodes = g.node_ids.map(id => nodeMap.get(id)).filter(Boolean) as Node[];
+      if (memberNodes.length === 0) return null;
+      const xs = memberNodes.map(n => n.position.x);
+      const ys = memberNodes.map(n => n.position.y);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const pad = 80;
+      const cx = (minX + maxX) / 2 + 60; // offset for node width
+      const cy = (minY + maxY) / 2 + 25; // offset for node height
+      const rx = Math.max((maxX - minX) / 2 + pad, 60);
+      const ry = Math.max((maxY - minY) / 2 + pad, 50);
+      return { ...g, cx, cy, rx, ry };
+    }).filter(Boolean);
+  }, [groups, nodes]);
+
+  if (ellipses.length === 0) return null;
+
+  return (
+    <svg
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 0,
+      }}
+    >
+      <g transform={`translate(${vx},${vy}) scale(${zoom})`}>
+        {ellipses.map(e => e && (
+          <g key={e.id}>
+            <ellipse
+              cx={e.cx}
+              cy={e.cy}
+              rx={e.rx}
+              ry={e.ry}
+              fill={e.color + '12'}
+              stroke={e.color}
+              strokeWidth={1.5 / zoom}
+              strokeDasharray={`${6 / zoom} ${4 / zoom}`}
+              style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+              onClick={() => onGroupClick?.(e)}
+            />
+            {e.label && (
+              <text
+                x={e.cx}
+                y={e.cy - e.ry - 8}
+                textAnchor="middle"
+                fill={e.color}
+                fontSize={11 / zoom}
+                fontWeight={600}
+                style={{ pointerEvents: 'auto', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => onGroupClick?.(e)}
+              >
+                {e.label}
+              </text>
+            )}
+          </g>
+        ))}
+      </g>
+    </svg>
+  );
+}
 
 const TYPE_COLORS: Record<string, string> = {
   PERSON: '#60a5fa',
@@ -30,22 +110,32 @@ const EDGE_LABEL_BG_BORDER_RADIUS = 3;
 const EDGE_MARKER_END = { type: MarkerType.Arrow, color: 'rgba(84,84,88,0.65)' };
 const DEFAULT_EDGE_OPTIONS = { type: 'default', animated: false };
 
+interface GroupOverlay {
+  id: string;
+  label: string;
+  color: string;
+  node_ids: string[];
+}
+
 interface NexusProps {
   nodes: Node[];
   edges: Edge[];
   onNodesChange: any;
   onEdgesChange: any;
+  onNodeDragStart?: any;
   onNodeDragStop: any;
   onNodeClick?: (node: Node, event?: React.MouseEvent) => void;
   onEdgeClick?: (edge: Edge) => void;
   onEdgeUpdate?: (oldEdge: Edge, newConnection: Connection) => void;
   onPaneClick?: () => void;
+  onGroupClick?: (group: GroupOverlay) => void;
+  groups?: GroupOverlay[];
   height?: string;
   showEdgeLabels?: boolean;
   showMiniMap?: boolean;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onGroupClick, groups = [], height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
@@ -121,12 +211,13 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
   }, []);
 
   return (
-    <div style={{ width: '100%', height: height || '100%', background: '#000000', willChange: 'transform' }}>
+    <div style={{ width: '100%', height: height || '100%', background: '#000000', willChange: 'transform', position: 'relative' }}>
       <ReactFlow
         nodes={nodes}
         edges={styledEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
         onNodeClick={handleNodeClick}
@@ -161,6 +252,9 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSto
           />
         )}
       </ReactFlow>
+      {groups.length > 0 && (
+        <GroupEllipses groups={groups} nodes={nodes} onGroupClick={onGroupClick} />
+      )}
     </div>
   );
 }

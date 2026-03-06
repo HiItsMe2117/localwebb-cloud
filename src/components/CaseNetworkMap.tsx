@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -26,6 +26,15 @@ interface Neighbor {
   degree: number;
   relationships: string[];
 }
+
+interface GroupData {
+  id: string;
+  label: string;
+  color: string;
+  node_ids: string[];
+}
+
+const GROUP_COLORS = ['#007AFF', '#FF9500', '#AF52DE', '#30D158', '#FF453A', '#5AC8FA', '#FFD60A', '#FF375F'];
 
 const TYPE_COLORS: Record<string, string> = {
   PERSON: '#60a5fa',
@@ -93,6 +102,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const [newEntityType, setNewEntityType] = useState('PERSON');
   const [isCreatingEntity, setIsCreatingEntity] = useState(false);
 
+  // Groups state
+  const [groups, setGroups] = useState<GroupData[]>([]);
+  const [editingGroup, setEditingGroup] = useState<GroupData | null>(null);
+  const [groupLabel, setGroupLabel] = useState('');
+
   // Per-node scale overrides
   const [nodeScales, setNodeScales] = useState<Record<string, number>>({});
 
@@ -104,6 +118,15 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
+
+  // Group lookup: node ID → group
+  const nodeGroupMap = useMemo(() => {
+    const map = new Map<string, GroupData>();
+    for (const g of groups) {
+      for (const nid of g.node_ids) map.set(nid, g);
+    }
+    return map;
+  }, [groups]);
 
   // Apply selection styling, uniform sizing, and per-node scale to nodes
   const displayNodes = useMemo(() =>
@@ -217,6 +240,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       const res = await axios.get(`/api/cases/${caseId}/graph`);
       setNodes(res.data.nodes || []);
       setEdges(res.data.edges || []);
+      setGroups(res.data.groups || []);
     } catch (err) {
       console.error('Failed to load case graph:', err);
     } finally {
@@ -578,16 +602,92 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId, descriptionNode, descriptionText, setNodes]);
 
-  // Save position on drag stop
-  const onNodeDragStop = useCallback(async (_: any, node: Node) => {
+  // Create a group from selected nodes
+  const createGroup = useCallback(async () => {
+    if (selectedNodeIds.size < 2) return;
+    const ids = Array.from(selectedNodeIds);
+    const color = GROUP_COLORS[groups.length % GROUP_COLORS.length];
     try {
-      await axios.post(`/api/cases/${caseId}/graph/positions`, {
-        positions: [{ node_id: node.id, x: node.position.x, y: node.position.y }],
+      await axios.post(`/api/cases/${caseId}/graph/groups`, {
+        label: '',
+        color,
+        node_ids: ids,
       });
+      await loadGraph();
+      clearSelection();
     } catch (err) {
-      console.error('Failed to save position:', err);
+      console.error('Failed to create group:', err);
+      toast.error('Failed to create group');
+    }
+  }, [caseId, selectedNodeIds, groups.length, loadGraph, clearSelection]);
+
+  // Update group (label, color, or members)
+  const updateGroup = useCallback(async (groupId: string, updates: { label?: string; color?: string; node_ids?: string[] }) => {
+    try {
+      await axios.patch(`/api/cases/${caseId}/graph/groups/${groupId}`, updates);
+      setGroups(prev => prev.map(g => g.id === groupId ? { ...g, ...updates } : g));
+    } catch (err) {
+      console.error('Failed to update group:', err);
     }
   }, [caseId]);
+
+  // Delete a group
+  const deleteGroup = useCallback(async (groupId: string) => {
+    try {
+      await axios.delete(`/api/cases/${caseId}/graph/groups/${groupId}`);
+      setGroups(prev => prev.filter(g => g.id !== groupId));
+      setEditingGroup(null);
+    } catch (err) {
+      console.error('Failed to delete group:', err);
+    }
+  }, [caseId]);
+
+  // Track drag start for group dragging
+  const dragStartPos = useRef<{ x: number; y: number } | null>(null);
+
+  const onNodeDragStart = useCallback((_: any, node: Node) => {
+    dragStartPos.current = { x: node.position.x, y: node.position.y };
+  }, []);
+
+  // Save position on drag stop — move group siblings together
+  const onNodeDragStop = useCallback(async (_: any, node: Node) => {
+    const group = nodeGroupMap.get(node.id);
+    const start = dragStartPos.current;
+    dragStartPos.current = null;
+
+    if (group && start) {
+      const dx = node.position.x - start.x;
+      const dy = node.position.y - start.y;
+      if (dx === 0 && dy === 0) return;
+
+      const siblingIds = new Set(group.node_ids.filter(id => id !== node.id));
+
+      // Move siblings and collect all positions in one pass
+      const allPositions = [{ node_id: node.id, x: node.position.x, y: node.position.y }];
+      setNodes(prev => prev.map(n => {
+        if (siblingIds.has(n.id)) {
+          const newPos = { x: n.position.x + dx, y: n.position.y + dy };
+          allPositions.push({ node_id: n.id, x: newPos.x, y: newPos.y });
+          return { ...n, position: newPos };
+        }
+        return n;
+      }));
+
+      try {
+        await axios.post(`/api/cases/${caseId}/graph/positions`, { positions: allPositions });
+      } catch (err) {
+        console.error('Failed to save group positions:', err);
+      }
+    } else {
+      try {
+        await axios.post(`/api/cases/${caseId}/graph/positions`, {
+          positions: [{ node_id: node.id, x: node.position.x, y: node.position.y }],
+        });
+      } catch (err) {
+        console.error('Failed to save position:', err);
+      }
+    }
+  }, [caseId, nodeGroupMap, setNodes]);
 
   // Toggle neighbor selection
   const toggleNeighbor = (id: string) => {
@@ -792,11 +892,14 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           edges={edges}
           onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
+          onNodeDragStart={onNodeDragStart}
           onNodeDragStop={onNodeDragStop}
           onNodeClick={onNodeClick}
           onEdgeClick={onEdgeClick}
           onEdgeUpdate={handleEdgeUpdate}
           onPaneClick={clearSelection}
+          onGroupClick={(g) => { setEditingGroup(g); setGroupLabel(g.label); }}
+          groups={groups}
           showEdgeLabels={false}
           showMiniMap={showMiniMap}
         />
@@ -933,6 +1036,81 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* Group editing panel */}
+        {editingGroup && (
+          <div className="absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl z-20 w-64 flex flex-col">
+            <div className="px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: editingGroup.color }} />
+                <p className="text-[13px] font-semibold text-white">
+                  {editingGroup.label || 'Unnamed Group'}
+                </p>
+              </div>
+              <button onClick={() => setEditingGroup(null)} className="p-1 hover:bg-[#2C2C2E] rounded-lg">
+                <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+              </button>
+            </div>
+            <div className="p-3 space-y-3">
+              {/* Rename */}
+              <div>
+                <label className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider">Label</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="text"
+                    value={groupLabel}
+                    onChange={e => setGroupLabel(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') updateGroup(editingGroup.id, { label: groupLabel }); }}
+                    placeholder="Group name..."
+                    className="flex-1 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#30D158] rounded-lg px-2.5 py-1.5 text-[12px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+                  />
+                  <button
+                    onClick={() => updateGroup(editingGroup.id, { label: groupLabel })}
+                    className="shrink-0 p-1.5 bg-[#30D158] hover:bg-[#28B84C] rounded-lg transition-colors"
+                  >
+                    <Check size={12} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Color picker */}
+              <div>
+                <label className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider">Color</label>
+                <div className="flex items-center gap-1.5 mt-1">
+                  {GROUP_COLORS.map(c => (
+                    <button
+                      key={c}
+                      onClick={() => {
+                        updateGroup(editingGroup.id, { color: c });
+                        setEditingGroup(prev => prev ? { ...prev, color: c } : null);
+                      }}
+                      className="w-6 h-6 rounded-full border-2 transition-all"
+                      style={{
+                        backgroundColor: c,
+                        borderColor: editingGroup.color === c ? 'white' : 'transparent',
+                        transform: editingGroup.color === c ? 'scale(1.15)' : 'scale(1)',
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Member count */}
+              <p className="text-[11px] text-[rgba(235,235,245,0.3)]">
+                {editingGroup.node_ids.length} {editingGroup.node_ids.length === 1 ? 'entity' : 'entities'}
+              </p>
+
+              {/* Delete group */}
+              <button
+                onClick={() => deleteGroup(editingGroup.id)}
+                className="w-full flex items-center justify-center gap-2 bg-[#FF453A]/10 hover:bg-[#FF453A]/20 text-[#FF453A] px-3 py-2 rounded-xl text-[12px] font-semibold transition-colors"
+              >
+                <Trash2 size={12} />
+                Dissolve Group
+              </button>
+            </div>
           </div>
         )}
 
@@ -1166,14 +1344,23 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               </>
             )}
             {selectedNodeIds.size >= 2 && (
-              <button
-                onClick={analyzeSelected}
-                disabled={isAnalyzing}
-                className="flex items-center gap-1.5 bg-[#AF52DE] hover:bg-[#9642C0] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
-              >
-                {isAnalyzing ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
-                Similarities
-              </button>
+              <>
+                <button
+                  onClick={analyzeSelected}
+                  disabled={isAnalyzing}
+                  className="flex items-center gap-1.5 bg-[#AF52DE] hover:bg-[#9642C0] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+                >
+                  {isAnalyzing ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                  Similarities
+                </button>
+                <button
+                  onClick={createGroup}
+                  className="flex items-center gap-1.5 bg-[#30D158] hover:bg-[#28B84C] px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+                >
+                  <Circle size={11} />
+                  Group
+                </button>
+              </>
             )}
             <button
               onClick={copySelectedNodes}

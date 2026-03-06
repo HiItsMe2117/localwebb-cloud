@@ -503,6 +503,16 @@ class CreateCustomNodeRequest(BaseModel):
 class UpdateEntityDescriptionRequest(BaseModel):
     description: str = ""
 
+class CreateGroupRequest(BaseModel):
+    label: str = ""
+    color: str = "#007AFF"
+    node_ids: List[str] = []
+
+class UpdateGroupRequest(BaseModel):
+    label: Optional[str] = None
+    color: Optional[str] = None
+    node_ids: Optional[List[str]] = None
+
 class TheoryInvestigateRequest(BaseModel):
     theory: str
     case_ids: List[str] = []
@@ -1544,7 +1554,18 @@ async def get_case_graph(case_id: str):
                 },
             })
 
-        return {"nodes": nodes, "edges": edges}
+        # Fetch groups
+        groups_res = supabase.table("case_graph_groups").select("*").eq("case_id", case_id).execute()
+        groups = []
+        for g in groups_res.data or []:
+            groups.append({
+                "id": g["id"],
+                "label": g.get("label", ""),
+                "color": g.get("color", "#007AFF"),
+                "node_ids": g.get("node_ids", []),
+            })
+
+        return {"nodes": nodes, "edges": edges, "groups": groups}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -1744,6 +1765,55 @@ async def update_entity_description(case_id: str, node_id: str, request: UpdateE
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }, on_conflict="case_id,node_id").execute()
         return {"saved": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/groups", dependencies=[Depends(require_admin)])
+async def create_case_graph_group(case_id: str, request: CreateGroupRequest):
+    """Create a visual group circle around entities."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        result = supabase.table("case_graph_groups").insert({
+            "case_id": case_id,
+            "label": request.label,
+            "color": request.color,
+            "node_ids": request.node_ids,
+        }).execute()
+        return {"id": result.data[0]["id"] if result.data else None}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/{case_id}/graph/groups/{group_id}", dependencies=[Depends(require_admin)])
+async def update_case_graph_group(case_id: str, group_id: str, request: UpdateGroupRequest):
+    """Update a group's label, color, or member nodes."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        updates = {}
+        if request.label is not None:
+            updates["label"] = request.label
+        if request.color is not None:
+            updates["color"] = request.color
+        if request.node_ids is not None:
+            updates["node_ids"] = request.node_ids
+        if updates:
+            supabase.table("case_graph_groups").update(updates).eq("id", group_id).eq("case_id", case_id).execute()
+        return {"updated": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/cases/{case_id}/graph/groups/{group_id}", dependencies=[Depends(require_admin)])
+async def delete_case_graph_group(case_id: str, group_id: str):
+    """Delete a group (does not remove the entities themselves)."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        supabase.table("case_graph_groups").delete().eq("id", group_id).eq("case_id", case_id).execute()
+        return {"deleted": group_id}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
