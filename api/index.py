@@ -2538,9 +2538,9 @@ async def infrastructure_health():
                 return {"service": "supabase", "status": "down", "latency_ms": 0, "error": "Client not initialized", "metrics": {}}
 
             def _check():
-                chunks_res = supabase.table("document_chunks").select("*", count="exact").limit(0).execute()
-                nodes_res = supabase.table("nodes").select("*", count="exact").limit(0).execute()
-                edges_res = supabase.table("edges").select("*", count="exact").limit(0).execute()
+                chunks_res = supabase.table("document_chunks").select("*", count="estimated").limit(0).execute()
+                nodes_res = supabase.table("nodes").select("*", count="estimated").limit(0).execute()
+                edges_res = supabase.table("edges").select("*", count="estimated").limit(0).execute()
                 return {"document_chunks": chunks_res.count or 0, "nodes": nodes_res.count or 0, "edges": edges_res.count or 0}
 
             metrics = await asyncio.wait_for(asyncio.to_thread(_check), timeout=5.0)
