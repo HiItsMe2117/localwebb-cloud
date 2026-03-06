@@ -1366,7 +1366,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
         {/* Case AI chat widget */}
         <div
           className="absolute z-20 flex flex-col transition-all"
-          style={{ bottom: 14, left: 14, width: caseChatOpen ? 340 : 'auto' }}
+          style={{ bottom: showMiniMap ? 165 : 14, right: showMiniMap ? 220 : 50, width: caseChatOpen ? 340 : 'auto' }}
         >
           {caseChatOpen ? (
             <div className="bg-[#1C1C1E]/95 backdrop-blur-md border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl flex flex-col" style={{ height: 360 }}>
