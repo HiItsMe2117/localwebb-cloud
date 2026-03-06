@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map, ChevronDown, ChevronUp } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -63,6 +63,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
   // Node selection + context menu
   const [selectMode, setSelectMode] = useState(false);
+  const [showMiniMap, setShowMiniMap] = useState(true);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
   const [contextNode, setContextNode] = useState<Node | null>(null);
@@ -797,6 +798,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           onEdgeUpdate={handleEdgeUpdate}
           onPaneClick={clearSelection}
           showEdgeLabels={false}
+          showMiniMap={showMiniMap}
         />
 
         {/* Node context popover */}
@@ -933,6 +935,17 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             )}
           </div>
         )}
+
+        {/* MiniMap collapse/expand toggle */}
+        <button
+          onClick={() => setShowMiniMap(v => !v)}
+          className="absolute z-20 flex items-center gap-1 px-2 py-1 rounded-lg bg-[#1C1C1E]/90 border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] transition-all backdrop-blur-sm text-[10px] font-medium text-[rgba(235,235,245,0.5)] hover:text-white"
+          style={{ bottom: showMiniMap ? 160 : 14, right: 14 }}
+          title={showMiniMap ? 'Collapse minimap' : 'Expand minimap'}
+        >
+          <Map size={10} />
+          {showMiniMap ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
+        </button>
 
         {/* Description panel */}
         {descriptionNode && (
@@ -1111,6 +1124,17 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               )}
             </>
           )}
+          <button
+            onClick={() => setShowMiniMap(v => !v)}
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+              showMiniMap
+                ? 'bg-[#007AFF] text-white'
+                : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)]'
+            }`}
+          >
+            <Map size={11} />
+            Map
+          </button>
           <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
             {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
             {selectMode && selectedNodeIds.size === 0 && ' · Tap entities to select'}
