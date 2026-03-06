@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
-import { useNodesState, useEdgesState, ReactFlowProvider } from 'reactflow';
+import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -72,6 +72,10 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
   // Node selection + context menu
   const [selectMode, setSelectMode] = useState(false);
+  const [lassoMode, setLassoMode] = useState(false);
+  const [lassoPoints, setLassoPoints] = useState<{ x: number; y: number }[]>([]);
+  const [isDrawingLasso, setIsDrawingLasso] = useState(false);
+  const lassoRef = useRef<HTMLDivElement>(null);
   const [showMiniMap, setShowMiniMap] = useState(true);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
@@ -166,6 +170,68 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     setDescriptionNode(null);
     setEdges(eds => eds.map(e => ({ ...e, selected: false })));
   }, [setEdges]);
+
+  // Lasso: convert screen coords to flow coords and select enclosed nodes
+  const { getViewport } = useReactFlow();
+
+  const lassoScreenToFlow = useCallback((screenX: number, screenY: number) => {
+    const bounds = lassoRef.current?.getBoundingClientRect();
+    if (!bounds) return { x: 0, y: 0 };
+    const { x: vx, y: vy, zoom } = getViewport();
+    return {
+      x: (screenX - bounds.left - vx) / zoom,
+      y: (screenY - bounds.top - vy) / zoom,
+    };
+  }, [getViewport]);
+
+  const onLassoDown = useCallback((e: React.MouseEvent) => {
+    if (!lassoMode || e.button !== 0) return;
+    e.preventDefault();
+    const pt = lassoScreenToFlow(e.clientX, e.clientY);
+    setLassoPoints([pt]);
+    setIsDrawingLasso(true);
+  }, [lassoMode, lassoScreenToFlow]);
+
+  const onLassoMove = useCallback((e: React.MouseEvent) => {
+    if (!isDrawingLasso) return;
+    const pt = lassoScreenToFlow(e.clientX, e.clientY);
+    setLassoPoints(prev => [...prev, pt]);
+  }, [isDrawingLasso, lassoScreenToFlow]);
+
+  const onLassoUp = useCallback(() => {
+    if (!isDrawingLasso) return;
+    setIsDrawingLasso(false);
+
+    // Point-in-polygon (ray casting) to find enclosed nodes
+    const poly = lassoPoints;
+    if (poly.length < 3) { setLassoPoints([]); return; }
+
+    const inside = (px: number, py: number) => {
+      let count = 0;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const yi = poly[i].y, yj = poly[j].y;
+        const xi = poly[i].x, xj = poly[j].x;
+        if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+          count++;
+        }
+      }
+      return count % 2 === 1;
+    };
+
+    const selected = new Set<string>();
+    for (const n of nodes) {
+      // Use node center (offset by approximate node width/height)
+      if (inside(n.position.x + 60, n.position.y + 25)) {
+        selected.add(n.id);
+      }
+    }
+
+    if (selected.size > 0) {
+      setSelectedNodeIds(selected);
+      setSelectMode(true);
+    }
+    setLassoPoints([]);
+  }, [isDrawingLasso, lassoPoints, nodes]);
 
   const analyzeSelected = useCallback(async () => {
     if (selectedNodeIds.size < 2) return;
@@ -886,7 +952,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       )}
 
       {/* ReactFlow canvas */}
-      <div className="flex-1 relative">
+      <div ref={lassoRef} className="flex-1 relative">
         <NexusCanvas
           nodes={displayNodes}
           edges={edges}
@@ -900,9 +966,45 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           onPaneClick={clearSelection}
           onGroupClick={(g) => { setEditingGroup(g); setGroupLabel(g.label); }}
           groups={groups}
+          panOnDrag={!lassoMode}
           showEdgeLabels={false}
           showMiniMap={showMiniMap}
         />
+
+        {/* Lasso drawing overlay */}
+        {lassoMode && (
+          <div
+            className="absolute inset-0 z-10"
+            style={{ cursor: 'crosshair' }}
+            onMouseDown={onLassoDown}
+            onMouseMove={onLassoMove}
+            onMouseUp={onLassoUp}
+            onMouseLeave={onLassoUp}
+          >
+            {lassoPoints.length > 1 && (
+              <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                <g>
+                  {(() => {
+                    const { x: vx, y: vy, zoom } = getViewport();
+                    const pts = lassoPoints.map(p => `${p.x * zoom + vx},${p.y * zoom + vy}`).join(' ');
+                    return (
+                      <>
+                        <polygon
+                          points={pts}
+                          fill="rgba(0, 122, 255, 0.08)"
+                          stroke="#007AFF"
+                          strokeWidth={1.5}
+                          strokeDasharray="6 3"
+                          strokeLinejoin="round"
+                        />
+                      </>
+                    );
+                  })()}
+                </g>
+              </svg>
+            )}
+          </div>
+        )}
 
         {/* Node context popover */}
         {contextNode && (
@@ -1272,6 +1374,17 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               >
                 <MousePointerClick size={11} />
                 Select
+              </button>
+              <button
+                onClick={() => setLassoMode(m => !m)}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+                  lassoMode
+                    ? 'bg-[#FF9500] text-white'
+                    : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)]'
+                }`}
+              >
+                <Lasso size={11} />
+                Lasso
               </button>
               {selectedNodeIds.size > 0 && (
                 <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">

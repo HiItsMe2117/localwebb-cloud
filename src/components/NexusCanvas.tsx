@@ -130,12 +130,13 @@ interface NexusProps {
   onPaneClick?: () => void;
   onGroupClick?: (group: GroupOverlay) => void;
   groups?: GroupOverlay[];
+  panOnDrag?: boolean;
   height?: string;
   showEdgeLabels?: boolean;
   showMiniMap?: boolean;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onGroupClick, groups = [], height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onGroupClick, groups = [], panOnDrag = true, height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
@@ -234,6 +235,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
         elevateEdgesOnSelect={false}
         edgesFocusable={true}
         edgesUpdatable={true}
+        panOnDrag={panOnDrag}
         onlyRenderVisibleElements={true}
         zoomOnDoubleClick={false}
       >
