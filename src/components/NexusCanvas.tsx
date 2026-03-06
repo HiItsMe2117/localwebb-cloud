@@ -1,4 +1,4 @@
-import { useCallback, useMemo, memo, useEffect } from 'react';
+import { useCallback, useMemo, memo, useEffect, useRef } from 'react';
 import ReactFlow, {
   addEdge,
   Background,
@@ -141,9 +141,11 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
 
-  // Auto-fit whenever nodes are updated (like after a layout or filter change)
+  // Auto-fit only on initial load, not on every node change
+  const hasFitInitial = useRef(false);
   useEffect(() => {
-    if (nodes.length > 0) {
+    if (nodes.length > 0 && !hasFitInitial.current) {
+      hasFitInitial.current = true;
       fitView({ padding: 0.3, duration: 800 });
     }
   }, [nodes.length, fitView]);

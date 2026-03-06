@@ -477,6 +477,7 @@ class UpdateNoteRequest(BaseModel):
 
 class AddGraphEntitiesRequest(BaseModel):
     node_ids: List[str]
+    positions: Optional[Dict[str, Dict[str, float]]] = None  # {"node_id": {"x": 0, "y": 0}}
 
 class SavePositionsRequest(BaseModel):
     positions: List[Dict[str, Any]]  # [{"node_id": "x", "x": 0.0, "y": 0.0}]
@@ -1576,7 +1577,14 @@ async def add_case_graph_entities(case_id: str, request: AddGraphEntitiesRequest
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
-        records = [{"case_id": case_id, "node_id": nid} for nid in request.node_ids]
+        pos_map = request.positions or {}
+        records = []
+        for nid in request.node_ids:
+            rec = {"case_id": case_id, "node_id": nid}
+            if nid in pos_map:
+                rec["position_x"] = pos_map[nid]["x"]
+                rec["position_y"] = pos_map[nid]["y"]
+            records.append(rec)
         supabase.table("case_graph_entities").upsert(records, on_conflict="case_id,node_id").execute()
         return {"added": len(request.node_ids)}
     except Exception as e:

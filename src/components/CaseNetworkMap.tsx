@@ -125,6 +125,29 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
 
+  // Calculate positions for new nodes — spread around the center of existing nodes
+  const getNewNodePositions = useCallback((newIds: string[], anchorNodeId?: string) => {
+    const positions: Record<string, { x: number; y: number }> = {};
+    let cx = 0, cy = 0;
+    if (anchorNodeId) {
+      const anchor = nodes.find(n => n.id === anchorNodeId);
+      if (anchor) { cx = anchor.position.x; cy = anchor.position.y; }
+    } else if (nodes.length > 0) {
+      for (const n of nodes) { cx += n.position.x; cy += n.position.y; }
+      cx /= nodes.length;
+      cy /= nodes.length;
+    }
+    const radius = 150 + newIds.length * 20;
+    newIds.forEach((id, i) => {
+      const angle = (2 * Math.PI * i) / newIds.length - Math.PI / 2;
+      positions[id] = {
+        x: cx + radius * Math.cos(angle),
+        y: cy + radius * Math.sin(angle),
+      };
+    });
+    return positions;
+  }, [nodes]);
+
   // Group lookup: node ID → group
   const nodeGroupMap = useMemo(() => {
     const map = new Map<string, GroupData>();
@@ -478,7 +501,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     if (ids.length === 0) return;
     setIsAddingSuggestions(true);
     try {
-      await axios.post(`/api/cases/${caseId}/graph/entities`, { node_ids: ids });
+      const positions = getNewNodePositions(ids);
+      await axios.post(`/api/cases/${caseId}/graph/entities`, { node_ids: ids, positions });
       setSuggestions([]);
       await loadGraph();
     } catch (err) {
@@ -486,7 +510,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     } finally {
       setIsAddingSuggestions(false);
     }
-  }, [caseId, loadGraph]);
+  }, [caseId, loadGraph, getNewNodePositions]);
 
   // Fullscreen toggle
   const toggleFullscreen = useCallback(() => {
@@ -545,13 +569,14 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     setSearchQuery('');
     setSearchResults([]);
     try {
-      await axios.post(`/api/cases/${caseId}/graph/entities`, { node_ids: [result.id] });
+      const positions = getNewNodePositions([result.id]);
+      await axios.post(`/api/cases/${caseId}/graph/entities`, { node_ids: [result.id], positions });
       await loadGraph();
     } catch (err) {
       console.error('Failed to add entity:', err);
       toast.error('Failed to add entity');
     }
-  }, [caseId, loadGraph]);
+  }, [caseId, loadGraph, getNewNodePositions]);
 
   // Node click: plain click → context menu (expand/remove). Shift+click or select mode → toggle multi-select.
   const onNodeClick = useCallback((node: Node, event?: React.MouseEvent) => {
@@ -598,7 +623,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     if (selectedNeighbors.size === 0) return;
     setIsAddingNeighbors(true);
     try {
-      await axios.post(`/api/cases/${caseId}/graph/entities`, { node_ids: Array.from(selectedNeighbors) });
+      const ids = Array.from(selectedNeighbors);
+      const positions = getNewNodePositions(ids, expandNode?.id);
+      await axios.post(`/api/cases/${caseId}/graph/entities`, { node_ids: ids, positions });
       setExpandNode(null);
       setNeighbors([]);
       setSelectedNeighbors(new Set());
@@ -608,7 +635,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     } finally {
       setIsAddingNeighbors(false);
     }
-  }, [caseId, selectedNeighbors, loadGraph]);
+  }, [caseId, selectedNeighbors, expandNode, loadGraph, getNewNodePositions]);
 
   // Remove entity (routes custom nodes to the custom-nodes endpoint)
   const handleRemove = useCallback(async (node: Node) => {
