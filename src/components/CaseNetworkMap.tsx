@@ -824,20 +824,24 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }, 0);
   }, [caseId, setNodes]);
 
-  // Track drag start for group dragging
+  // Track drag start for group dragging (hold Shift to move whole group)
   const dragStartPos = useRef<{ x: number; y: number } | null>(null);
+  const dragWithGroup = useRef(false);
 
-  const onNodeDragStart = useCallback((_: any, node: Node) => {
+  const onNodeDragStart = useCallback((event: any, node: Node) => {
     dragStartPos.current = { x: node.position.x, y: node.position.y };
+    dragWithGroup.current = event.shiftKey;
   }, []);
 
-  // Save position on drag stop — move group siblings together
+  // Save position on drag stop — hold Shift to move group siblings together
   const onNodeDragStop = useCallback(async (_: any, node: Node) => {
     const group = nodeGroupMap.get(node.id);
     const start = dragStartPos.current;
+    const moveGroup = dragWithGroup.current;
     dragStartPos.current = null;
+    dragWithGroup.current = false;
 
-    if (group && start) {
+    if (group && start && moveGroup) {
       const dx = node.position.x - start.x;
       const dy = node.position.y - start.y;
       if (dx === 0 && dy === 0) return;

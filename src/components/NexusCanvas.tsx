@@ -61,6 +61,7 @@ function GroupEllipses({ groups, nodes, onGroupClick }: {
       <g transform={`translate(${vx},${vy}) scale(${zoom})`}>
         {ellipses.map(e => e && (
           <g key={e.id}>
+            {/* Visual ellipse — no pointer events so nodes can be dragged */}
             <ellipse
               cx={e.cx}
               cy={e.cy}
@@ -70,7 +71,18 @@ function GroupEllipses({ groups, nodes, onGroupClick }: {
               stroke={e.color}
               strokeWidth={1.5 / zoom}
               strokeDasharray={`${6 / zoom} ${4 / zoom}`}
-              style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+              style={{ pointerEvents: 'none' }}
+            />
+            {/* Invisible hit target — stroke only for group selection */}
+            <ellipse
+              cx={e.cx}
+              cy={e.cy}
+              rx={e.rx}
+              ry={e.ry}
+              fill="none"
+              stroke="transparent"
+              strokeWidth={12 / zoom}
+              style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
               onClick={() => onGroupClick?.(e)}
             />
             {e.label && (
