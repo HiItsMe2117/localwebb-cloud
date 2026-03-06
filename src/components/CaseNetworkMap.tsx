@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import axios from 'axios';
 
@@ -708,6 +708,49 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId]);
 
+  // Rotate a set of nodes by `degrees` around their centroid
+  const rotateNodes = useCallback(async (nodeIds: string[], degrees: number) => {
+    const rad = (degrees * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+
+    const positions: { node_id: string; x: number; y: number }[] = [];
+
+    setNodes(prev => {
+      const targets = prev.filter(n => nodeIds.includes(n.id));
+      if (targets.length < 2) return prev;
+
+      // Calculate centroid
+      let cx = 0, cy = 0;
+      for (const n of targets) { cx += n.position.x; cy += n.position.y; }
+      cx /= targets.length;
+      cy /= targets.length;
+
+      return prev.map(n => {
+        if (!nodeIds.includes(n.id)) return n;
+        const dx = n.position.x - cx;
+        const dy = n.position.y - cy;
+        const newPos = {
+          x: cx + dx * cos - dy * sin,
+          y: cy + dx * sin + dy * cos,
+        };
+        positions.push({ node_id: n.id, x: newPos.x, y: newPos.y });
+        return { ...n, position: newPos };
+      });
+    });
+
+    // Save positions after state update
+    setTimeout(async () => {
+      if (positions.length > 0) {
+        try {
+          await axios.post(`/api/cases/${caseId}/graph/positions`, { positions });
+        } catch (err) {
+          console.error('Failed to save rotated positions:', err);
+        }
+      }
+    }, 0);
+  }, [caseId, setNodes]);
+
   // Track drag start for group dragging
   const dragStartPos = useRef<{ x: number; y: number } | null>(null);
 
@@ -1199,6 +1242,37 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                 </div>
               </div>
 
+              {/* Rotate group */}
+              <div>
+                <label className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider">Rotate</label>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <button
+                    onClick={() => rotateNodes(editingGroup.node_ids, -45)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-[#2C2C2E] hover:bg-[#3A3A3C] rounded-lg text-[11px] text-[rgba(235,235,245,0.6)] transition-colors"
+                  >
+                    <RotateCcw size={11} /> 45°
+                  </button>
+                  <button
+                    onClick={() => rotateNodes(editingGroup.node_ids, -15)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-[#2C2C2E] hover:bg-[#3A3A3C] rounded-lg text-[11px] text-[rgba(235,235,245,0.6)] transition-colors"
+                  >
+                    <RotateCcw size={11} /> 15°
+                  </button>
+                  <button
+                    onClick={() => rotateNodes(editingGroup.node_ids, 15)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-[#2C2C2E] hover:bg-[#3A3A3C] rounded-lg text-[11px] text-[rgba(235,235,245,0.6)] transition-colors"
+                  >
+                    15° <RotateCw size={11} />
+                  </button>
+                  <button
+                    onClick={() => rotateNodes(editingGroup.node_ids, 45)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-[#2C2C2E] hover:bg-[#3A3A3C] rounded-lg text-[11px] text-[rgba(235,235,245,0.6)] transition-colors"
+                  >
+                    45° <RotateCw size={11} />
+                  </button>
+                </div>
+              </div>
+
               {/* Member count */}
               <p className="text-[11px] text-[rgba(235,235,245,0.3)]">
                 {editingGroup.node_ids.length} {editingGroup.node_ids.length === 1 ? 'entity' : 'entities'}
@@ -1387,31 +1461,50 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                 Lasso
               </button>
               {selectedNodeIds.size > 0 && (
-                <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">
-                  <button
-                    onClick={() => setNodeScales(prev => {
-                      const next = { ...prev };
-                      selectedNodeIds.forEach(id => { next[id] = Math.max(0.4, (next[id] ?? 1) - 0.15); });
-                      return next;
-                    })}
-                    className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
-                  >
-                    <Minus size={11} />
-                  </button>
-                  <span className="text-[10px] text-[rgba(235,235,245,0.4)] font-mono px-1">
-                    {Math.round(([...selectedNodeIds].reduce((sum, id) => sum + (nodeScales[id] ?? 1), 0) / selectedNodeIds.size) * 100)}%
-                  </span>
-                  <button
-                    onClick={() => setNodeScales(prev => {
-                      const next = { ...prev };
-                      selectedNodeIds.forEach(id => { next[id] = Math.min(2, (next[id] ?? 1) + 0.15); });
-                      return next;
-                    })}
-                    className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
-                  >
-                    <Plus size={11} />
-                  </button>
-                </div>
+                <>
+                  <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => setNodeScales(prev => {
+                        const next = { ...prev };
+                        selectedNodeIds.forEach(id => { next[id] = Math.max(0.4, (next[id] ?? 1) - 0.15); });
+                        return next;
+                      })}
+                      className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
+                    >
+                      <Minus size={11} />
+                    </button>
+                    <span className="text-[10px] text-[rgba(235,235,245,0.4)] font-mono px-1">
+                      {Math.round(([...selectedNodeIds].reduce((sum, id) => sum + (nodeScales[id] ?? 1), 0) / selectedNodeIds.size) * 100)}%
+                    </span>
+                    <button
+                      onClick={() => setNodeScales(prev => {
+                        const next = { ...prev };
+                        selectedNodeIds.forEach(id => { next[id] = Math.min(2, (next[id] ?? 1) + 0.15); });
+                        return next;
+                      })}
+                      className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
+                    >
+                      <Plus size={11} />
+                    </button>
+                  </div>
+                  {selectedNodeIds.size >= 2 && (
+                    <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden" title="Rotate selected entities">
+                      <button
+                        onClick={() => rotateNodes(Array.from(selectedNodeIds), -15)}
+                        className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
+                      >
+                        <RotateCcw size={11} />
+                      </button>
+                      <span className="text-[10px] text-[rgba(235,235,245,0.4)] font-mono px-0.5">15°</span>
+                      <button
+                        onClick={() => rotateNodes(Array.from(selectedNodeIds), 15)}
+                        className="px-1.5 py-1 text-[rgba(235,235,245,0.5)] hover:text-white hover:bg-[#3A3A3C] transition-colors"
+                      >
+                        <RotateCw size={11} />
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
