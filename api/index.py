@@ -590,8 +590,8 @@ async def get_file(filename: str, page: Optional[str] = Query(None)):
     return RedirectResponse(url=signed_url, status_code=302)
 
 @app.get("/api/graph")
-async def get_graph(min_degree: int = Query(default=50)):
-    return graph_store.load(min_degree=min_degree)
+async def get_graph():
+    return graph_store.load()
 
 @app.post("/api/graph/positions", dependencies=[Depends(require_admin)])
 async def update_positions(updates: List[PositionUpdate]):
