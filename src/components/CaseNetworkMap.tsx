@@ -771,7 +771,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   }, [caseId, loadGraph]);
 
   // Handle solidify from evidence panel
-  const handleSolidify = useCallback(async (edgeId: string) => {
+  const handleSolidify = useCallback(async () => {
     setEvidenceEdge(null);
     await loadGraph();
   }, [loadGraph]);
