@@ -140,6 +140,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const [timelineYear, setTimelineYear] = useState(2026);
   const allEdgesRef = useRef<Edge[]>([]);
 
+  // Viewport persistence
+  const viewportKey = `case-map-viewport-${caseId}`;
+  const hasSavedViewport = useRef(false);
+  const viewportSaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
   // Semantic layout state (Phase 4)
   const [layoutMode, setLayoutMode] = useState<'manual' | 'semantic'>('manual');
   const [isComputingLayout, setIsComputingLayout] = useState(false);
@@ -220,7 +225,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   }, [setEdges]);
 
   // Lasso: convert screen coords to flow coords and select enclosed nodes
-  const { getViewport } = useReactFlow();
+  const { getViewport, setViewport, fitView } = useReactFlow();
 
   const lassoScreenToFlow = useCallback((screenX: number, screenY: number) => {
     const bounds = lassoRef.current?.getBoundingClientRect();
@@ -505,9 +510,50 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId, newEntityLabel, newEntityType, loadGraph]);
 
+  // Check for saved viewport on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(viewportKey);
+      if (saved) {
+        hasSavedViewport.current = true;
+      }
+    } catch {}
+  }, [viewportKey]);
+
   useEffect(() => {
     loadGraph();
   }, [loadGraph]);
+
+  // Restore saved viewport after initial graph load
+  useEffect(() => {
+    if (isLoading || nodes.length === 0) return;
+    if (!hasSavedViewport.current) {
+      fitView({ padding: 0.3, duration: 800 });
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(viewportKey);
+      if (saved) {
+        const vp = JSON.parse(saved);
+        setViewport(vp, { duration: 0 });
+      }
+    } catch {
+      fitView({ padding: 0.3, duration: 800 });
+    }
+    // Only run once after initial load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
+
+  // Save viewport on pan/zoom (debounced)
+  const onMoveEnd = useCallback((_event: any, viewport: { x: number; y: number; zoom: number }) => {
+    clearTimeout(viewportSaveTimer.current);
+    viewportSaveTimer.current = setTimeout(() => {
+      try {
+        localStorage.setItem(viewportKey, JSON.stringify(viewport));
+        hasSavedViewport.current = true;
+      } catch {}
+    }, 300);
+  }, [viewportKey]);
 
   // Load suggested entities from case when graph is empty
   useEffect(() => {
@@ -1235,11 +1281,13 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           onEdgeClick={onEdgeClick}
           onEdgeUpdate={handleEdgeUpdate}
           onPaneClick={clearSelection}
+          onMoveEnd={onMoveEnd}
           onGroupClick={(g) => { setEditingGroup(g); setGroupLabel(g.label); }}
           onGroupDrag={onGroupDrag}
           onGroupDragEnd={onGroupDragEnd}
           groups={groups}
           panOnDrag={!lassoMode}
+          skipInitialFitView={hasSavedViewport.current}
           showEdgeLabels={false}
           showMiniMap={showMiniMap}
         />
@@ -1507,6 +1555,26 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               <p className="text-[11px] text-[rgba(235,235,245,0.3)]">
                 {editingGroup.node_ids.length} {editingGroup.node_ids.length === 1 ? 'entity' : 'entities'}
               </p>
+
+              {/* Add selected nodes to group */}
+              {(() => {
+                const newIds = [...selectedNodeIds].filter(id => !editingGroup.node_ids.includes(id));
+                if (newIds.length === 0) return null;
+                return (
+                  <button
+                    onClick={() => {
+                      const merged = [...editingGroup.node_ids, ...newIds];
+                      updateGroup(editingGroup.id, { node_ids: merged });
+                      setEditingGroup(prev => prev ? { ...prev, node_ids: merged } : null);
+                      clearSelection();
+                    }}
+                    className="w-full flex items-center justify-center gap-2 bg-[#007AFF]/10 hover:bg-[#007AFF]/20 text-[#007AFF] px-3 py-2 rounded-xl text-[12px] font-semibold transition-colors"
+                  >
+                    <Plus size={12} />
+                    Add {newIds.length} selected {newIds.length === 1 ? 'entity' : 'entities'}
+                  </button>
+                );
+              })()}
 
               {/* Delete group */}
               <button

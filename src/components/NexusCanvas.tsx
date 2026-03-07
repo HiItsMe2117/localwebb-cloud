@@ -201,17 +201,19 @@ interface NexusProps {
   onEdgeClick?: (edge: Edge) => void;
   onEdgeUpdate?: (oldEdge: Edge, newConnection: Connection) => void;
   onPaneClick?: () => void;
+  onMoveEnd?: (event: any, viewport: { x: number; y: number; zoom: number }) => void;
   onGroupClick?: (group: GroupOverlay) => void;
   onGroupDrag?: (group: GroupOverlay, dx: number, dy: number) => void;
   onGroupDragEnd?: (group: GroupOverlay) => void;
   groups?: GroupOverlay[];
   panOnDrag?: boolean;
+  skipInitialFitView?: boolean;
   height?: string;
   showEdgeLabels?: boolean;
   showMiniMap?: boolean;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onGroupClick, onGroupDrag, onGroupDragEnd, groups = [], panOnDrag = true, height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onMoveEnd, onGroupClick, onGroupDrag, onGroupDragEnd, groups = [], panOnDrag = true, skipInitialFitView = false, height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
@@ -221,9 +223,11 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
   useEffect(() => {
     if (nodes.length > 0 && !hasFitInitial.current) {
       hasFitInitial.current = true;
-      fitView({ padding: 0.3, duration: 800 });
+      if (!skipInitialFitView) {
+        fitView({ padding: 0.3, duration: 800 });
+      }
     }
-  }, [nodes.length, fitView]);
+  }, [nodes.length, fitView, skipInitialFitView]);
 
   const onConnect = useCallback(
     (params: Connection) => onEdgesChange((eds: Edge[]) => addEdge(params, eds)),
@@ -305,9 +309,9 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
         onEdgeClick={handleEdgeClick}
         onEdgeUpdate={handleEdgeUpdate}
         onPaneClick={onPaneClick}
+        onMoveEnd={onMoveEnd}
         reconnectRadius={30}
         nodeTypes={nodeTypes}
-        fitView
         minZoom={0.1}
         maxZoom={2}
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
