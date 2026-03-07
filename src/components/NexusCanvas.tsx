@@ -16,12 +16,73 @@ import 'reactflow/dist/style.css';
 import EntityNode from './EntityNode';
 
 // Group ellipse overlay rendered inside the ReactFlow viewport
-function GroupEllipses({ groups, nodes, onGroupClick }: {
+function GroupEllipses({ groups, nodes, onGroupClick, onGroupDrag, onGroupDragEnd }: {
   groups: GroupOverlay[];
   nodes: Node[];
   onGroupClick?: (group: GroupOverlay) => void;
+  onGroupDrag?: (group: GroupOverlay, dx: number, dy: number) => void;
+  onGroupDragEnd?: (group: GroupOverlay) => void;
 }) {
   const { x: vx, y: vy, zoom } = useViewport();
+
+  // Drag state for group title dragging
+  const dragState = useRef<{
+    group: GroupOverlay;
+    lastX: number;
+    lastY: number;
+    hasMoved: boolean;
+  } | null>(null);
+  const onGroupDragRef = useRef(onGroupDrag);
+  const onGroupDragEndRef = useRef(onGroupDragEnd);
+  const onGroupClickRef = useRef(onGroupClick);
+  const zoomRef = useRef(zoom);
+  onGroupDragRef.current = onGroupDrag;
+  onGroupDragEndRef.current = onGroupDragEnd;
+  onGroupClickRef.current = onGroupClick;
+  zoomRef.current = zoom;
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    const state = dragState.current;
+    if (!state) return;
+    const dx = e.clientX - state.lastX;
+    const dy = e.clientY - state.lastY;
+    if (!state.hasMoved && Math.abs(e.clientX - state.lastX) < 5 && Math.abs(e.clientY - state.lastY) < 5) return;
+    state.hasMoved = true;
+    state.lastX = e.clientX;
+    state.lastY = e.clientY;
+    document.body.style.cursor = 'grabbing';
+    onGroupDragRef.current?.(state.group, dx / zoomRef.current, dy / zoomRef.current);
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    const state = dragState.current;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = '';
+    if (!state) return;
+    if (state.hasMoved) {
+      onGroupDragEndRef.current?.(state.group);
+    } else {
+      onGroupClickRef.current?.(state.group);
+    }
+    dragState.current = null;
+  }, [handleMouseMove]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent, group: GroupOverlay) => {
+    e.stopPropagation();
+    e.preventDefault();
+    dragState.current = { group, lastX: e.clientX, lastY: e.clientY, hasMoved: false };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [handleMouseMove, handleMouseUp]);
+
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+    };
+  }, [handleMouseMove, handleMouseUp]);
 
   const ellipses = useMemo(() => {
     if (groups.length === 0) return [];
@@ -93,8 +154,8 @@ function GroupEllipses({ groups, nodes, onGroupClick }: {
                 fill={e.color}
                 fontSize={11 / zoom}
                 fontWeight={600}
-                style={{ pointerEvents: 'auto', cursor: 'pointer', userSelect: 'none' }}
-                onClick={() => onGroupClick?.(e)}
+                style={{ pointerEvents: 'auto', cursor: 'grab', userSelect: 'none' }}
+                onMouseDown={(ev) => handleMouseDown(ev, e)}
               >
                 {e.label}
               </text>
@@ -141,6 +202,8 @@ interface NexusProps {
   onEdgeUpdate?: (oldEdge: Edge, newConnection: Connection) => void;
   onPaneClick?: () => void;
   onGroupClick?: (group: GroupOverlay) => void;
+  onGroupDrag?: (group: GroupOverlay, dx: number, dy: number) => void;
+  onGroupDragEnd?: (group: GroupOverlay) => void;
   groups?: GroupOverlay[];
   panOnDrag?: boolean;
   height?: string;
@@ -148,7 +211,7 @@ interface NexusProps {
   showMiniMap?: boolean;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onGroupClick, groups = [], panOnDrag = true, height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onGroupClick, onGroupDrag, onGroupDragEnd, groups = [], panOnDrag = true, height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
@@ -195,6 +258,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
     const isHeavy = edges.length > 500;
     return edges.map(e => {
       const isCaseLocal = e.data?.isCaseLocal;
+      const isHypothesis = e.data?.isHypothesis;
       return {
         ...e,
         label: isCaseLocal ? (e.label || undefined) : ((isHeavy || !showEdgeLabels) ? undefined : e.label),
@@ -206,12 +270,14 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
         style: {
           ...(e.style || {}),
           stroke: e.selected
-            ? (isCaseLocal ? '#FF453A' : '#007AFF')
-            : isCaseLocal
-              ? '#007AFF'
-              : (e.data?.confidence === 'INFERRED' ? 'rgba(235,235,245,0.3)' : 'rgba(84,84,88,0.65)'),
+            ? (isHypothesis ? '#FBBF24' : isCaseLocal ? '#FF453A' : '#007AFF')
+            : isHypothesis
+              ? '#FBBF24'
+              : isCaseLocal
+                ? '#007AFF'
+                : (e.data?.confidence === 'INFERRED' ? 'rgba(235,235,245,0.3)' : 'rgba(84,84,88,0.65)'),
           strokeWidth: e.selected ? 2.5 : (isCaseLocal ? 2 : 1.5),
-          strokeDasharray: e.data?.confidence === 'INFERRED' ? '4 4' : undefined,
+          strokeDasharray: isHypothesis ? '8 4' : (e.data?.confidence === 'INFERRED' ? '4 4' : undefined),
           cursor: 'pointer',
           pointerEvents: 'auto',
         },
@@ -269,7 +335,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
         )}
       </ReactFlow>
       {groups.length > 0 && (
-        <GroupEllipses groups={groups} nodes={nodes} onGroupClick={onGroupClick} />
+        <GroupEllipses groups={groups} nodes={nodes} onGroupClick={onGroupClick} onGroupDrag={onGroupDrag} onGroupDragEnd={onGroupDragEnd} />
       )}
     </div>
   );

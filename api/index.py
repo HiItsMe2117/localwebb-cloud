@@ -203,22 +203,45 @@ class SupabaseStore:
             offset += page_size
         return all_rows
 
-    def load(self):
-        """Load full graph from Supabase for ReactFlow compatibility."""
+    def _fetch_nodes_filtered(self, min_degree: int):
+        """Fetch nodes filtered by minimum degree from metadata->>degree."""
+        if min_degree <= 1:
+            return self._fetch_all("nodes")
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            res = (supabase.table("nodes")
+                   .select("*")
+                   .gte("metadata->>degree", min_degree)
+                   .range(offset, offset + page_size - 1)
+                   .execute())
+            all_rows.extend(res.data)
+            if len(res.data) < page_size:
+                break
+            offset += page_size
+        return all_rows
+
+    def load(self, min_degree: int = 1):
+        """Load graph from Supabase for ReactFlow compatibility, with server-side degree filtering."""
         if not supabase:
             print("ERROR: Supabase client not initialized. Cannot load graph.")
             return {"nodes": [], "edges": []}
 
         try:
-            nodes_data = self._fetch_all("nodes")
+            # Fetch nodes with degree filter applied server-side
+            nodes_data = self._fetch_nodes_filtered(min_degree)
+            node_ids = {n["id"] for n in nodes_data}
+
+            # Fetch all edges, then filter to only those between visible nodes
             edges_data = self._fetch_all("edges")
-            
+            edges_data = [e for e in edges_data if e["source"] in node_ids and e["target"] in node_ids]
+
             # Format nodes for ReactFlow
             nodes = []
             for n in nodes_data:
-                # Ensure 'data' and 'position' are always present
                 node_data = n.get("metadata", {})
-                position = n.get("position", {"x": 0, "y": 0}) 
+                position = n.get("position", {"x": 0, "y": 0})
                 nodes.append({
                     "id": n["id"],
                     "type": "entityNode",
@@ -233,7 +256,7 @@ class SupabaseStore:
                     },
                     "position": position
                 })
-            
+
             # Format edges for ReactFlow
             edges = []
             for e in edges_data:
@@ -253,7 +276,7 @@ class SupabaseStore:
                         "date_mentioned": e.get("date_mentioned"),
                     }
                 })
-            
+
             return {"nodes": nodes, "edges": edges}
         except Exception as e:
             print(f"CRITICAL: Error loading graph from Supabase: {e}")
@@ -496,6 +519,7 @@ class CreateCaseEdgeRequest(BaseModel):
     source_node_id: str
     target_node_id: str
     label: str = ""
+    is_hypothesis: bool = False
 
 class UpdateCaseEdgeRequest(BaseModel):
     label: str = ""
@@ -566,8 +590,8 @@ async def get_file(filename: str, page: Optional[str] = Query(None)):
     return RedirectResponse(url=signed_url, status_code=302)
 
 @app.get("/api/graph")
-async def get_graph():
-    return graph_store.load()
+async def get_graph(min_degree: int = Query(default=50)):
+    return graph_store.load(min_degree=min_degree)
 
 @app.post("/api/graph/positions", dependencies=[Depends(require_admin)])
 async def update_positions(updates: List[PositionUpdate]):
@@ -1541,12 +1565,12 @@ async def get_case_graph(case_id: str):
                 "position": {"x": cn.get("position_x") or 0, "y": cn.get("position_y") or 0},
             })
 
-        # Only show user-created case-local edges (no knowledge-graph edges)
         edges = []
 
         # Fetch case-local edges
         case_edges_res = supabase.table("case_graph_edges").select("*").eq("case_id", case_id).execute()
         for ce in case_edges_res.data or []:
+            is_hyp = ce.get("is_hypothesis", False)
             edges.append({
                 "id": ce["id"],
                 "source": ce["source_node_id"],
@@ -1555,8 +1579,43 @@ async def get_case_graph(case_id: str):
                 "animated": False,
                 "data": {
                     "isCaseLocal": True,
+                    "isHypothesis": is_hyp,
+                    "evidence_text": ce.get("evidence_text", ""),
+                    "source_filename": ce.get("source_filename", ""),
+                    "source_page": ce.get("source_page"),
+                    "confidence": ce.get("confidence", ""),
                 },
             })
+
+        # Fetch global KG edges between pinned entities (+ custom node IDs)
+        all_node_ids = node_ids + [cn["id"] for cn in custom_rows]
+        if len(all_node_ids) >= 2:
+            global_edges_res = supabase.table("edges").select(
+                "id, source, target, label, predicate, evidence_text, source_filename, source_page, confidence, date_mentioned"
+            ).in_("source", all_node_ids).in_("target", all_node_ids).execute()
+
+            case_edge_pairs = {(ce["source_node_id"], ce["target_node_id"]) for ce in (case_edges_res.data or [])}
+            case_edge_pairs |= {(ce["target_node_id"], ce["source_node_id"]) for ce in (case_edges_res.data or [])}
+
+            for ge in (global_edges_res.data or []):
+                if (ge["source"], ge["target"]) in case_edge_pairs:
+                    continue
+                edges.append({
+                    "id": ge["id"],
+                    "source": ge["source"],
+                    "target": ge["target"],
+                    "label": ge.get("label", ge.get("predicate", "")),
+                    "data": {
+                        "isCaseLocal": False,
+                        "isHypothesis": False,
+                        "predicate": ge.get("predicate", ""),
+                        "evidence_text": ge.get("evidence_text", ""),
+                        "source_filename": ge.get("source_filename", ""),
+                        "source_page": ge.get("source_page", 0),
+                        "confidence": ge.get("confidence", "STATED"),
+                        "date_mentioned": ge.get("date_mentioned"),
+                    },
+                })
 
         # Fetch groups
         groups_res = supabase.table("case_graph_groups").select("*").eq("case_id", case_id).execute()
@@ -1691,6 +1750,7 @@ async def create_case_graph_edge(case_id: str, request: CreateCaseEdgeRequest):
             "source_node_id": request.source_node_id,
             "target_node_id": request.target_node_id,
             "label": request.label,
+            "is_hypothesis": request.is_hypothesis,
         }
         result = supabase.table("case_graph_edges").upsert(
             record, on_conflict="case_id,source_node_id,target_node_id"
@@ -1724,6 +1784,110 @@ async def update_case_graph_edge(case_id: str, edge_id: str, request: UpdateCase
         if not result.data:
             return JSONResponse(status_code=404, content={"error": "Edge not found."})
         return {"id": edge_id, "label": request.label}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+class FindEvidenceRequest(BaseModel):
+    source_label: str
+    target_label: str
+
+class SemanticLayoutRequest(BaseModel):
+    node_ids: List[str]
+    node_labels: List[str]
+
+
+@app.post("/api/cases/{case_id}/graph/edges/{edge_id}/find-evidence", dependencies=[Depends(require_admin)])
+async def find_edge_evidence(case_id: str, edge_id: str, request: FindEvidenceRequest):
+    """Search for evidence supporting a hypothesis edge."""
+    if not supabase or not client or not index:
+        return JSONResponse(status_code=503, content={"error": "Services not initialized."})
+    try:
+        query = f"connection between {request.source_label} and {request.target_label}"
+        rerank_fn = _get_rerank_fn()
+        results = _semantic_search_pass(
+            query_text=query,
+            genai_client=client,
+            pinecone_index=index,
+            rerank_fn=rerank_fn,
+            fetch_k=100,
+            rerank_top_n=5,
+        )
+        if not results:
+            return {"found": False, "evidence_text": "", "source_filename": "", "source_page": 0, "ai_assessment": "No relevant evidence found in the document corpus."}
+
+        context = "\n\n".join([f"[{r['filename']} p.{r['page']}]: {r['text'][:500]}" for r in results[:3]])
+        prompt = f"""Based on the following document excerpts, assess whether there is evidence of a connection between "{request.source_label}" and "{request.target_label}".
+
+{context}
+
+Respond with a brief assessment (2-3 sentences). If evidence supports a connection, describe it. If not, say so clearly."""
+
+        assessment = generate(prompt)
+        best = results[0]
+        return {
+            "found": True,
+            "evidence_text": best["text"][:500],
+            "source_filename": best["filename"],
+            "source_page": best.get("page", 0),
+            "ai_assessment": assessment,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/{case_id}/graph/edges/{edge_id}/solidify", dependencies=[Depends(require_admin)])
+async def solidify_hypothesis_edge(case_id: str, edge_id: str):
+    """Convert a hypothesis edge to a confirmed edge with evidence."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        result = supabase.table("case_graph_edges").update({
+            "is_hypothesis": False,
+        }).eq("id", edge_id).eq("case_id", case_id).execute()
+        if not result.data:
+            return JSONResponse(status_code=404, content={"error": "Edge not found."})
+        return {"id": edge_id, "solidified": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/semantic-layout", dependencies=[Depends(require_admin)])
+async def compute_semantic_layout(case_id: str, request: SemanticLayoutRequest):
+    """Compute semantic similarity matrix for layout clustering."""
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    try:
+        if len(request.node_labels) < 2:
+            return {"node_ids": request.node_ids, "similarities": []}
+
+        res = client.models.embed_content(
+            model="gemini-embedding-001",
+            contents=request.node_labels,
+        )
+        embeddings = [e.values for e in res.embeddings]
+
+        # Compute pairwise cosine similarity (pure Python)
+        def cosine_sim(a, b):
+            dot = sum(x * y for x, y in zip(a, b))
+            norm_a = sum(x * x for x in a) ** 0.5
+            norm_b = sum(x * x for x in b) ** 0.5
+            if norm_a == 0 or norm_b == 0:
+                return 0.0
+            return dot / (norm_a * norm_b)
+
+        n = len(embeddings)
+        similarities = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    similarities[i][j] = 1.0
+                elif j > i:
+                    sim = cosine_sim(embeddings[i], embeddings[j])
+                    similarities[i][j] = sim
+                    similarities[j][i] = sim
+
+        return {"node_ids": request.node_ids, "similarities": similarities}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

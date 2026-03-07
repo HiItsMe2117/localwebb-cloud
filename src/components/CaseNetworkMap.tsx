@@ -2,8 +2,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, Calendar, AlertTriangle } from 'lucide-react';
+import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide } from 'd3-force';
 import NexusCanvas from './NexusCanvas';
+import EdgeEvidencePanel from './EdgeEvidencePanel';
+import Timeline from './Timeline';
 import axios from 'axios';
 
 interface CaseNetworkMapProps {
@@ -128,6 +131,19 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const [descriptionText, setDescriptionText] = useState('');
   const [isSavingDescription, setIsSavingDescription] = useState(false);
   const [descriptionSaved, setDescriptionSaved] = useState(false);
+
+  // Evidence panel state (Phase 1)
+  const [evidenceEdge, setEvidenceEdge] = useState<Edge | null>(null);
+
+  // Timeline state (Phase 3)
+  const [showTimeline, setShowTimeline] = useState(false);
+  const [timelineYear, setTimelineYear] = useState(2026);
+  const allEdgesRef = useRef<Edge[]>([]);
+
+  // Semantic layout state (Phase 4)
+  const [layoutMode, setLayoutMode] = useState<'manual' | 'semantic'>('manual');
+  const [isComputingLayout, setIsComputingLayout] = useState(false);
+  const savedPositions = useRef<Record<string, { x: number; y: number }>>({});
 
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
@@ -358,7 +374,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     try {
       const res = await axios.get(`/api/cases/${caseId}/graph`);
       setNodes(res.data.nodes || []);
-      setEdges(res.data.edges || []);
+      const loadedEdges = res.data.edges || [];
+      allEdgesRef.current = loadedEdges;
+      setEdges(loadedEdges);
       setGroups(res.data.groups || []);
     } catch (err) {
       console.error('Failed to load case graph:', err);
@@ -367,10 +385,10 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId, setNodes, setEdges]);
 
-  // Edge click: select case-local edges, or promote gray edges to case-local
+  // Edge click: open evidence panel for any edge, or toggle selection for case-local edges
   const onEdgeClick = useCallback(async (edge: Edge) => {
     if (edge.data?.isCaseLocal) {
-      // Already case-local: toggle selection for editing
+      // Case-local: toggle selection for editing
       const isDeselecting = selectedEdgeId === edge.id;
       setSelectedEdgeId(isDeselecting ? null : edge.id);
       setEditEdgeLabel(isDeselecting ? '' : (edge.label as string || ''));
@@ -379,21 +397,14 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
         selected: e.data?.isCaseLocal ? e.id === edge.id && !e.selected : false,
       })));
       setSelectedNodeIds(new Set());
-    } else {
-      // Gray edge: promote to case-local
-      try {
-        const label = (edge.label as string) || edge.data?.predicate || '';
-        await axios.post(`/api/cases/${caseId}/graph/edges`, {
-          source_node_id: edge.source,
-          target_node_id: edge.target,
-          label,
-        });
-        await loadGraph();
-      } catch (err) {
-        console.error('Failed to promote edge:', err);
-      }
     }
-  }, [caseId, setEdges, selectedEdgeId, loadGraph]);
+    // Open evidence panel for all edges
+    setEvidenceEdge(edge);
+    setContextNode(null);
+    setExpandNode(null);
+    setEditingGroup(null);
+    setDescriptionNode(null);
+  }, [setEdges, selectedEdgeId]);
 
   // Reconnect: drag a case-local edge endpoint to a different node
   const handleEdgeUpdate = useCallback(async (oldEdge: Edge, newConnection: Connection) => {
@@ -416,7 +427,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   }, [caseId, loadGraph]);
 
   // Link two selected entities with a case-local edge
-  const linkSelectedNodes = useCallback(async () => {
+  const linkSelectedNodes = useCallback(async (isHypothesis = false) => {
     if (selectedNodeIds.size !== 2) return;
     setIsLinking(true);
     const [sourceId, targetId] = Array.from(selectedNodeIds);
@@ -425,6 +436,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
         source_node_id: sourceId,
         target_node_id: targetId,
         label: linkLabel,
+        is_hypothesis: isHypothesis,
       });
       setLinkLabel('');
       await loadGraph();
@@ -627,6 +639,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       setNeighbors([]);
       setSelectedNeighbors(new Set());
       setDescriptionNode(null);
+      setEvidenceEdge(null);
     }
   }, [selectMode]);
 
@@ -741,6 +754,117 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId, descriptionNode, descriptionText, setNodes]);
 
+  // Pin (promote) a global edge to case-local
+  const pinEdge = useCallback(async (edge: Edge) => {
+    try {
+      const label = (edge.label as string) || edge.data?.predicate || '';
+      await axios.post(`/api/cases/${caseId}/graph/edges`, {
+        source_node_id: edge.source,
+        target_node_id: edge.target,
+        label,
+      });
+      setEvidenceEdge(null);
+      await loadGraph();
+    } catch (err) {
+      console.error('Failed to pin edge:', err);
+    }
+  }, [caseId, loadGraph]);
+
+  // Handle solidify from evidence panel
+  const handleSolidify = useCallback(async (edgeId: string) => {
+    setEvidenceEdge(null);
+    await loadGraph();
+  }, [loadGraph]);
+
+  // Timeline edge filtering
+  useEffect(() => {
+    if (!showTimeline || timelineYear >= 2026) {
+      if (allEdgesRef.current.length > 0) {
+        setEdges(allEdgesRef.current);
+      }
+      return;
+    }
+    const filtered = allEdgesRef.current.filter(e => {
+      const date = e.data?.date_mentioned;
+      if (!date || typeof date !== 'string') return true; // Keep edges without dates
+      const year = parseInt(date.slice(0, 4), 10);
+      return isNaN(year) || year <= timelineYear;
+    });
+    setEdges(filtered);
+  }, [showTimeline, timelineYear, setEdges]);
+
+  // Semantic layout toggle
+  const toggleSemanticLayout = useCallback(async () => {
+    if (layoutMode === 'semantic') {
+      // Restore manual positions
+      setNodes(prev => prev.map(n => ({
+        ...n,
+        position: savedPositions.current[n.id] || n.position,
+      })));
+      setLayoutMode('manual');
+      return;
+    }
+
+    // Save current positions
+    nodes.forEach(n => {
+      savedPositions.current[n.id] = { ...n.position };
+    });
+
+    setIsComputingLayout(true);
+    try {
+      const nodeIds = nodes.map(n => n.id);
+      const nodeLabels = nodes.map(n => n.data?.label || n.id);
+
+      const res = await axios.post(`/api/cases/${caseId}/graph/semantic-layout`, {
+        node_ids: nodeIds,
+        node_labels: nodeLabels,
+      });
+
+      const { similarities } = res.data;
+      if (!similarities || similarities.length < 2) {
+        toast.error('Not enough nodes for semantic layout');
+        setIsComputingLayout(false);
+        return;
+      }
+
+      // Build d3-force simulation
+      const simNodes = nodeIds.map((id, i) => ({ id, index: i, x: nodes[i].position.x, y: nodes[i].position.y }));
+      const simLinks: { source: number; target: number; distance: number }[] = [];
+
+      for (let i = 0; i < similarities.length; i++) {
+        for (let j = i + 1; j < similarities.length; j++) {
+          const sim = similarities[i][j];
+          if (sim > 0.3) {
+            simLinks.push({ source: i, target: j, distance: Math.max(80, 400 * (1 - sim)) });
+          }
+        }
+      }
+
+      const simulation = forceSimulation(simNodes as any)
+        .force('link', forceLink(simLinks as any).distance((d: any) => d.distance).strength(0.5))
+        .force('charge', forceManyBody().strength(-200))
+        .force('center', forceCenter(0, 0))
+        .force('collide', forceCollide(80))
+        .stop();
+
+      for (let i = 0; i < 300; i++) simulation.tick();
+
+      const posMap: Record<string, { x: number; y: number }> = {};
+      (simNodes as any[]).forEach((sn: any) => { posMap[sn.id] = { x: sn.x, y: sn.y }; });
+
+      setNodes(prev => prev.map(n => ({
+        ...n,
+        position: posMap[n.id] || n.position,
+      })));
+      setLayoutMode('semantic');
+    } catch (err) {
+      console.error('Semantic layout failed:', err);
+      toast.error('Semantic layout failed');
+    } finally {
+      setIsComputingLayout(false);
+    }
+  }, [caseId, layoutMode, nodes, setNodes]);
+
   // Create a group from selected nodes
   const createGroup = useCallback(async () => {
     if (selectedNodeIds.size < 2) return;
@@ -835,6 +959,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
   // Save position on drag stop — hold Shift to move group siblings together
   const onNodeDragStop = useCallback(async (_: any, node: Node) => {
+    // Skip saving positions in semantic layout mode
+    if (layoutMode === 'semantic') return;
+
     const group = nodeGroupMap.get(node.id);
     const start = dragStartPos.current;
     const moveGroup = dragWithGroup.current;
@@ -873,7 +1000,31 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
         console.error('Failed to save position:', err);
       }
     }
-  }, [caseId, nodeGroupMap, setNodes]);
+  }, [caseId, layoutMode, nodeGroupMap, setNodes]);
+
+  // Group title drag — move all member nodes live
+  const onGroupDrag = useCallback((group: { node_ids: string[] }, dx: number, dy: number) => {
+    const ids = new Set(group.node_ids);
+    setNodes(prev => prev.map(n =>
+      ids.has(n.id) ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } } : n
+    ));
+  }, [setNodes]);
+
+  // Group title drag end — save all member positions
+  const onGroupDragEnd = useCallback(async (group: { node_ids: string[] }) => {
+    const ids = new Set(group.node_ids);
+    setNodes(prev => {
+      const positions = prev
+        .filter(n => ids.has(n.id))
+        .map(n => ({ node_id: n.id, x: n.position.x, y: n.position.y }));
+      if (positions.length > 0) {
+        axios.post(`/api/cases/${caseId}/graph/positions`, { positions }).catch(err =>
+          console.error('Failed to save group drag positions:', err)
+        );
+      }
+      return prev;
+    });
+  }, [caseId, setNodes]);
 
   // Toggle neighbor selection
   const toggleNeighbor = (id: string) => {
@@ -1085,6 +1236,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           onEdgeUpdate={handleEdgeUpdate}
           onPaneClick={clearSelection}
           onGroupClick={(g) => { setEditingGroup(g); setGroupLabel(g.label); }}
+          onGroupDrag={onGroupDrag}
+          onGroupDragEnd={onGroupDragEnd}
           groups={groups}
           panOnDrag={!lassoMode}
           showEdgeLabels={false}
@@ -1471,6 +1624,27 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           {showMiniMap ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
         </button>
 
+        {/* Edge evidence panel */}
+        {evidenceEdge && (
+          <EdgeEvidencePanel
+            edge={evidenceEdge}
+            allNodes={nodes}
+            caseId={caseId}
+            onClose={() => setEvidenceEdge(null)}
+            onPinEdge={!evidenceEdge.data?.isCaseLocal ? pinEdge : undefined}
+            onSolidify={handleSolidify}
+          />
+        )}
+
+        {/* Timeline slider */}
+        {showTimeline && (
+          <Timeline
+            allEdges={allEdgesRef.current}
+            currentYear={timelineYear}
+            onYearChange={setTimelineYear}
+          />
+        )}
+
         {/* Description panel */}
         {descriptionNode && (
           <div className="absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl z-20 w-72 flex flex-col">
@@ -1690,12 +1864,43 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             Map
           </button>
           <button
+            onClick={() => setShowTimeline(v => !v)}
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+              showTimeline
+                ? 'bg-[#007AFF] text-white'
+                : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)]'
+            }`}
+          >
+            <Calendar size={11} />
+            Timeline
+          </button>
+          <button
             onClick={toggleFullscreen}
             className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white"
             title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
           >
             {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
           </button>
+          <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">
+            <button
+              onClick={() => { if (layoutMode === 'semantic') toggleSemanticLayout(); }}
+              className={`px-2 py-1 text-[11px] font-medium transition-colors ${
+                layoutMode === 'manual' ? 'bg-[#007AFF] text-white' : 'text-[rgba(235,235,245,0.5)] hover:text-white'
+              }`}
+            >
+              Manual
+            </button>
+            <button
+              onClick={() => { if (layoutMode === 'manual') toggleSemanticLayout(); }}
+              disabled={isComputingLayout}
+              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                layoutMode === 'semantic' ? 'bg-[#AF52DE] text-white' : 'text-[rgba(235,235,245,0.5)] hover:text-white'
+              }`}
+            >
+              {isComputingLayout ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+              Semantic
+            </button>
+          </div>
           <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
             {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
             {selectMode && selectedNodeIds.size === 0 && ' · Tap entities to select'}
@@ -1717,12 +1922,20 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                   className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-lg px-2 py-1 text-[11px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors w-28"
                 />
                 <button
-                  onClick={linkSelectedNodes}
+                  onClick={() => linkSelectedNodes()}
                   disabled={isLinking}
                   className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
                 >
                   {isLinking ? <Loader2 size={11} className="animate-spin" /> : <Link2 size={11} />}
                   Link
+                </button>
+                <button
+                  onClick={() => linkSelectedNodes(true)}
+                  disabled={isLinking}
+                  className="flex items-center gap-1.5 bg-[#FBBF24] hover:bg-[#F5A623] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-black transition-colors"
+                >
+                  {isLinking ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
+                  Hypothesize
                 </button>
               </>
             )}
