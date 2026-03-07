@@ -46,6 +46,9 @@ MAX_PDF_SIZE_MB = 20    # max PDF size for single Gemini vision call
 MAX_RETRIES = 3
 GEMINI_TIMEOUT_MS = 120_000  # 2-minute timeout per Gemini request
 
+# Entity extraction rate limiter (initialized in main if Gemini extraction enabled)
+_entity_rate_limiter = None
+
 
 def load_env():
     env = {}
@@ -66,6 +69,29 @@ def load_progress():
 
 def save_progress(progress):
     PROGRESS_FILE.write_text(json.dumps(progress, indent=2))
+
+
+REINDEX_PROGRESS_UPLOAD_INTERVAL = 20  # upload live progress every N files
+
+
+def upload_reindex_live_progress(bucket, completed, failed, total, vectors,
+                                  start_time, active=True):
+    """Upload lightweight progress JSON to GCS for the UI."""
+    try:
+        blob = bucket.blob("reindex_live_progress.json")
+        from datetime import datetime, timezone
+        data = {
+            "active": active,
+            "files_completed": completed,
+            "files_failed": failed,
+            "total_files": total,
+            "vectors_upserted": vectors,
+            "started_at": start_time,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+        blob.upload_from_string(json.dumps(data), content_type="application/json")
+    except Exception:
+        pass  # Non-critical
 
 
 def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
@@ -152,7 +178,7 @@ def extract_text_with_gemini(client, types, pdf_bytes, filename, page_count):
                 try:
                     time.sleep(VISION_DELAY)
                     response = client.models.generate_content(
-                        model="gemini-2.5-pro",
+                        model="gemini-2.0-flash",
                         contents=[
                             types.Part.from_bytes(data=section_bytes, mime_type="application/pdf"),
                             f"Extract ALL text from pages {batch_start+1}-{batch_end} of this scanned document. "
@@ -187,7 +213,7 @@ def extract_text_with_gemini(client, types, pdf_bytes, filename, page_count):
             try:
                 time.sleep(VISION_DELAY)
                 response = client.models.generate_content(
-                    model="gemini-2.5-pro",
+                    model="gemini-2.0-flash",
                     contents=[
                         types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
                         "Extract ALL text from this scanned document. "
@@ -289,6 +315,8 @@ def _dual_write_chunks(supabase_client, batch):
                 "people": meta.get("people", []) or [],
                 "organizations": meta.get("organizations", []) or [],
                 "dates": meta.get("dates", []) or [],
+                "locations": meta.get("locations", []) or [],
+                "metadata_version": meta.get("metadata_version", 1),
             })
         if rows:
             supabase_client.table("document_chunks").upsert(rows).execute()
@@ -296,13 +324,37 @@ def _dual_write_chunks(supabase_client, batch):
         print(f"    Supabase dual-write failed (non-fatal): {e}")
 
 
-def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path, supabase_client=None):
+def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path,
+                     supabase_client=None, genai_types=None):
     """Embed text chunks and batch-upsert into Pinecone with enriched metadata.
 
     Args:
         chunks_with_pages: list of (chunk_text, page_number) tuples.
         supabase_client: optional Supabase client for dual-write.
+        genai_types: google.genai.types module (needed for Gemini extraction).
     """
+    # --- Per-file Gemini extraction (1 API call for all chunks) ---
+    file_text = "\n".join(chunk for chunk, _page in chunks_with_pages)
+    file_metadata = None
+
+    if _entity_rate_limiter and genai_types and _entity_rate_limiter.can_continue():
+        try:
+            from entity_extract import extract_metadata_gemini
+            file_metadata = extract_metadata_gemini(
+                client, genai_types, file_text, filename, _entity_rate_limiter
+            )
+            if file_metadata:
+                print(f"  Gemini extraction: {len(file_metadata['people'])} people, "
+                      f"{len(file_metadata['organizations'])} orgs, "
+                      f"{len(file_metadata['locations'])} locations")
+        except Exception as e:
+            print(f"  Gemini extraction failed, using regex fallback: {e}")
+
+    if file_metadata is None:
+        file_metadata = extract_metadata_heuristic(file_text, filename)
+        file_metadata["metadata_version"] = 1
+        file_metadata.setdefault("locations", [])
+
     upserted = 0
     batch = []
     for i, (chunk, page) in enumerate(chunks_with_pages):
@@ -321,7 +373,7 @@ def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path, supab
                     "chunk_index": i,
                     "page": page,
                 }
-                meta.update(extract_metadata_heuristic(chunk, filename))
+                meta.update(file_metadata)
                 batch.append((vec_id, res.embeddings[0].values, meta))
                 upserted += 1
                 if len(batch) >= UPSERT_BATCH_SIZE:
@@ -443,6 +495,15 @@ def main():
 
     genai_client = genai.Client(api_key=env["GOOGLE_API_KEY"])
     pc = Pinecone(api_key=env["PINECONE_API_KEY"])
+
+    # Initialize Gemini entity extraction (with rate limiter)
+    global _entity_rate_limiter
+    try:
+        from entity_extract import RateLimiter
+        _entity_rate_limiter = RateLimiter(rpm=14, rpd=1450)
+        print("Gemini entity extraction enabled (with regex fallback)")
+    except ImportError:
+        print("Gemini entity extraction unavailable, using regex only")
     pinecone_index = pc.Index("localwebb")
     storage_client = storage.Client()
     bucket = storage_client.bucket(env["GCS_BUCKET_NAME"])
@@ -511,8 +572,14 @@ def main():
 
     total = len(blobs)
     processing_start = time.time()
+    start_iso = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
     files_processed_this_run = 0
     per_dataset_stats = {}  # dataset -> {"completed": 0, "failed": 0, "vectors": 0}
+
+    # Upload initial live progress
+    upload_reindex_live_progress(
+        bucket, len(progress["completed"]), len(progress["failed"]),
+        total, progress["vectors_upserted"], start_iso, active=True)
 
     # Process each PDF with tqdm progress bar
     pbar = tqdm(to_process, desc="Vectorizing", unit="file", dynamic_ncols=True)
@@ -581,7 +648,7 @@ def main():
             # Embed and upsert
             gcs_path = f"gs://{env['GCS_BUCKET_NAME']}/{blob.name}"
             print(f"  Embedding and upserting...")
-            upserted = embed_and_upsert(genai_client, pinecone_index, chunks_with_pages, filename, gcs_path, supabase_client=supabase_client)
+            upserted = embed_and_upsert(genai_client, pinecone_index, chunks_with_pages, filename, gcs_path, supabase_client=supabase_client, genai_types=types)
             print(f"  Upserted {upserted} vectors")
 
             progress["completed"].append(filename)
@@ -592,6 +659,12 @@ def main():
             save_progress(progress)
             files_processed_this_run += 1
             pbar.set_postfix_str(f"{filename[:30]} OK", refresh=True)
+
+            # Upload live progress periodically
+            if files_processed_this_run % REINDEX_PROGRESS_UPLOAD_INTERVAL == 0:
+                upload_reindex_live_progress(
+                    bucket, len(progress["completed"]), len(progress["failed"]),
+                    total, progress["vectors_upserted"], start_iso, active=True)
 
             # Track per-dataset stats (use full blob path for classification)
             ds = classify_dataset(blob.name)
@@ -617,6 +690,11 @@ def main():
             time.sleep(10)
 
     pbar.close()
+
+    # Mark reindex as inactive
+    upload_reindex_live_progress(
+        bucket, len(progress["completed"]), len(progress["failed"]),
+        total, progress["vectors_upserted"], start_iso, active=False)
 
     # Summary
     total_elapsed = time.time() - processing_start

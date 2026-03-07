@@ -255,6 +255,129 @@ function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress;
   );
 }
 
+interface ReindexProgress {
+  active: boolean;
+  files_completed?: number;
+  files_failed?: number;
+  total_files?: number;
+  vectors_upserted?: number;
+  started_at?: string;
+  last_updated?: string;
+}
+
+function ReindexProgressCard({ progress, onRefresh }: { progress: ReindexProgress; onRefresh: () => void }) {
+  const {
+    files_completed = 0,
+    files_failed = 0,
+    total_files = 0,
+    vectors_upserted = 0,
+    started_at,
+    last_updated,
+  } = progress;
+
+  const pct = total_files > 0 ? Math.min((files_completed / total_files) * 100, 100) : 0;
+
+  let filesPerMin = 0;
+  let etaText = '—';
+  if (started_at && files_completed > 0) {
+    const elapsedMs = Date.now() - new Date(started_at).getTime();
+    const elapsedMin = elapsedMs / 60000;
+    if (elapsedMin > 0) {
+      filesPerMin = Math.round(files_completed / elapsedMin);
+      const remaining = total_files - files_completed;
+      if (filesPerMin > 0) {
+        const etaMin = remaining / filesPerMin;
+        if (etaMin < 60) {
+          etaText = `~${Math.round(etaMin)}m`;
+        } else if (etaMin < 1440) {
+          etaText = `~${(etaMin / 60).toFixed(1)}h`;
+        } else {
+          etaText = `~${(etaMin / 1440).toFixed(1)}d`;
+        }
+      }
+    }
+  }
+
+  let lastUpdatedText = '';
+  if (last_updated) {
+    const ago = Math.round((Date.now() - new Date(last_updated).getTime()) / 1000);
+    if (ago < 60) lastUpdatedText = `${ago}s ago`;
+    else if (ago < 3600) lastUpdatedText = `${Math.round(ago / 60)}m ago`;
+    else lastUpdatedText = `${(ago / 3600).toFixed(1)}h ago`;
+  }
+
+  return (
+    <div className="bg-[#1C1C1E] border border-[#AF52DE] rounded-2xl p-4 mb-4 relative overflow-hidden">
+      <div className="absolute inset-x-0 top-0 h-px bg-[#AF52DE]" />
+
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2.5">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#AF52DE] opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#AF52DE]" />
+          </span>
+          <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
+            <Database size={14} className="text-[#AF52DE]" />
+            Vectorizing Documents
+          </h3>
+        </div>
+        <button
+          onClick={onRefresh}
+          className="text-[11px] text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)] transition-colors"
+        >
+          <RefreshCw size={12} />
+        </button>
+      </div>
+
+      <div className="mb-3">
+        <div className="flex justify-between items-center mb-1.5">
+          <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
+            {files_completed.toLocaleString()} / {total_files.toLocaleString()}
+          </span>
+          <span className="text-[13px] font-mono text-[#AF52DE]">{pct.toFixed(1)}%</span>
+        </div>
+        <div className="h-2.5 w-full bg-[#3A3A3C] rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-700 bg-[#AF52DE]"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-5 gap-3 mb-2">
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-white">{vectors_upserted.toLocaleString()}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Vectors</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-[rgba(235,235,245,0.6)]">{filesPerMin}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Files/min</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-[#AF52DE]">{etaText}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">ETA</p>
+        </div>
+        <div className="text-center">
+          <p className={`text-[15px] font-bold ${files_failed > 0 ? 'text-[#FF453A]' : 'text-[rgba(235,235,245,0.6)]'}`}>
+            {files_failed.toLocaleString()}
+          </p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Failed</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-[#30D158]">{files_completed.toLocaleString()}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Done</p>
+        </div>
+      </div>
+
+      {lastUpdatedText && (
+        <p className="text-[10px] text-[rgba(235,235,245,0.25)] text-right">
+          Updated {lastUpdatedText}
+        </p>
+      )}
+    </div>
+  );
+}
+
 interface ServiceHealth {
   service: string;
   status: 'healthy' | 'down';
@@ -484,7 +607,9 @@ export default function DataPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scrapeProgress, setScrapeProgress] = useState<ScrapeProgress | null>(null);
+  const [reindexProgress, setReindexProgress] = useState<ReindexProgress | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reindexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchScrapeProgress = useCallback(async () => {
     try {
@@ -492,14 +617,24 @@ export default function DataPanel() {
       if (!res.ok) return;
       const data: ScrapeProgress = await res.json();
       setScrapeProgress(data.active ? data : null);
-      // Stop polling if scrape is no longer active
       if (!data.active && pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
       }
-    } catch {
-      // Silently ignore — non-critical
-    }
+    } catch {}
+  }, []);
+
+  const fetchReindexProgress = useCallback(async () => {
+    try {
+      const res = await fetch('/api/reindex-progress');
+      if (!res.ok) return;
+      const data: ReindexProgress = await res.json();
+      setReindexProgress(data.active ? data : null);
+      if (!data.active && reindexPollRef.current) {
+        clearInterval(reindexPollRef.current);
+        reindexPollRef.current = null;
+      }
+    } catch {}
   }, []);
 
   const fetchStatus = async () => {
@@ -520,12 +655,14 @@ export default function DataPanel() {
   useEffect(() => {
     fetchStatus();
     fetchScrapeProgress();
-    // Poll scrape progress every 30s
+    fetchReindexProgress();
     pollRef.current = setInterval(fetchScrapeProgress, 30000);
+    reindexPollRef.current = setInterval(fetchReindexProgress, 30000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      if (reindexPollRef.current) clearInterval(reindexPollRef.current);
     };
-  }, [fetchScrapeProgress]);
+  }, [fetchScrapeProgress, fetchReindexProgress]);
 
   const datasetNums = Object.keys(DATASET_INFO).sort((a, b) => parseInt(a) - parseInt(b));
 
@@ -534,7 +671,7 @@ export default function DataPanel() {
       <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between">
         <h1 className="text-[28px] font-bold tracking-tight text-white">Data</h1>
         <button
-          onClick={() => { fetchStatus(); fetchScrapeProgress(); }}
+          onClick={() => { fetchStatus(); fetchScrapeProgress(); fetchReindexProgress(); }}
           disabled={loading}
           className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)]"
         >
@@ -548,6 +685,10 @@ export default function DataPanel() {
 
           {scrapeProgress && (
             <ScrapeProgressCard progress={scrapeProgress} onRefresh={fetchScrapeProgress} />
+          )}
+
+          {reindexProgress && (
+            <ReindexProgressCard progress={reindexProgress} onRefresh={fetchReindexProgress} />
           )}
 
           <InfrastructureCard />

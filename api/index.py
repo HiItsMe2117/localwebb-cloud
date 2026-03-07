@@ -2801,6 +2801,20 @@ async def get_scrape_progress():
     except Exception:
         return {"active": False}
 
+@app.get("/api/reindex-progress")
+async def get_reindex_progress():
+    """Return live reindex/vectorization progress from GCS."""
+    try:
+        if not bucket:
+            return {"active": False}
+        blob = bucket.blob("reindex_live_progress.json")
+        if not blob.exists():
+            return {"active": False}
+        data = json.loads(blob.download_as_text())
+        return data
+    except Exception:
+        return {"active": False}
+
 @app.get("/api/datasets")
 async def get_datasets():
     """Return per-dataset pipeline stats from pipeline_status.json in GCS."""
