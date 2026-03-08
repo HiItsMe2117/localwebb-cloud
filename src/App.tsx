@@ -55,7 +55,7 @@ function AppContent() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [yearFilter, setYearFilter] = useState(2026);
-  const [minDegree, setMinDegree] = useState(1);
+  const [minDegree, setMinDegree] = useState(50);
   const [showOutliers, setShowOutliers] = useState(true);
   const [showEdgeLabels, setShowEdgeLabels] = useState(true);
   const [isLayouting, setIsLayouting] = useState(false);
@@ -137,10 +137,11 @@ function AppContent() {
     }
   }, [setNodes, setEdges]);
 
-  const loadGraph = async () => {
+  const loadGraph = async (degreeFilter?: number) => {
     try {
-      console.log("Fetching graph data from /api/graph...");
-      const res = await axios.get('/api/graph');
+      const deg = degreeFilter ?? deferredMinDegree;
+      console.log(`Fetching graph data from /api/graph?min_degree=${deg}...`);
+      const res = await axios.get(`/api/graph?min_degree=${deg}`);
       const rawNodes: Node[] = res.data.nodes || [];
       const rawEdges: Edge[] = res.data.edges || [];
       console.log(`Loaded ${rawNodes.length} nodes and ${rawEdges.length} edges.`);
@@ -178,8 +179,8 @@ function AppContent() {
   };
 
   useEffect(() => {
-    loadGraph();
-  }, [setNodes, setEdges]);
+    loadGraph(deferredMinDegree);
+  }, [setNodes, setEdges, deferredMinDegree]);
 
   const onNodeDragStop = async (_: any, node: Node) => {
     try {
@@ -266,33 +267,30 @@ function AppContent() {
     });
   }, [edges, deferredYearFilter]);
 
-  // 3. Degree-filter nodes, then prune edges to visible nodes
+  // 3. Filter nodes by outlier toggle and year, then prune edges to visible nodes
+  // (Degree filtering is now done server-side via min_degree query param)
   const { filteredNodes, filteredEdges } = useMemo(() => {
-    // Nodes that pass the degree threshold and outlier toggle
-    const degreeFiltered = new Set<string>();
+    const visibleNodes = new Set<string>();
     for (const n of nodes) {
       const deg = degreeMap.get(n.id) || 0;
-      
       // If outliers are hidden, node must have degree > 1
       if (!showOutliers && deg <= 1) continue;
-      
-      // Apply existing minDegree filter
-      if (deg >= deferredMinDegree) degreeFiltered.add(n.id);
+      visibleNodes.add(n.id);
     }
 
     // If year filter is active, also restrict to nodes touched by year-filtered edges
     let visibleIds: Set<string>;
     if (deferredYearFilter >= 2026) {
-      visibleIds = degreeFiltered;
+      visibleIds = visibleNodes;
     } else {
       const yearVisible = new Set<string>();
       for (const e of yearFilteredEdges) {
         yearVisible.add(e.source);
         yearVisible.add(e.target);
       }
-      // Intersection: must pass both degree AND year visibility
+      // Intersection: must pass both outlier AND year visibility
       visibleIds = new Set<string>();
-      for (const id of degreeFiltered) {
+      for (const id of visibleNodes) {
         if (yearVisible.has(id)) visibleIds.add(id);
       }
     }
@@ -306,7 +304,7 @@ function AppContent() {
     const fNodes = nodes.filter((n) => visibleIds.has(n.id));
 
     return { filteredNodes: fNodes, filteredEdges: fEdges };
-  }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, deferredMinDegree]);
+  }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, showOutliers]);
 
   // --- Graph search ---
   const graphSearchResults = useMemo(() => {
@@ -979,25 +977,26 @@ function AppContent() {
                   <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-6">
                      <h3 className="font-semibold mb-4 text-[15px] flex items-center gap-2 text-white">
                        <Network size={16} className="text-[#007AFF]" />
-                       Sync Intelligence
+                       Graph Builder
                      </h3>
+                     <p className="text-[11px] text-[rgba(235,235,245,0.3)] mb-3 -mt-2">Extract entities and relationships from your documents to build the knowledge graph.</p>
                      <div className="space-y-3">
-                       <button 
+                       <button
                          onClick={() => triggerInsights('standard')}
                          disabled={isSyncing}
                          className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-black/40 border border-white/5 hover:bg-black/60 transition-colors group text-left"
                        >
                          <span className="text-[13px] font-bold text-white group-hover:text-[#007AFF]">Standard Sync</span>
-                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Topic-based sampling. Fast and lightweight extraction.</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Samples 10 documents per topic (people, orgs, locations, finances, events, crimes, assets). Quick overview of key entities. ~1 min.</span>
                        </button>
-                       
-                       <button 
+
+                       <button
                          onClick={() => triggerInsights('deep')}
                          disabled={isSyncing}
                          className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-black/40 border border-white/5 hover:bg-black/60 transition-colors group text-left"
                        >
                          <span className="text-[13px] font-bold text-white group-hover:text-[#FF9F0A]">Deep Sync</span>
-                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Heavy sampling across all themes. Captures more nuances.</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Samples 25 documents per topic. Captures more entities, aliases, and nuanced relationships. ~3 min.</span>
                        </button>
 
                        <button
@@ -1006,7 +1005,7 @@ function AppContent() {
                          className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-[#007AFF]/10 border border-[#007AFF]/30 hover:bg-[#007AFF]/20 transition-colors group text-left"
                        >
                          <span className="text-[13px] font-bold text-[#007AFF]">Full Reconstruction</span>
-                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Exhaustive Pinecone sweep. Maximum entity density. (Expensive)</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Samples 50 documents per topic for maximum entity density. Best for building an initial comprehensive graph. ~10 min.</span>
                        </button>
 
                        <button
@@ -1047,13 +1046,52 @@ function AppContent() {
                          className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-black/40 border border-white/5 hover:bg-black/60 transition-colors group text-left"
                        >
                          <span className="text-[13px] font-bold text-white group-hover:text-[#FF453A]">Deduplicate Graph</span>
-                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Merge duplicate entities and rewire edges. AI-assisted fuzzy matching.</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Scans all entities for duplicates using AI fuzzy matching, merges them, and rewires their edges. Run after large extractions.</span>
+                       </button>
+
+                       <button
+                         onClick={async () => {
+                           setIsExtractingInsights(true);
+                           setIsSyncing(true);
+                           setSyncProgress(5);
+                           setSyncStatus('Starting bulk graph extraction...');
+                           const interval = setInterval(() => {
+                             setSyncProgress(prev => (prev < 90 ? prev + Math.random() * 0.5 : prev));
+                           }, 3000);
+                           try {
+                             const res = await axios.post('/api/graph/bulk-extract', {}, { timeout: 600000 });
+                             const { files_processed, entities_added, triples_added, files_skipped } = res.data;
+                             setSyncStatus(`Processed ${files_processed} docs: ${entities_added} entities, ${triples_added} relationships${files_skipped > 0 ? `, ${files_skipped} skipped` : ''}`);
+                             setSyncProgress(95);
+                             await loadGraph();
+                             setActiveView('graph');
+                           } catch (err: any) {
+                             console.error('Bulk extraction failed:', err);
+                             const msg = err?.response?.data?.error || 'Bulk extraction failed. Please try again.';
+                             setSyncStatus(msg);
+                           } finally {
+                             clearInterval(interval);
+                             setSyncProgress(100);
+                             setTimeout(() => {
+                               setIsSyncing(false);
+                               setIsExtractingInsights(false);
+                               setSyncProgress(0);
+                               setSyncStatus('');
+                             }, 2000);
+                           }
+                         }}
+                         disabled={isSyncing}
+                         className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-[#30D158]/10 border border-[#30D158]/30 hover:bg-[#30D158]/20 transition-colors group text-left"
+                       >
+                         <span className="text-[13px] font-bold text-[#30D158]">Bulk Extract All Documents</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Iterates through every vectorized document and extracts entities + relationships. Processes in batches of 50 files. Best run after vectorization completes.</span>
                        </button>
 
                        <div className="pt-2 mt-2 border-t border-white/5">
-                          <label className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-2 block">
+                          <label className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider mb-1 block">
                             Keyword Search &amp; Network Builder
                           </label>
+                          <p className="text-[10px] text-[rgba(235,235,245,0.25)] mb-2">Search documents by keyword, then extract entities from matching results into the graph.</p>
                           {/* Search mode toggle */}
                           <div className="flex gap-1 mb-2">
                             <button

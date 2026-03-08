@@ -2929,6 +2929,180 @@ async def infrastructure_health():
     }
 
 
+@app.post("/api/graph/bulk-extract", dependencies=[Depends(require_admin)])
+async def bulk_extract_graph():
+    """Extract entities and relationships from all vectorized documents not yet in the graph."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized"})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized"})
+
+    try:
+        # Get all unique filenames already processed in the graph (via edges with source_filename)
+        existing_edges = graph_store._fetch_all("edges")
+        processed_files = set()
+        for edge in existing_edges:
+            sf = (edge.get("data") or {}).get("source_filename") or (edge.get("metadata") or {}).get("source_filename")
+            if sf:
+                processed_files.add(sf)
+
+        # Get unique filenames from document_chunks
+        chunk_result = supabase.rpc("get_unique_filenames").execute() if hasattr(supabase, 'rpc') else None
+
+        # Fallback: query distinct filenames from document_chunks
+        if not chunk_result or not chunk_result.data:
+            all_chunks = []
+            offset = 0
+            batch_size = 1000
+            while True:
+                batch = supabase.table("document_chunks").select("filename").range(offset, offset + batch_size - 1).execute()
+                if not batch.data:
+                    break
+                all_chunks.extend(batch.data)
+                if len(batch.data) < batch_size:
+                    break
+                offset += batch_size
+            all_filenames = list(set(row["filename"] for row in all_chunks if row.get("filename")))
+        else:
+            all_filenames = [row["filename"] for row in chunk_result.data if row.get("filename")]
+
+        # Filter to unprocessed files
+        to_process = [f for f in all_filenames if f not in processed_files]
+        if not to_process:
+            return {"files_processed": 0, "entities_added": 0, "triples_added": 0, "files_skipped": 0,
+                    "message": "All vectorized documents already in graph"}
+
+        # Process in batches of 50 files
+        BATCH_SIZE = 50
+        batch = to_process[:BATCH_SIZE]
+        total_entities = 0
+        total_triples = 0
+        files_ok = 0
+        files_skipped = 0
+
+        for filename in batch:
+            try:
+                # Get all chunks for this file
+                chunks_res = supabase.table("document_chunks").select("text,page").eq("filename", filename).order("chunk_index").execute()
+                if not chunks_res.data:
+                    files_skipped += 1
+                    continue
+
+                context_parts = []
+                for row in chunks_res.data:
+                    page = row.get("page", "?")
+                    context_parts.append(f"[Source: {filename}, Page: {page}]\n{row['text']}")
+                context = "\n\n---\n\n".join(context_parts)
+
+                if len(context.strip()) < 100:
+                    files_skipped += 1
+                    continue
+
+                prompt = (
+                    "You are an investigative intelligence analyst. Extract entities and their relationships from these documents.\n\n"
+                    "RULES:\n"
+                    "1. Every entity needs an id (lowercase_snake_case), a label (display name), a type (PERSON, ORGANIZATION, LOCATION, EVENT, DOCUMENT, FINANCIAL_ENTITY), a description, and aliases (alternate names).\n"
+                    "2. Every relationship (triple) MUST include:\n"
+                    "   - subject_id and object_id referencing entity ids\n"
+                    "   - predicate: a lowercase_snake_case verb phrase (e.g. 'flew_with', 'employed_by', 'transferred_funds_to', 'visited', 'owns')\n"
+                    "   - evidence_text: the EXACT verbatim quote from the document that proves this relationship\n"
+                    "   - source_filename: the filename from the [Source: ...] header\n"
+                    "   - source_page: the page number from the [Source: ...] header\n"
+                    "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
+                    "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, null otherwise\n"
+                    "3. Do NOT use generic legal roles as entities. Resolve them to named entities.\n"
+                    "4. Do NOT invent relationships that aren't supported by the text.\n"
+                    "5. Extract as many entities and relationships as the documents support.\n\n"
+                    f"DOCUMENTS:\n{context[:100000]}\n\n"
+                    "Return JSON with 'entities' and 'triples' keys."
+                )
+
+                res = generate(
+                    client,
+                    model="gemini-2.5-pro",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=CaseMap
+                    )
+                )
+                output = res.parsed
+
+                import math
+                new_nodes = []
+                total = len(output.entities)
+                cx, cy = 400, 400
+                radius = max(200, total * 30)
+                for i, ent in enumerate(output.entities):
+                    angle = (2 * math.pi * i) / max(total, 1)
+                    new_nodes.append({
+                        "id": ent.id,
+                        "type": "entityNode",
+                        "data": {
+                            "label": ent.label,
+                            "entityType": ent.type.upper(),
+                            "description": ent.description,
+                            "aliases": ent.aliases,
+                        },
+                        "position": {
+                            "x": cx + radius * math.cos(angle),
+                            "y": cy + radius * math.sin(angle),
+                        },
+                    })
+
+                seen_edge_ids = set()
+                new_edges = []
+                for triple in output.triples:
+                    edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
+                    if edge_id in seen_edge_ids:
+                        continue
+                    seen_edge_ids.add(edge_id)
+                    new_edges.append({
+                        "id": edge_id,
+                        "source": triple.subject_id,
+                        "target": triple.object_id,
+                        "label": triple.predicate.replace("_", " "),
+                        "animated": triple.confidence == "INFERRED",
+                        "style": {"strokeDasharray": "5 5"} if triple.confidence == "INFERRED" else {},
+                        "data": {
+                            "predicate": triple.predicate,
+                            "evidence_text": triple.evidence_text,
+                            "source_filename": triple.source_filename,
+                            "source_page": triple.source_page,
+                            "confidence": triple.confidence,
+                            "date_mentioned": triple.date_mentioned,
+                        },
+                    })
+
+                if new_nodes or new_edges:
+                    graph_store.add_elements(new_nodes, new_edges)
+                    total_entities += len(new_nodes)
+                    total_triples += len(new_edges)
+
+                files_ok += 1
+                print(f"  Bulk extract: {filename} -> {len(new_nodes)} entities, {len(new_edges)} triples")
+
+            except Exception as e:
+                print(f"  Bulk extract failed for {filename}: {e}")
+                files_skipped += 1
+                continue
+
+        remaining = len(to_process) - BATCH_SIZE
+        return {
+            "files_processed": files_ok,
+            "entities_added": total_entities,
+            "triples_added": total_triples,
+            "files_skipped": files_skipped,
+            "remaining_files": max(remaining, 0),
+            "total_unprocessed": len(to_process),
+        }
+
+    except Exception as e:
+        print(f"Bulk extract failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/api/graph/communities", dependencies=[Depends(require_admin)])
 async def detect_communities():
     try:
