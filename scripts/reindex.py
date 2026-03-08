@@ -626,6 +626,12 @@ def main():
                 if filename not in progress["failed"]:
                     progress["failed"].append(filename)
                 save_progress(progress)
+                files_processed_this_run += 1
+                if files_processed_this_run % REINDEX_PROGRESS_UPLOAD_INTERVAL == 0:
+                    upload_reindex_live_progress(
+                        bucket, len(progress["completed"]), len(progress["failed"]),
+                        total, progress["vectors_upserted"], start_iso, active=True,
+                        files_this_run=files_processed_this_run)
                 pbar.set_postfix_str(f"{filename[:30]} SKIP", refresh=True)
                 continue
             else:
@@ -640,6 +646,7 @@ def main():
                 if filename not in progress["failed"]:
                     progress["failed"].append(filename)
                 save_progress(progress)
+                files_processed_this_run += 1
                 pbar.set_postfix_str(f"{filename[:30]} FAIL", refresh=True)
                 continue
 
