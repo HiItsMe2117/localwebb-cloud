@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { Edge, Node } from 'reactflow';
-import { X, ExternalLink, Loader2, FileText, Search, CheckCircle, AlertTriangle } from 'lucide-react';
+import { X, ExternalLink, Loader2, FileText, Search, CheckCircle, AlertTriangle, Trash2 } from 'lucide-react';
 import { getFileUrl } from '../utils/files';
 import axios from 'axios';
 
@@ -11,6 +11,8 @@ interface EdgeEvidencePanelProps {
   onClose: () => void;
   onPinEdge?: (edge: Edge) => void;
   onSolidify?: (edgeId: string) => void;
+  onUpdateLabel?: (edgeId: string, newLabel: string) => Promise<void>;
+  onDeleteEdge?: (edgeId: string) => Promise<void>;
 }
 
 const CONFIDENCE_COLORS: Record<string, string> = {
@@ -19,7 +21,10 @@ const CONFIDENCE_COLORS: Record<string, string> = {
   SPECULATIVE: '#FF453A',
 };
 
-export default function EdgeEvidencePanel({ edge, allNodes, caseId, onClose, onPinEdge, onSolidify }: EdgeEvidencePanelProps) {
+export default function EdgeEvidencePanel({ edge, allNodes, caseId, onClose, onPinEdge, onSolidify, onUpdateLabel, onDeleteEdge }: EdgeEvidencePanelProps) {
+  const [editLabel, setEditLabel] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [evidenceResult, setEvidenceResult] = useState<{
     found: boolean;
@@ -59,6 +64,31 @@ export default function EdgeEvidencePanel({ edge, allNodes, caseId, onClose, onP
       console.error('Failed to solidify edge:', err);
     }
   }, [edge, caseId, onSolidify]);
+
+  // Sync edit label when edge changes
+  useEffect(() => {
+    setEditLabel((edge?.label as string) || '');
+  }, [edge?.id, edge?.label]);
+
+  const handleSaveLabel = useCallback(async () => {
+    if (!edge || !onUpdateLabel) return;
+    setIsSaving(true);
+    try {
+      await onUpdateLabel(edge.id, editLabel);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [edge, editLabel, onUpdateLabel]);
+
+  const handleDelete = useCallback(async () => {
+    if (!edge || !onDeleteEdge) return;
+    setIsDeleting(true);
+    try {
+      await onDeleteEdge(edge.id);
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [edge, onDeleteEdge]);
 
   if (!edge) return null;
 
@@ -160,12 +190,35 @@ export default function EdgeEvidencePanel({ edge, allNodes, caseId, onClose, onP
           </div>
         )}
 
-        {/* Case-local: manual note */}
-        {isCaseLocal && !isHypothesis && (
-          <div className="bg-[#2C2C2E] rounded-lg px-3 py-2.5">
-            <p className="text-[12px] text-[rgba(235,235,245,0.5)] leading-relaxed">
-              This connection was manually created in the case map. Select and use the toolbar to edit or delete it.
-            </p>
+        {/* Case-local: inline edit & delete */}
+        {isCaseLocal && !isHypothesis && onUpdateLabel && onDeleteEdge && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider">Edit Connection</p>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={editLabel}
+                onChange={e => setEditLabel(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSaveLabel(); }}
+                placeholder="Label..."
+                className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-lg px-2.5 py-1.5 text-[12px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+              />
+              <button
+                onClick={handleSaveLabel}
+                disabled={isSaving}
+                className="shrink-0 flex items-center gap-1 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-white transition-colors"
+              >
+                {isSaving ? <Loader2 size={11} className="animate-spin" /> : 'Save'}
+              </button>
+            </div>
+            <button
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="w-full flex items-center justify-center gap-1.5 bg-[#FF453A] hover:bg-[#FF3B30] disabled:opacity-50 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-white transition-colors"
+            >
+              {isDeleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+              Delete Connection
+            </button>
           </div>
         )}
 

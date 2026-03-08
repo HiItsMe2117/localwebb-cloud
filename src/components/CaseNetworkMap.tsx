@@ -98,12 +98,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const analysisNodeIds = useRef<string[]>([]);
 
   // Edge linking state
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [isLinking, setIsLinking] = useState(false);
-  const [isDeletingEdge, setIsDeletingEdge] = useState(false);
   const [linkLabel, setLinkLabel] = useState('');
-  const [editEdgeLabel, setEditEdgeLabel] = useState('');
-  const [isSavingEdgeLabel, setIsSavingEdgeLabel] = useState(false);
 
   // Create custom entity state
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -210,7 +206,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
   const clearSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
-    setSelectedEdgeId(null);
     setContextNode(null);
     setCopied(false);
     setSelectMode(false);
@@ -219,7 +214,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     setChatMessages([]);
     setChatInput('');
     setLinkLabel('');
-    setEditEdgeLabel('');
     setDescriptionNode(null);
     setEdges(eds => eds.map(e => ({ ...e, selected: false })));
   }, [setEdges]);
@@ -390,26 +384,14 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId, setNodes, setEdges]);
 
-  // Edge click: open evidence panel for any edge, or toggle selection for case-local edges
-  const onEdgeClick = useCallback(async (edge: Edge) => {
-    if (edge.data?.isCaseLocal) {
-      // Case-local: toggle selection for editing
-      const isDeselecting = selectedEdgeId === edge.id;
-      setSelectedEdgeId(isDeselecting ? null : edge.id);
-      setEditEdgeLabel(isDeselecting ? '' : (edge.label as string || ''));
-      setEdges(eds => eds.map(e => ({
-        ...e,
-        selected: e.data?.isCaseLocal ? e.id === edge.id && !e.selected : false,
-      })));
-      setSelectedNodeIds(new Set());
-    }
-    // Open evidence panel for all edges
+  // Edge click: open evidence panel for any edge
+  const onEdgeClick = useCallback((edge: Edge) => {
     setEvidenceEdge(edge);
     setContextNode(null);
     setExpandNode(null);
     setEditingGroup(null);
     setDescriptionNode(null);
-  }, [setEdges, selectedEdgeId]);
+  }, []);
 
   // Reconnect: drag a case-local edge endpoint to a different node
   const handleEdgeUpdate = useCallback(async (oldEdge: Edge, newConnection: Connection) => {
@@ -453,40 +435,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       setIsLinking(false);
     }
   }, [caseId, selectedNodeIds, linkLabel, loadGraph, clearSelection]);
-
-  // Save edge label
-  const saveEdgeLabel = useCallback(async () => {
-    if (!selectedEdgeId) return;
-    setIsSavingEdgeLabel(true);
-    try {
-      await axios.patch(`/api/cases/${caseId}/graph/edges/${selectedEdgeId}`, {
-        label: editEdgeLabel,
-      });
-      await loadGraph();
-      setSelectedEdgeId(null);
-      setEditEdgeLabel('');
-    } catch (err) {
-      console.error('Failed to update edge label:', err);
-    } finally {
-      setIsSavingEdgeLabel(false);
-    }
-  }, [caseId, selectedEdgeId, editEdgeLabel, loadGraph]);
-
-  // Delete a selected case-local edge
-  const deleteSelectedEdge = useCallback(async () => {
-    if (!selectedEdgeId) return;
-    setIsDeletingEdge(true);
-    try {
-      await axios.delete(`/api/cases/${caseId}/graph/edges/${selectedEdgeId}`);
-      setSelectedEdgeId(null);
-      await loadGraph();
-    } catch (err) {
-      console.error('Failed to delete edge:', err);
-      toast.error('Failed to delete connection');
-    } finally {
-      setIsDeletingEdge(false);
-    }
-  }, [caseId, selectedEdgeId, loadGraph]);
 
   // Create a custom case-local entity
   const createCustomNode = useCallback(async () => {
@@ -1701,6 +1649,16 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             onClose={() => setEvidenceEdge(null)}
             onPinEdge={!evidenceEdge.data?.isCaseLocal ? pinEdge : undefined}
             onSolidify={handleSolidify}
+            onUpdateLabel={async (edgeId, newLabel) => {
+              await axios.patch(`/api/cases/${caseId}/graph/edges/${edgeId}`, { label: newLabel });
+              await loadGraph();
+              setEvidenceEdge(null);
+            }}
+            onDeleteEdge={async (edgeId) => {
+              await axios.delete(`/api/cases/${caseId}/graph/edges/${edgeId}`);
+              await loadGraph();
+              setEvidenceEdge(null);
+            }}
           />
         )}
 
@@ -2036,39 +1994,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             <button
               onClick={clearSelection}
               className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
-            >
-              <X size={12} className="text-[rgba(235,235,245,0.4)]" />
-            </button>
-          </div>
-        )}
-        {selectedEdgeId && selectedNodeIds.size === 0 && (
-          <div className="flex items-center gap-1.5 shrink-0">
-            <input
-              type="text"
-              value={editEdgeLabel}
-              onChange={e => setEditEdgeLabel(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') saveEdgeLabel(); }}
-              placeholder="Edge label..."
-              className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-lg px-2 py-1 text-[11px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors w-24"
-            />
-            <button
-              onClick={saveEdgeLabel}
-              disabled={isSavingEdgeLabel}
-              className="shrink-0 flex items-center gap-1 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors"
-            >
-              {isSavingEdgeLabel ? <Loader2 size={11} className="animate-spin" /> : 'Save'}
-            </button>
-            <button
-              onClick={deleteSelectedEdge}
-              disabled={isDeletingEdge}
-              className="shrink-0 flex items-center gap-1 bg-[#FF453A] hover:bg-[#FF3B30] disabled:opacity-50 px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors"
-            >
-              {isDeletingEdge ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
-              Delete
-            </button>
-            <button
-              onClick={clearSelection}
-              className="shrink-0 p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
             >
               <X size={12} className="text-[rgba(235,235,245,0.4)]" />
             </button>
