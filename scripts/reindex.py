@@ -75,7 +75,7 @@ REINDEX_PROGRESS_UPLOAD_INTERVAL = 20  # upload live progress every N files
 
 
 def upload_reindex_live_progress(bucket, completed, failed, total, vectors,
-                                  start_time, active=True):
+                                  start_time, active=True, files_this_run=0):
     """Upload lightweight progress JSON to GCS for the UI."""
     try:
         blob = bucket.blob("reindex_live_progress.json")
@@ -88,6 +88,7 @@ def upload_reindex_live_progress(bucket, completed, failed, total, vectors,
             "vectors_upserted": vectors,
             "started_at": start_time,
             "last_updated": datetime.now(timezone.utc).isoformat(),
+            "files_this_run": files_this_run,
         }
         blob.upload_from_string(json.dumps(data), content_type="application/json")
     except Exception:
@@ -579,7 +580,8 @@ def main():
     # Upload initial live progress
     upload_reindex_live_progress(
         bucket, len(progress["completed"]), len(progress["failed"]),
-        total, progress["vectors_upserted"], start_iso, active=True)
+        total, progress["vectors_upserted"], start_iso, active=True,
+        files_this_run=0)
 
     # Process each PDF with tqdm progress bar
     pbar = tqdm(to_process, desc="Vectorizing", unit="file", dynamic_ncols=True)
@@ -664,7 +666,8 @@ def main():
             if files_processed_this_run % REINDEX_PROGRESS_UPLOAD_INTERVAL == 0:
                 upload_reindex_live_progress(
                     bucket, len(progress["completed"]), len(progress["failed"]),
-                    total, progress["vectors_upserted"], start_iso, active=True)
+                    total, progress["vectors_upserted"], start_iso, active=True,
+                    files_this_run=files_processed_this_run)
 
             # Track per-dataset stats (use full blob path for classification)
             ds = classify_dataset(blob.name)
@@ -694,7 +697,8 @@ def main():
     # Mark reindex as inactive
     upload_reindex_live_progress(
         bucket, len(progress["completed"]), len(progress["failed"]),
-        total, progress["vectors_upserted"], start_iso, active=False)
+        total, progress["vectors_upserted"], start_iso, active=False,
+        files_this_run=files_processed_this_run)
 
     # Summary
     total_elapsed = time.time() - processing_start

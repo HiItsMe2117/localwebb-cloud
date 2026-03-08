@@ -263,6 +263,7 @@ interface ReindexProgress {
   vectors_upserted?: number;
   started_at?: string;
   last_updated?: string;
+  files_this_run?: number;
 }
 
 function ReindexProgressCard({ progress, onRefresh }: { progress: ReindexProgress; onRefresh: () => void }) {
@@ -273,17 +274,20 @@ function ReindexProgressCard({ progress, onRefresh }: { progress: ReindexProgres
     vectors_upserted = 0,
     started_at,
     last_updated,
+    files_this_run = 0,
   } = progress;
 
   const pct = total_files > 0 ? Math.min((files_completed / total_files) * 100, 100) : 0;
 
   let filesPerMin = 0;
   let etaText = '—';
-  if (started_at && files_completed > 0) {
+  // Use files_this_run for accurate rate calculation (avoids counting prior runs)
+  const rateBase = files_this_run > 0 ? files_this_run : files_completed;
+  if (started_at && rateBase > 0) {
     const elapsedMs = Date.now() - new Date(started_at).getTime();
     const elapsedMin = elapsedMs / 60000;
     if (elapsedMin > 0) {
-      filesPerMin = Math.round(files_completed / elapsedMin);
+      filesPerMin = Math.round(rateBase / elapsedMin);
       const remaining = total_files - files_completed;
       if (filesPerMin > 0) {
         const etaMin = remaining / filesPerMin;
