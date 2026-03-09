@@ -1055,36 +1055,51 @@ function AppContent() {
                            setIsSyncing(true);
                            setSyncProgress(5);
                            setSyncStatus('Starting bulk graph extraction...');
-                           const interval = setInterval(() => {
-                             setSyncProgress(prev => (prev < 90 ? prev + Math.random() * 0.5 : prev));
-                           }, 3000);
+                           let totalFiles = 0;
+                           let totalEntities = 0;
+                           let totalTriples = 0;
+                           let totalSkipped = 0;
+                           let batchNum = 0;
                            try {
-                             const res = await axios.post('/api/graph/bulk-extract', {}, { timeout: 600000 });
-                             const { files_processed, entities_added, triples_added, files_skipped } = res.data;
-                             setSyncStatus(`Processed ${files_processed} docs: ${entities_added} entities, ${triples_added} relationships${files_skipped > 0 ? `, ${files_skipped} skipped` : ''}`);
+                             while (true) {
+                               batchNum++;
+                               setSyncStatus(`Batch ${batchNum}: processing... (${totalFiles} docs, ${totalEntities} entities so far)`);
+                               const res = await axios.post('/api/graph/bulk-extract', {}, { timeout: 600000 });
+                               const { files_processed, entities_added, triples_added, files_skipped, remaining_files } = res.data;
+                               totalFiles += files_processed;
+                               totalEntities += entities_added;
+                               totalTriples += triples_added;
+                               totalSkipped += files_skipped;
+                               if (remaining_files > 0) {
+                                 const total = totalFiles + remaining_files;
+                                 setSyncProgress(Math.min(90, Math.round((totalFiles / total) * 100)));
+                               }
+                               // Stop if nothing left or this batch did nothing
+                               if (!remaining_files || remaining_files <= 0 || (files_processed === 0 && files_skipped === 0)) break;
+                             }
+                             setSyncStatus(`Done! ${totalFiles} docs → ${totalEntities} entities, ${totalTriples} relationships${totalSkipped > 0 ? `, ${totalSkipped} skipped` : ''}`);
                              setSyncProgress(95);
                              await loadGraph();
                              setActiveView('graph');
                            } catch (err: any) {
                              console.error('Bulk extraction failed:', err);
-                             const msg = err?.response?.data?.error || 'Bulk extraction failed. Please try again.';
+                             const msg = err?.response?.data?.error || `Bulk extraction failed after ${totalFiles} docs. ${totalEntities} entities added before error.`;
                              setSyncStatus(msg);
                            } finally {
-                             clearInterval(interval);
                              setSyncProgress(100);
                              setTimeout(() => {
                                setIsSyncing(false);
                                setIsExtractingInsights(false);
                                setSyncProgress(0);
                                setSyncStatus('');
-                             }, 2000);
+                             }, 5000);
                            }
                          }}
                          disabled={isSyncing}
                          className="w-full flex flex-col items-start gap-1 p-3 rounded-xl bg-[#30D158]/10 border border-[#30D158]/30 hover:bg-[#30D158]/20 transition-colors group text-left"
                        >
                          <span className="text-[13px] font-bold text-[#30D158]">Bulk Extract All Documents</span>
-                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Iterates through every vectorized document and extracts entities + relationships. Processes in batches of 50 files. Best run after vectorization completes.</span>
+                         <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Iterates through every vectorized document and extracts entities + relationships. Auto-loops through all batches until complete.</span>
                        </button>
 
                        <div className="pt-2 mt-2 border-t border-white/5">
