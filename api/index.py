@@ -339,7 +339,7 @@ class SupabaseStore:
                     "source_filename": e["data"].get("source_filename", ""),
                     "source_page": e["data"].get("source_page", 0),
                     "confidence": e["data"].get("confidence", "STATED"),
-                    "date_mentioned": e["data"].get("date_mentioned"),
+                    "date_mentioned": e["data"].get("date_mentioned") or None,
                 })
             if edge_records:
                 # Using upsert to insert new edges or update existing ones
@@ -450,7 +450,7 @@ class Triple(BaseModel):
     source_filename: str
     source_page: int = 0
     confidence: str = "STATED"
-    date_mentioned: Optional[str] = None
+    date_mentioned: str = ""
 
 class CaseMap(BaseModel):
     entities: List[Entity]
@@ -721,7 +721,7 @@ async def get_insights(depth: str = "standard", focus: Optional[str] = None, str
             "   - source_filename: the filename from the [Source: ...] header\n"
             "   - source_page: the page number from the [Source: ...] header\n"
             "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
-            "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, null otherwise\n"
+            "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, empty string otherwise\n"
             "3. Do NOT use generic legal roles (e.g., 'THE WITNESS', 'THE DEFENDANT', 'THE AGENT', 'COUNSEL') as aliases. Instead, use the document context (headers, questions) to resolve these roles to the specific named entity they refer to.\n"
             "4. Do NOT invent relationships that aren't supported by the text.\n"
             "5. Extract as many entities and relationships as the documents support.\n\n"
@@ -2512,7 +2512,7 @@ async def targeted_search(request: TargetedSearchRequest):
             "   - source_filename: the filename from the [Source: ...] header\n"
             "   - source_page: the page number from the [Source: ...] header\n"
             "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
-            "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, null otherwise\n"
+            "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, empty string otherwise\n"
             "3. Do NOT use generic legal roles (e.g., 'THE WITNESS', 'THE DEFENDANT', 'THE AGENT', 'COUNSEL') as aliases. Instead, use the document context (headers, questions) to resolve these roles to the specific named entity they refer to.\n"
             "4. Do NOT invent relationships that aren't supported by the text.\n"
             "5. Extract as many entities and relationships as the documents support.\n\n"
@@ -2983,6 +2983,7 @@ async def bulk_extract_graph():
         total_triples = 0
         files_ok = 0
         files_skipped = 0
+        files_errored = 0
 
         for filename in batch:
             try:
@@ -3013,7 +3014,7 @@ async def bulk_extract_graph():
                     "   - source_filename: the filename from the [Source: ...] header\n"
                     "   - source_page: the page number from the [Source: ...] header\n"
                     "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
-                    "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, null otherwise\n"
+                    "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, empty string otherwise\n"
                     "3. Do NOT use generic legal roles as entities. Resolve them to named entities.\n"
                     "4. Do NOT invent relationships that aren't supported by the text.\n"
                     "5. Extract as many entities and relationships as the documents support.\n\n"
@@ -3031,6 +3032,7 @@ async def bulk_extract_graph():
                     )
                 )
                 output = res.parsed
+                print(f"  DEBUG: {filename} -> Gemini returned {len(output.entities)} entities, {len(output.triples)} triples")
 
                 import math
                 new_nodes = []
@@ -3054,9 +3056,12 @@ async def bulk_extract_graph():
                         },
                     })
 
+                entity_ids = {ent.id for ent in output.entities}
                 seen_edge_ids = set()
                 new_edges = []
                 for triple in output.triples:
+                    if triple.subject_id not in entity_ids or triple.object_id not in entity_ids:
+                        continue
                     edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
                     if edge_id in seen_edge_ids:
                         continue
@@ -3088,7 +3093,7 @@ async def bulk_extract_graph():
 
             except Exception as e:
                 print(f"  Bulk extract failed for {filename}: {e}")
-                files_skipped += 1
+                files_errored += 1
                 continue
 
         # Check if more unprocessed files remain
@@ -3099,6 +3104,7 @@ async def bulk_extract_graph():
             "entities_added": total_entities,
             "triples_added": total_triples,
             "files_skipped": files_skipped,
+            "files_errored": files_errored,
             "remaining_files": 1 if has_more else 0,
         }
 
