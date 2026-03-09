@@ -12,6 +12,8 @@ import {
   ChevronDown,
   Network,
   X,
+  Pause,
+  Play,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -611,6 +613,7 @@ function DatasetCard({ num, stats }: { num: string; stats: DatasetStats }) {
 
 interface BulkExtractState {
   running: boolean;
+  paused: boolean;
   batch: number;
   filesProcessed: number;
   entitiesAdded: number;
@@ -622,16 +625,18 @@ interface BulkExtractState {
   done: boolean;
 }
 
-function BulkExtractCard({ state, onStart, onDismiss }: {
+function BulkExtractCard({ state, onStart, onPause, onResume, onDismiss }: {
   state: BulkExtractState;
   onStart: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onDismiss: () => void;
 }) {
-  const { running, batch, filesProcessed, entitiesAdded, triplesAdded, filesSkipped, remainingFiles, error, done } = state;
+  const { running, paused, batch, filesProcessed, entitiesAdded, triplesAdded, filesSkipped, remainingFiles, error, done } = state;
   const total = filesProcessed + remainingFiles;
   const pct = total > 0 ? Math.min((filesProcessed / total) * 100, 100) : 0;
 
-  if (!running && !done && !error) {
+  if (!running && !paused && !done && !error) {
     return (
       <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 mb-4">
         <div className="flex items-center gap-2.5 mb-3">
@@ -653,8 +658,8 @@ function BulkExtractCard({ state, onStart, onDismiss }: {
   }
 
   return (
-    <div className="bg-[#1C1C1E] border border-[#30D158] rounded-2xl p-4 mb-4 relative overflow-hidden">
-      <div className="absolute inset-x-0 top-0 h-px bg-[#30D158]" />
+    <div className={`bg-[#1C1C1E] border rounded-2xl p-4 mb-4 relative overflow-hidden ${paused ? 'border-[#FF9F0A]' : 'border-[#30D158]'}`}>
+      <div className={`absolute inset-x-0 top-0 h-px ${paused ? 'bg-[#FF9F0A]' : 'bg-[#30D158]'}`} />
 
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2.5">
@@ -664,16 +669,41 @@ function BulkExtractCard({ state, onStart, onDismiss }: {
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#30D158]" />
             </span>
           )}
+          {paused && (
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#FF9F0A]" />
+            </span>
+          )}
           <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
-            <Network size={14} className="text-[#30D158]" />
-            {running ? 'Extracting...' : done ? 'Extraction Complete' : 'Extraction Failed'}
+            <Network size={14} className={paused ? 'text-[#FF9F0A]' : 'text-[#30D158]'} />
+            {running ? 'Extracting...' : paused ? 'Extraction Paused' : done ? 'Extraction Complete' : 'Extraction Failed'}
           </h3>
         </div>
-        {!running && (
-          <button onClick={onDismiss} className="text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]">
-            <X size={14} />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {running && (
+            <button
+              onClick={onPause}
+              className="flex items-center gap-1.5 bg-[rgba(255,159,10,0.15)] hover:bg-[rgba(255,159,10,0.25)] text-[#FF9F0A] px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors"
+            >
+              <Pause size={10} />
+              Pause
+            </button>
+          )}
+          {paused && (
+            <button
+              onClick={onResume}
+              className="flex items-center gap-1.5 bg-[rgba(48,209,88,0.15)] hover:bg-[rgba(48,209,88,0.25)] text-[#30D158] px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors"
+            >
+              <Play size={10} />
+              Resume
+            </button>
+          )}
+          {!running && (
+            <button onClick={onDismiss} className="text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]">
+              <X size={14} />
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -683,7 +713,7 @@ function BulkExtractCard({ state, onStart, onDismiss }: {
       <div className="mb-3">
         <div className="flex justify-between items-center mb-1.5">
           <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
-            {running ? `Batch ${batch}` : 'Finished'} — {filesProcessed.toLocaleString()} / {total > 0 ? total.toLocaleString() : '?'} files
+            {running ? `Batch ${batch}` : paused ? `Paused at batch ${batch}` : 'Finished'} — {filesProcessed.toLocaleString()} / {total > 0 ? total.toLocaleString() : '?'} files
           </span>
           <span className="text-[13px] font-mono text-[#30D158]">
             {total > 0 ? `${pct.toFixed(1)}%` : '—'}
@@ -691,7 +721,7 @@ function BulkExtractCard({ state, onStart, onDismiss }: {
         </div>
         <div className="h-2.5 w-full bg-[#3A3A3C] rounded-full overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all duration-700 ${running ? 'bg-[#30D158]' : done ? 'bg-[#30D158]' : 'bg-[#FF453A]'}`}
+            className={`h-full rounded-full transition-all duration-700 ${running ? 'bg-[#30D158]' : paused ? 'bg-[#FF9F0A]' : done ? 'bg-[#30D158]' : 'bg-[#FF453A]'}`}
             style={{ width: `${done ? 100 : pct}%` }}
           />
         </div>
@@ -716,7 +746,7 @@ function BulkExtractCard({ state, onStart, onDismiss }: {
         </div>
       </div>
 
-      {running && remainingFiles > 0 && (
+      {(running || paused) && remainingFiles > 0 && (
         <p className="text-[10px] text-[rgba(235,235,245,0.25)] text-right mt-2">
           {remainingFiles.toLocaleString()} files remaining
         </p>
@@ -736,21 +766,38 @@ export default function DataPanel() {
 
   // Bulk extraction state
   const [bulkExtract, setBulkExtract] = useState<BulkExtractState>({
-    running: false, batch: 0, filesProcessed: 0, entitiesAdded: 0,
+    running: false, paused: false, batch: 0, filesProcessed: 0, entitiesAdded: 0,
     triplesAdded: 0, filesSkipped: 0, remainingFiles: 0, totalUnprocessed: 0,
     error: null, done: false,
   });
   const bulkAbortRef = useRef(false);
 
-  const startBulkExtract = useCallback(async () => {
+  const runBulkExtractLoop = useCallback(async (resume: boolean) => {
     bulkAbortRef.current = false;
-    setBulkExtract({
-      running: true, batch: 0, filesProcessed: 0, entitiesAdded: 0,
-      triplesAdded: 0, filesSkipped: 0, remainingFiles: 0, totalUnprocessed: 0,
-      error: null, done: false,
-    });
+
+    if (resume) {
+      setBulkExtract(prev => ({ ...prev, running: true, paused: false, error: null }));
+    } else {
+      setBulkExtract({
+        running: true, paused: false, batch: 0, filesProcessed: 0, entitiesAdded: 0,
+        triplesAdded: 0, filesSkipped: 0, remainingFiles: 0, totalUnprocessed: 0,
+        error: null, done: false,
+      });
+    }
 
     let totalFiles = 0, totalEntities = 0, totalTriples = 0, totalSkipped = 0, batchNum = 0;
+
+    // When resuming, read current totals from state
+    if (resume) {
+      setBulkExtract(prev => {
+        totalFiles = prev.filesProcessed;
+        totalEntities = prev.entitiesAdded;
+        totalTriples = prev.triplesAdded;
+        totalSkipped = prev.filesSkipped;
+        batchNum = prev.batch;
+        return prev;
+      });
+    }
 
     try {
       while (!bulkAbortRef.current) {
@@ -778,7 +825,11 @@ export default function DataPanel() {
         if (!remaining_files || remaining_files <= 0 || (files_processed === 0 && files_skipped === 0)) break;
       }
 
-      setBulkExtract(prev => ({ ...prev, running: false, done: true }));
+      if (bulkAbortRef.current) {
+        setBulkExtract(prev => ({ ...prev, running: false, paused: true }));
+      } else {
+        setBulkExtract(prev => ({ ...prev, running: false, done: true }));
+      }
     } catch (err: any) {
       console.error('Bulk extraction error:', err);
       const serverError = err?.response?.data?.error;
@@ -791,6 +842,10 @@ export default function DataPanel() {
       setBulkExtract(prev => ({ ...prev, running: false, error: msg }));
     }
   }, []);
+
+  const startBulkExtract = useCallback(() => runBulkExtractLoop(false), [runBulkExtractLoop]);
+  const resumeBulkExtract = useCallback(() => runBulkExtractLoop(true), [runBulkExtractLoop]);
+  const pauseBulkExtract = useCallback(() => { bulkAbortRef.current = true; }, []);
 
   const fetchScrapeProgress = useCallback(async () => {
     try {
@@ -875,7 +930,9 @@ export default function DataPanel() {
           <BulkExtractCard
             state={bulkExtract}
             onStart={startBulkExtract}
-            onDismiss={() => setBulkExtract(prev => ({ ...prev, done: false, error: null }))}
+            onPause={pauseBulkExtract}
+            onResume={resumeBulkExtract}
+            onDismiss={() => setBulkExtract(prev => ({ ...prev, done: false, paused: false, error: null }))}
           />
 
           <InfrastructureCard />
