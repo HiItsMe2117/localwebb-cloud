@@ -10,7 +10,10 @@ import {
   Database,
   Server,
   ChevronDown,
+  Network,
+  X,
 } from 'lucide-react';
+import axios from 'axios';
 
 const DATASET_INFO: Record<string, { name: string; description: string }> = {
   '1': { name: 'FBI Interviews & Police Reports', description: 'Palm Beach PD 2005-2008, FBI summaries' },
@@ -606,6 +609,122 @@ function DatasetCard({ num, stats }: { num: string; stats: DatasetStats }) {
   );
 }
 
+interface BulkExtractState {
+  running: boolean;
+  batch: number;
+  filesProcessed: number;
+  entitiesAdded: number;
+  triplesAdded: number;
+  filesSkipped: number;
+  remainingFiles: number;
+  totalUnprocessed: number;
+  error: string | null;
+  done: boolean;
+}
+
+function BulkExtractCard({ state, onStart, onDismiss }: {
+  state: BulkExtractState;
+  onStart: () => void;
+  onDismiss: () => void;
+}) {
+  const { running, batch, filesProcessed, entitiesAdded, triplesAdded, filesSkipped, remainingFiles, totalUnprocessed, error, done } = state;
+  const total = filesProcessed + remainingFiles;
+  const pct = total > 0 ? Math.min((filesProcessed / total) * 100, 100) : 0;
+
+  if (!running && !done && !error) {
+    return (
+      <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 mb-4">
+        <div className="flex items-center gap-2.5 mb-3">
+          <Network size={14} className="text-[#30D158]" />
+          <h3 className="text-[15px] font-semibold text-white">Graph Extraction</h3>
+        </div>
+        <p className="text-[11px] text-[rgba(235,235,245,0.4)] mb-3">
+          Extract entities and relationships from all vectorized documents not yet in the graph. Processes automatically in batches of 50.
+        </p>
+        <button
+          onClick={onStart}
+          className="w-full flex items-center justify-center gap-2 bg-[#30D158] hover:bg-[#28B84C] px-3 py-2.5 rounded-xl text-[13px] font-semibold text-white transition-colors"
+        >
+          <Network size={14} />
+          Start Bulk Extraction
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-[#1C1C1E] border border-[#30D158] rounded-2xl p-4 mb-4 relative overflow-hidden">
+      <div className="absolute inset-x-0 top-0 h-px bg-[#30D158]" />
+
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2.5">
+          {running && (
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#30D158] opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#30D158]" />
+            </span>
+          )}
+          <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
+            <Network size={14} className="text-[#30D158]" />
+            {running ? 'Extracting...' : done ? 'Extraction Complete' : 'Extraction Failed'}
+          </h3>
+        </div>
+        {!running && (
+          <button onClick={onDismiss} className="text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]">
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <p className="text-[12px] text-[#FF453A] mb-3">{error}</p>
+      )}
+
+      <div className="mb-3">
+        <div className="flex justify-between items-center mb-1.5">
+          <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
+            {running ? `Batch ${batch}` : 'Finished'} — {filesProcessed.toLocaleString()} / {total > 0 ? total.toLocaleString() : '?'} files
+          </span>
+          <span className="text-[13px] font-mono text-[#30D158]">
+            {total > 0 ? `${pct.toFixed(1)}%` : '—'}
+          </span>
+        </div>
+        <div className="h-2.5 w-full bg-[#3A3A3C] rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-700 ${running ? 'bg-[#30D158]' : done ? 'bg-[#30D158]' : 'bg-[#FF453A]'}`}
+            style={{ width: `${done ? 100 : pct}%` }}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-3">
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-white">{entitiesAdded.toLocaleString()}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Entities</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-[#30D158]">{triplesAdded.toLocaleString()}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Relationships</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-[rgba(235,235,245,0.6)]">{filesProcessed.toLocaleString()}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Processed</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-[rgba(235,235,245,0.6)]">{filesSkipped.toLocaleString()}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Skipped</p>
+        </div>
+      </div>
+
+      {running && remainingFiles > 0 && (
+        <p className="text-[10px] text-[rgba(235,235,245,0.25)] text-right mt-2">
+          {remainingFiles.toLocaleString()} files remaining
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function DataPanel() {
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -614,6 +733,57 @@ export default function DataPanel() {
   const [reindexProgress, setReindexProgress] = useState<ReindexProgress | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reindexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Bulk extraction state
+  const [bulkExtract, setBulkExtract] = useState<BulkExtractState>({
+    running: false, batch: 0, filesProcessed: 0, entitiesAdded: 0,
+    triplesAdded: 0, filesSkipped: 0, remainingFiles: 0, totalUnprocessed: 0,
+    error: null, done: false,
+  });
+  const bulkAbortRef = useRef(false);
+
+  const startBulkExtract = useCallback(async () => {
+    bulkAbortRef.current = false;
+    setBulkExtract({
+      running: true, batch: 0, filesProcessed: 0, entitiesAdded: 0,
+      triplesAdded: 0, filesSkipped: 0, remainingFiles: 0, totalUnprocessed: 0,
+      error: null, done: false,
+    });
+
+    let totalFiles = 0, totalEntities = 0, totalTriples = 0, totalSkipped = 0, batchNum = 0;
+
+    try {
+      while (!bulkAbortRef.current) {
+        batchNum++;
+        setBulkExtract(prev => ({ ...prev, batch: batchNum }));
+
+        const res = await axios.post('/api/graph/bulk-extract', {}, { timeout: 600000 });
+        const { files_processed, entities_added, triples_added, files_skipped, remaining_files } = res.data;
+
+        totalFiles += files_processed;
+        totalEntities += entities_added;
+        totalTriples += triples_added;
+        totalSkipped += files_skipped;
+
+        setBulkExtract(prev => ({
+          ...prev,
+          filesProcessed: totalFiles,
+          entitiesAdded: totalEntities,
+          triplesAdded: totalTriples,
+          filesSkipped: totalSkipped,
+          remainingFiles: remaining_files || 0,
+          totalUnprocessed: totalFiles + (remaining_files || 0),
+        }));
+
+        if (!remaining_files || remaining_files <= 0 || (files_processed === 0 && files_skipped === 0)) break;
+      }
+
+      setBulkExtract(prev => ({ ...prev, running: false, done: true }));
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || `Failed after ${totalFiles} docs. ${totalEntities} entities added before error.`;
+      setBulkExtract(prev => ({ ...prev, running: false, error: msg }));
+    }
+  }, []);
 
   const fetchScrapeProgress = useCallback(async () => {
     try {
@@ -694,6 +864,12 @@ export default function DataPanel() {
           {reindexProgress && (
             <ReindexProgressCard progress={reindexProgress} onRefresh={fetchReindexProgress} />
           )}
+
+          <BulkExtractCard
+            state={bulkExtract}
+            onStart={startBulkExtract}
+            onDismiss={() => setBulkExtract(prev => ({ ...prev, done: false, error: null }))}
+          />
 
           <InfrastructureCard />
 
