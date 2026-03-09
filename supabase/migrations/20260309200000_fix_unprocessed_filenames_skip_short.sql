@@ -1,3 +1,6 @@
+-- Fix infinite skip loop: filter out files with < 100 chars total content
+-- These are junk OCR outputs (scanned images, labels, etc.) that will never
+-- produce useful entity extractions and block the bulk extract loop forever.
 CREATE OR REPLACE FUNCTION public.get_unprocessed_filenames(batch_limit INT DEFAULT 10)
 RETURNS TABLE(filename TEXT)
 LANGUAGE sql

@@ -438,7 +438,7 @@ class PositionUpdate(BaseModel):
 class Entity(BaseModel):
     id: str
     label: str
-    type: str  # PERSON, ORGANIZATION, LOCATION, EVENT, DOCUMENT, FINANCIAL_ENTITY
+    type: str  # PERSON, ORGANIZATION, LOCATION, EVENT, FINANCIAL_ENTITY
     description: str
     aliases: List[str] = []
 
@@ -455,6 +455,58 @@ class Triple(BaseModel):
 class CaseMap(BaseModel):
     entities: List[Entity]
     triples: List[Triple]
+
+EXTRACTION_PROMPT_TEMPLATE = (
+    "You are an investigative intelligence analyst. Extract entities and their relationships from these documents.\n\n"
+    "RULES:\n"
+    "1. Every entity needs an id (lowercase_snake_case), a label (display name), a type (PERSON, ORGANIZATION, LOCATION, EVENT, FINANCIAL_ENTITY), a description, and aliases (alternate names).\n"
+    "2. Every relationship (triple) MUST include:\n"
+    "   - subject_id and object_id referencing entity ids\n"
+    "   - predicate: a lowercase_snake_case verb phrase (e.g. 'flew_with', 'employed_by', 'transferred_funds_to', 'visited', 'owns')\n"
+    "   - evidence_text: the EXACT verbatim quote from the document that proves this relationship\n"
+    "   - source_filename: the filename from the [Source: ...] header\n"
+    "   - source_page: the page number from the [Source: ...] header\n"
+    "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
+    "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, empty string otherwise\n"
+    "3. Do NOT use generic legal roles (e.g., 'THE WITNESS', 'THE DEFENDANT', 'THE AGENT', 'COUNSEL') as aliases. Instead, use the document context (headers, questions) to resolve these roles to the specific named entity they refer to.\n"
+    "4. Do NOT invent relationships that aren't supported by the text.\n"
+    "5. QUALITY OVER QUANTITY — only extract entities that are meaningful and identifiable:\n"
+    "   - Do NOT create entities for document filenames or IDs (e.g., 'EFTA02341172', 'Exhibit A')\n"
+    "   - Do NOT create entities for single initials or 1-2 character labels (e.g., 'G', 'JJ', 'MM') unless you can resolve them to a full name\n"
+    "   - Do NOT create entities for generic or unidentifiable references (e.g., 'unknown person', 'a friend', 'the driver')\n"
+    "   - Every entity MUST have a meaningful description that explains WHO/WHAT they are — not just 'mentioned in the document'\n"
+    "   - Only create an entity if it has at least one meaningful relationship to another entity\n"
+    "6. ENTITY TYPES — use only: PERSON, ORGANIZATION, LOCATION, EVENT, FINANCIAL_ENTITY. Do NOT use DOCUMENT, OBJECT, VEHICLE, DEVICE, or other types.\n"
+    "7. PREFER EXISTING ENTITIES — if an entity likely refers to someone/something already well-known (e.g., a head of state, major company), use the most recognized full name as the label.\n\n"
+    "DOCUMENTS:\n{context}\n\n"
+    "Return JSON with 'entities' and 'triples' keys."
+)
+
+# --- Quality gate for extracted entities ---
+_DOC_ID_RE = re.compile(r'^e[a-z]?[fpuh]?ta\d', re.IGNORECASE)
+_GENERIC_DESC_RE = re.compile(
+    r'^(a |an )?(person|individual|entity|organization|document|location|someone|something)?\s*'
+    r'(mentioned|referenced|noted|found|listed|described)\s*(in|within)',
+    re.IGNORECASE
+)
+_BAD_ENTITY_TYPES = {"DOCUMENT", "OBJECT", "VEHICLE", "DEVICE"}
+
+
+def filter_quality_entities(entities: List[Entity]) -> List[Entity]:
+    """Filter out junk entities that would pollute the knowledge graph."""
+    quality = []
+    for ent in entities:
+        label = ent.label.strip()
+        if len(label) <= 2:
+            continue
+        if _DOC_ID_RE.match(label) or _DOC_ID_RE.match(ent.id):
+            continue
+        if ent.type.upper() in _BAD_ENTITY_TYPES:
+            continue
+        if _GENERIC_DESC_RE.match(ent.description.strip()) and len(ent.description) < 60:
+            continue
+        quality.append(ent)
+    return quality
 
 class FilteredQueryRequest(BaseModel):
     query: str
@@ -710,24 +762,7 @@ async def get_insights(depth: str = "standard", focus: Optional[str] = None, str
             print("DEBUG: No context found in metadata!")
             return graph_store.load()
 
-        prompt = (
-            "You are an investigative intelligence analyst. Extract entities and their relationships from these documents.\n\n"
-            "RULES:\n"
-            "1. Every entity needs an id (lowercase_snake_case), a label (display name), a type (PERSON, ORGANIZATION, LOCATION, EVENT, DOCUMENT, FINANCIAL_ENTITY), a description, and aliases (alternate names).\n"
-            "2. Every relationship (triple) MUST include:\n"
-            "   - subject_id and object_id referencing entity ids\n"
-            "   - predicate: a lowercase_snake_case verb phrase (e.g. 'flew_with', 'employed_by', 'transferred_funds_to', 'visited', 'owns')\n"
-            "   - evidence_text: the EXACT verbatim quote from the document that proves this relationship\n"
-            "   - source_filename: the filename from the [Source: ...] header\n"
-            "   - source_page: the page number from the [Source: ...] header\n"
-            "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
-            "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, empty string otherwise\n"
-            "3. Do NOT use generic legal roles (e.g., 'THE WITNESS', 'THE DEFENDANT', 'THE AGENT', 'COUNSEL') as aliases. Instead, use the document context (headers, questions) to resolve these roles to the specific named entity they refer to.\n"
-            "4. Do NOT invent relationships that aren't supported by the text.\n"
-            "5. Extract as many entities and relationships as the documents support.\n\n"
-            f"DOCUMENTS:\n{context}\n\n"
-            "Return JSON with 'entities' and 'triples' keys."
-        )
+        prompt = EXTRACTION_PROMPT_TEMPLATE.format(context=context)
 
         print("DEBUG: Sending extraction prompt to Gemini...")
         res = generate(
@@ -743,14 +778,17 @@ async def get_insights(depth: str = "standard", focus: Optional[str] = None, str
         output = res.parsed
         print(f"DEBUG: Gemini extracted {len(output.entities)} entities, {len(output.triples)} triples")
 
-        entity_map = {ent.id: ent for ent in output.entities}
+        quality_entities = filter_quality_entities(output.entities)
+        print(f"DEBUG: After quality gate: {len(quality_entities)}/{len(output.entities)} entities kept")
+
+        entity_map = {ent.id: ent for ent in quality_entities}
 
         import math
         new_nodes = []
-        total = len(output.entities)
+        total = len(quality_entities)
         cx, cy = 400, 400
         radius = max(200, total * 30)
-        for i, ent in enumerate(output.entities):
+        for i, ent in enumerate(quality_entities):
             ent_type = ent.type.upper()
             angle = (2 * math.pi * i) / max(total, 1)
             new_nodes.append({
@@ -768,9 +806,12 @@ async def get_insights(depth: str = "standard", focus: Optional[str] = None, str
                 },
             })
 
+        entity_ids = {ent.id for ent in quality_entities}
         seen_edge_ids = set()
         new_edges = []
         for triple in output.triples:
+            if triple.subject_id not in entity_ids or triple.object_id not in entity_ids:
+                continue
             edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
             if edge_id in seen_edge_ids:
                 continue
@@ -2477,135 +2518,148 @@ async def targeted_search(request: TargetedSearchRequest):
         if not request.extract:
             return {"chunks": chunks, "stats": stats}
 
-        # --- Extract mode ---
-        # Fetch up to 500 chunks for extraction context (not just the current page)
-        if request.search_mode == "exact":
-            extract_result = supabase.rpc("search_chunks_exact", {
-                "search_query": keyword,
-                "result_limit": 500,
-                "result_offset": 0,
-            }).execute()
-        else:
-            extract_result = supabase.rpc("search_chunks", {
-                "search_query": keyword,
-                "result_limit": 500,
-                "result_offset": 0,
-            }).execute()
-        extract_rows = extract_result.data or []
-
-        if not extract_rows:
-            return {"extracted": {"entities": 0, "triples": 0}, **graph_store.load()}
-
-        context_parts = []
-        for row in extract_rows:
-            context_parts.append(f"[Source: {row['filename']}, Page: {row['page']}]\n{row['text']}")
-        context = "\n\n---\n\n".join(context_parts)
-
-        prompt = (
-            "You are an investigative intelligence analyst. Extract entities and their relationships from these documents.\n\n"
-            "RULES:\n"
-            "1. Every entity needs an id (lowercase_snake_case), a label (display name), a type (PERSON, ORGANIZATION, LOCATION, EVENT, DOCUMENT, FINANCIAL_ENTITY), a description, and aliases (alternate names).\n"
-            "2. Every relationship (triple) MUST include:\n"
-            "   - subject_id and object_id referencing entity ids\n"
-            "   - predicate: a lowercase_snake_case verb phrase (e.g. 'flew_with', 'employed_by', 'transferred_funds_to', 'visited', 'owns')\n"
-            "   - evidence_text: the EXACT verbatim quote from the document that proves this relationship\n"
-            "   - source_filename: the filename from the [Source: ...] header\n"
-            "   - source_page: the page number from the [Source: ...] header\n"
-            "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
-            "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, empty string otherwise\n"
-            "3. Do NOT use generic legal roles (e.g., 'THE WITNESS', 'THE DEFENDANT', 'THE AGENT', 'COUNSEL') as aliases. Instead, use the document context (headers, questions) to resolve these roles to the specific named entity they refer to.\n"
-            "4. Do NOT invent relationships that aren't supported by the text.\n"
-            "5. Extract as many entities and relationships as the documents support.\n\n"
-            f"DOCUMENTS:\n{context}\n\n"
-            "Return JSON with 'entities' and 'triples' keys."
-        )
-
-        res = generate(
-            client,
-            model="gemini-2.5-pro",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=CaseMap
-            )
-        )
-        output = res.parsed
-
-        import math
-        new_nodes = []
-        total = len(output.entities)
-        cx, cy = 400, 400
-        radius = max(200, total * 30)
-        for i, ent in enumerate(output.entities):
-            angle = (2 * math.pi * i) / max(total, 1)
-            new_nodes.append({
-                "id": ent.id,
-                "type": "entityNode",
-                "data": {
-                    "label": ent.label,
-                    "entityType": ent.type.upper(),
-                    "description": ent.description,
-                    "aliases": ent.aliases,
-                },
-                "position": {
-                    "x": cx + radius * math.cos(angle),
-                    "y": cy + radius * math.sin(angle),
-                },
-            })
-
-        seen_edge_ids = set()
-        new_edges = []
-        for triple in output.triples:
-            edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
-            if edge_id in seen_edge_ids:
-                continue
-            seen_edge_ids.add(edge_id)
-            new_edges.append({
-                "id": edge_id,
-                "source": triple.subject_id,
-                "target": triple.object_id,
-                "label": triple.predicate.replace("_", " "),
-                "animated": triple.confidence == "INFERRED",
-                "style": {"strokeDasharray": "5 5"} if triple.confidence == "INFERRED" else {},
-                "data": {
-                    "predicate": triple.predicate,
-                    "evidence_text": triple.evidence_text,
-                    "source_filename": triple.source_filename,
-                    "source_page": triple.source_page,
-                    "confidence": triple.confidence,
-                    "date_mentioned": triple.date_mentioned,
-                },
-            })
-
-        graph_store.add_elements(new_nodes, new_edges)
-
-        # Run community detection
-        try:
-            from api.graph_ops import compute_communities
-        except ImportError:
+        # --- Deep extract mode (SSE streaming) ---
+        async def deep_extract_stream():
             try:
-                from graph_ops import compute_communities
-            except ImportError:
-                compute_communities = None
+                # Paginate to fetch ALL matching chunks
+                all_extract_rows = []
+                extract_offset = 0
+                EXTRACT_PAGE = 500
+                while True:
+                    if request.search_mode == "exact":
+                        extract_result = supabase.rpc("search_chunks_exact", {
+                            "search_query": keyword,
+                            "result_limit": EXTRACT_PAGE,
+                            "result_offset": extract_offset,
+                        }).execute()
+                    else:
+                        extract_result = supabase.rpc("search_chunks", {
+                            "search_query": keyword,
+                            "result_limit": EXTRACT_PAGE,
+                            "result_offset": extract_offset,
+                        }).execute()
+                    page_rows = extract_result.data or []
+                    all_extract_rows.extend(page_rows)
+                    if len(page_rows) < EXTRACT_PAGE:
+                        break
+                    extract_offset += EXTRACT_PAGE
 
-        if compute_communities:
-            graph_data = graph_store.load()
-            graph_data = compute_communities(graph_data)
-            updated = []
-            for node in graph_data.get("nodes", []):
-                if "communityId" in node["data"]:
-                    updated.append({
-                        "id": node["id"],
-                        "metadata": {
-                            "degree": node["data"].get("degree", 0),
-                            "communityId": node["data"]["communityId"],
-                            "communityColor": node["data"]["communityColor"],
-                        }
-                    })
-            if updated:
-                supabase.table("nodes").upsert(updated, on_conflict="id").execute()
+                if not all_extract_rows:
+                    yield f"data: {json.dumps({'type': 'done', 'entities': 0, 'triples': 0})}\n\n"
+                    return
 
-        return {"extracted": {"entities": len(new_nodes), "triples": len(new_edges)}, **graph_store.load()}
+                total_chunks = len(all_extract_rows)
+                unique_docs = len(set(r.get("filename", "") for r in all_extract_rows))
+                EXTRACT_BATCH = 25
+                total_batches = -(-total_chunks // EXTRACT_BATCH)  # ceil division
+
+                yield f"data: {json.dumps({'type': 'init', 'total_chunks': total_chunks, 'total_batches': total_batches, 'unique_docs': unique_docs})}\n\n"
+
+                all_entities_map = {}
+                all_new_edges = []
+                seen_edge_ids = set()
+
+                for batch_start in range(0, total_chunks, EXTRACT_BATCH):
+                    batch_num = batch_start // EXTRACT_BATCH + 1
+                    batch_rows = all_extract_rows[batch_start:batch_start + EXTRACT_BATCH]
+                    context_parts = []
+                    for row in batch_rows:
+                        context_parts.append(f"[Source: {row['filename']}, Page: {row['page']}]\n{row['text']}")
+                    context = "\n\n---\n\n".join(context_parts)
+
+                    prompt = EXTRACTION_PROMPT_TEMPLATE.format(context=context)
+
+                    try:
+                        res = generate(
+                            client,
+                            model="gemini-2.5-pro",
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                response_schema=CaseMap
+                            )
+                        )
+                        output = res.parsed
+                        quality_ents = filter_quality_entities(output.entities)
+                        quality_ids = {e.id for e in quality_ents}
+
+                        batch_new_edges = 0
+                        for ent in quality_ents:
+                            if ent.id in all_entities_map:
+                                existing = all_entities_map[ent.id]
+                                if len(ent.description) > len(existing["data"]["description"]):
+                                    existing["data"]["description"] = ent.description
+                                existing_aliases = set(existing["data"].get("aliases", []))
+                                existing_aliases.update(ent.aliases)
+                                existing["data"]["aliases"] = list(existing_aliases)
+                            else:
+                                all_entities_map[ent.id] = {
+                                    "id": ent.id,
+                                    "type": "entityNode",
+                                    "data": {
+                                        "label": ent.label,
+                                        "entityType": ent.type.upper(),
+                                        "description": ent.description,
+                                        "aliases": ent.aliases,
+                                    },
+                                    "position": {"x": 0, "y": 0},
+                                }
+
+                        for triple in output.triples:
+                            if triple.subject_id not in quality_ids or triple.object_id not in quality_ids:
+                                continue
+                            edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
+                            if edge_id in seen_edge_ids:
+                                continue
+                            seen_edge_ids.add(edge_id)
+                            batch_new_edges += 1
+                            all_new_edges.append({
+                                "id": edge_id,
+                                "source": triple.subject_id,
+                                "target": triple.object_id,
+                                "label": triple.predicate.replace("_", " "),
+                                "animated": triple.confidence == "INFERRED",
+                                "style": {"strokeDasharray": "5 5"} if triple.confidence == "INFERRED" else {},
+                                "data": {
+                                    "predicate": triple.predicate,
+                                    "evidence_text": triple.evidence_text,
+                                    "source_filename": triple.source_filename,
+                                    "source_page": triple.source_page,
+                                    "confidence": triple.confidence,
+                                    "date_mentioned": triple.date_mentioned,
+                                },
+                            })
+
+                        yield f"data: {json.dumps({'type': 'batch', 'batch': batch_num, 'total_batches': total_batches, 'batch_entities': len(quality_ents), 'batch_triples': batch_new_edges, 'total_entities': len(all_entities_map), 'total_triples': len(all_new_edges)})}\n\n"
+
+                    except Exception as batch_err:
+                        print(f"  Batch {batch_num} failed: {batch_err}")
+                        yield f"data: {json.dumps({'type': 'batch_error', 'batch': batch_num, 'error': str(batch_err)})}\n\n"
+                        continue
+
+                # Assign circular positions and upsert
+                yield f"data: {json.dumps({'type': 'saving', 'total_entities': len(all_entities_map), 'total_triples': len(all_new_edges)})}\n\n"
+
+                import math
+                total_ents = len(all_entities_map)
+                cx, cy = 400, 400
+                radius = max(200, total_ents * 30)
+                new_nodes = []
+                for i, node in enumerate(all_entities_map.values()):
+                    angle = (2 * math.pi * i) / max(total_ents, 1)
+                    node["position"] = {"x": cx + radius * math.cos(angle), "y": cy + radius * math.sin(angle)}
+                    new_nodes.append(node)
+
+                graph_store.add_elements(new_nodes, all_new_edges)
+
+                yield f"data: {json.dumps({'type': 'done', 'entities': len(new_nodes), 'triples': len(all_new_edges)})}\n\n"
+
+            except Exception as e:
+                print(f"Deep extract stream error: {e}")
+                import traceback; traceback.print_exc()
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+        return StreamingResponse(deep_extract_stream(), media_type="text/event-stream")
     except Exception as e:
         print(f"Targeted search failed: {e}")
         import traceback; traceback.print_exc()
@@ -3003,24 +3057,7 @@ async def bulk_extract_graph():
                     files_skipped += 1
                     continue
 
-                prompt = (
-                    "You are an investigative intelligence analyst. Extract entities and their relationships from these documents.\n\n"
-                    "RULES:\n"
-                    "1. Every entity needs an id (lowercase_snake_case), a label (display name), a type (PERSON, ORGANIZATION, LOCATION, EVENT, DOCUMENT, FINANCIAL_ENTITY), a description, and aliases (alternate names).\n"
-                    "2. Every relationship (triple) MUST include:\n"
-                    "   - subject_id and object_id referencing entity ids\n"
-                    "   - predicate: a lowercase_snake_case verb phrase (e.g. 'flew_with', 'employed_by', 'transferred_funds_to', 'visited', 'owns')\n"
-                    "   - evidence_text: the EXACT verbatim quote from the document that proves this relationship\n"
-                    "   - source_filename: the filename from the [Source: ...] header\n"
-                    "   - source_page: the page number from the [Source: ...] header\n"
-                    "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
-                    "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, empty string otherwise\n"
-                    "3. Do NOT use generic legal roles as entities. Resolve them to named entities.\n"
-                    "4. Do NOT invent relationships that aren't supported by the text.\n"
-                    "5. Extract as many entities and relationships as the documents support.\n\n"
-                    f"DOCUMENTS:\n{context[:100000]}\n\n"
-                    "Return JSON with 'entities' and 'triples' keys."
-                )
+                prompt = EXTRACTION_PROMPT_TEMPLATE.format(context=context[:100000])
 
                 res = generate(
                     client,
@@ -3032,14 +3069,19 @@ async def bulk_extract_graph():
                     )
                 )
                 output = res.parsed
-                print(f"  DEBUG: {filename} -> Gemini returned {len(output.entities)} entities, {len(output.triples)} triples")
+                raw_ent_count = len(output.entities)
+                raw_tri_count = len(output.triples)
+
+                quality_entities = filter_quality_entities(output.entities)
+                if len(quality_entities) < len(output.entities):
+                    print(f"  Quality gate: kept {len(quality_entities)}/{raw_ent_count} entities")
 
                 import math
                 new_nodes = []
-                total = len(output.entities)
+                total = len(quality_entities)
                 cx, cy = 400, 400
                 radius = max(200, total * 30)
-                for i, ent in enumerate(output.entities):
+                for i, ent in enumerate(quality_entities):
                     angle = (2 * math.pi * i) / max(total, 1)
                     new_nodes.append({
                         "id": ent.id,
@@ -3056,7 +3098,7 @@ async def bulk_extract_graph():
                         },
                     })
 
-                entity_ids = {ent.id for ent in output.entities}
+                entity_ids = {ent.id for ent in quality_entities}
                 seen_edge_ids = set()
                 new_edges = []
                 for triple in output.triples:
@@ -3089,7 +3131,7 @@ async def bulk_extract_graph():
                     total_triples += len(new_edges)
 
                 files_ok += 1
-                print(f"  Bulk extract: {filename} -> {len(new_nodes)} entities, {len(new_edges)} triples")
+                print(f"  Bulk extract: {filename} -> {len(new_nodes)}/{raw_ent_count} entities, {len(new_edges)}/{raw_tri_count} triples (after quality gate)")
 
             except Exception as e:
                 print(f"  Bulk extract failed for {filename}: {e}")

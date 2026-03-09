@@ -1218,40 +1218,79 @@ function AppContent() {
                                   onClick={async () => {
                                     setIsExtractingInsights(true);
                                     setIsSyncing(true);
-                                    setSyncProgress(5);
-                                    setSyncStatus(`Extracting network for "${focusTarget}"...`);
-                                    const interval = setInterval(() => {
-                                      setSyncProgress(prev => (prev < 90 ? prev + Math.random() * 2 : prev));
-                                    }, 1500);
+                                    setSyncProgress(2);
+                                    setSyncStatus(`Fetching all "${focusTarget}" documents...`);
                                     try {
-                                      const res = await axios.post('/api/search/targeted', {
-                                        keyword: focusTarget.trim(),
-                                        extract: true,
-                                        search_mode: searchMode,
+                                      const res = await fetch('/api/search/targeted', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          keyword: focusTarget.trim(),
+                                          extract: true,
+                                          search_mode: searchMode,
+                                        }),
                                       });
-                                      const ext = res.data.extracted || { entities: 0, triples: 0 };
-                                      if (ext.entities === 0) {
-                                        setSyncStatus('No entities extracted — try a different keyword.');
-                                        setSyncProgress(100);
-                                      } else {
-                                        setSyncStatus(`Extracted ${ext.entities} entities, ${ext.triples} relationships`);
-                                        setSyncProgress(95);
-                                        await loadGraph();
-                                        setActiveView('graph');
+                                      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                                      const reader = res.body?.getReader();
+                                      if (!reader) throw new Error('No response body');
+
+                                      const decoder = new TextDecoder();
+                                      let buffer = '';
+                                      let finalEntities = 0;
+                                      let finalTriples = 0;
+
+                                      while (true) {
+                                        const { done, value } = await reader.read();
+                                        if (done) break;
+                                        buffer += decoder.decode(value, { stream: true });
+                                        const lines = buffer.split('\n');
+                                        buffer = lines.pop() || '';
+
+                                        for (const line of lines) {
+                                          if (!line.startsWith('data: ')) continue;
+                                          try {
+                                            const data = JSON.parse(line.slice(6));
+                                            if (data.type === 'init') {
+                                              setSyncStatus(`Analyzing ${data.total_chunks.toLocaleString()} chunks across ${data.unique_docs.toLocaleString()} documents — ${data.total_batches} batches`);
+                                              setSyncProgress(5);
+                                            } else if (data.type === 'batch') {
+                                              const pct = Math.min(90, 5 + (data.batch / data.total_batches) * 85);
+                                              setSyncProgress(pct);
+                                              setSyncStatus(`Batch ${data.batch}/${data.total_batches} — ${data.total_entities.toLocaleString()} entities, ${data.total_triples.toLocaleString()} relationships`);
+                                              finalEntities = data.total_entities;
+                                              finalTriples = data.total_triples;
+                                            } else if (data.type === 'saving') {
+                                              setSyncProgress(92);
+                                              setSyncStatus(`Saving ${data.total_entities.toLocaleString()} entities and ${data.total_triples.toLocaleString()} relationships...`);
+                                            } else if (data.type === 'done') {
+                                              finalEntities = data.entities;
+                                              finalTriples = data.triples;
+                                              setSyncProgress(100);
+                                              if (data.entities === 0) {
+                                                setSyncStatus('No entities extracted — try a different keyword.');
+                                              } else {
+                                                setSyncStatus(`Done! ${data.entities.toLocaleString()} entities, ${data.triples.toLocaleString()} relationships`);
+                                                await loadGraph();
+                                                setActiveView('graph');
+                                              }
+                                            } else if (data.type === 'error') {
+                                              setSyncStatus(`Error: ${data.error}`);
+                                            }
+                                          } catch {}
+                                        }
                                       }
                                       setTargetedResults(null);
                                     } catch (err) {
                                       console.error('Build network failed:', err);
                                       setSyncStatus('Extraction failed. Please try again.');
                                     } finally {
-                                      clearInterval(interval);
                                       setSyncProgress(100);
                                       setTimeout(() => {
                                         setIsSyncing(false);
                                         setIsExtractingInsights(false);
                                         setSyncProgress(0);
                                         setSyncStatus('');
-                                      }, 1000);
+                                      }, 2000);
                                     }
                                   }}
                                   disabled={isSyncing}
