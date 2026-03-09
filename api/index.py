@@ -3012,7 +3012,7 @@ async def bulk_extract_graph():
                     "message": "All vectorized documents already in graph"}
 
         # Process in batches of 50 files
-        BATCH_SIZE = 50
+        BATCH_SIZE = 10
         batch = to_process[:BATCH_SIZE]
         total_entities = 0
         total_triples = 0
