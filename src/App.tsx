@@ -179,8 +179,8 @@ function AppContent() {
   };
 
   useEffect(() => {
-    loadGraph(deferredMinDegree);
-  }, [setNodes, setEdges, deferredMinDegree]);
+    loadGraph();
+  }, [setNodes, setEdges]);
 
   const onNodeDragStop = async (_: any, node: Node) => {
     try {
@@ -267,12 +267,13 @@ function AppContent() {
     });
   }, [edges, deferredYearFilter]);
 
-  // 3. Filter nodes by outlier toggle and year, then prune edges to visible nodes
-  // (Degree filtering is now done server-side via min_degree query param)
+  // 3. Filter nodes by degree slider, outlier toggle, and year, then prune edges
   const { filteredNodes, filteredEdges } = useMemo(() => {
     const visibleNodes = new Set<string>();
     for (const n of nodes) {
       const deg = degreeMap.get(n.id) || 0;
+      // Degree slider filter
+      if (deferredMinDegree > 0 && deg < deferredMinDegree) continue;
       // If outliers are hidden, node must have degree > 1
       if (!showOutliers && deg <= 1) continue;
       visibleNodes.add(n.id);
@@ -304,7 +305,7 @@ function AppContent() {
     const fNodes = nodes.filter((n) => visibleIds.has(n.id));
 
     return { filteredNodes: fNodes, filteredEdges: fEdges };
-  }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, showOutliers]);
+  }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, showOutliers, deferredMinDegree]);
 
   // --- Graph search ---
   const graphSearchResults = useMemo(() => {
