@@ -1236,8 +1236,6 @@ function AppContent() {
 
                                       const decoder = new TextDecoder();
                                       let buffer = '';
-                                      let finalEntities = 0;
-                                      let finalTriples = 0;
 
                                       while (true) {
                                         const { done, value } = await reader.read();
@@ -1257,14 +1255,10 @@ function AppContent() {
                                               const pct = Math.min(90, 5 + (data.batch / data.total_batches) * 85);
                                               setSyncProgress(pct);
                                               setSyncStatus(`Batch ${data.batch}/${data.total_batches} — ${data.total_entities.toLocaleString()} entities, ${data.total_triples.toLocaleString()} relationships`);
-                                              finalEntities = data.total_entities;
-                                              finalTriples = data.total_triples;
                                             } else if (data.type === 'saving') {
                                               setSyncProgress(92);
                                               setSyncStatus(`Saving ${data.total_entities.toLocaleString()} entities and ${data.total_triples.toLocaleString()} relationships...`);
                                             } else if (data.type === 'done') {
-                                              finalEntities = data.entities;
-                                              finalTriples = data.triples;
                                               setSyncProgress(100);
                                               if (data.entities === 0) {
                                                 setSyncStatus('No entities extracted — try a different keyword.');
