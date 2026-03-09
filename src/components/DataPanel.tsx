@@ -764,13 +764,31 @@ export default function DataPanel() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reindexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Bulk extraction state
-  const [bulkExtract, setBulkExtract] = useState<BulkExtractState>({
-    running: false, paused: false, batch: 0, filesProcessed: 0, entitiesAdded: 0,
-    triplesAdded: 0, filesSkipped: 0, remainingFiles: 0, totalUnprocessed: 0,
-    error: null, done: false,
+  // Bulk extraction state — restore from localStorage if available
+  const [bulkExtract, setBulkExtract] = useState<BulkExtractState>(() => {
+    try {
+      const saved = localStorage.getItem('bulkExtractState');
+      if (saved) {
+        const parsed = JSON.parse(saved) as BulkExtractState;
+        // If it was running when the page closed, mark it as paused
+        if (parsed.running) {
+          return { ...parsed, running: false, paused: true };
+        }
+        return parsed;
+      }
+    } catch {}
+    return {
+      running: false, paused: false, batch: 0, filesProcessed: 0, entitiesAdded: 0,
+      triplesAdded: 0, filesSkipped: 0, remainingFiles: 0, totalUnprocessed: 0,
+      error: null, done: false,
+    };
   });
   const bulkAbortRef = useRef(false);
+
+  // Persist bulk extraction state to localStorage on every change
+  useEffect(() => {
+    localStorage.setItem('bulkExtractState', JSON.stringify(bulkExtract));
+  }, [bulkExtract]);
 
   const runBulkExtractLoop = useCallback(async (resume: boolean) => {
     bulkAbortRef.current = false;
@@ -932,7 +950,10 @@ export default function DataPanel() {
             onStart={startBulkExtract}
             onPause={pauseBulkExtract}
             onResume={resumeBulkExtract}
-            onDismiss={() => setBulkExtract(prev => ({ ...prev, done: false, paused: false, error: null }))}
+            onDismiss={() => {
+              setBulkExtract(prev => ({ ...prev, done: false, paused: false, error: null }));
+              localStorage.removeItem('bulkExtractState');
+            }}
           />
 
           <InfrastructureCard />
