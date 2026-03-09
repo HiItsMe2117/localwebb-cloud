@@ -734,7 +734,7 @@ function AppContent() {
   );
 
   return (
-    <div className="h-screen flex flex-col bg-black text-white font-sans overflow-hidden">
+    <div className="h-dvh flex flex-col bg-black text-white font-sans overflow-hidden" style={{ height: '100dvh' }}>
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col relative overflow-hidden">
