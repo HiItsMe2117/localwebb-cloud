@@ -2929,6 +2929,39 @@ async def infrastructure_health():
     }
 
 
+@app.get("/api/graph/bulk-extract-status", dependencies=[Depends(require_admin)])
+async def bulk_extract_status():
+    """Debug: check bulk extract readiness without actually extracting."""
+    info = {"supabase": bool(supabase), "gemini_client": bool(client)}
+    try:
+        # Count processed files from edges
+        processed_files = set()
+        offset = 0
+        while True:
+            batch = supabase.table("edges").select("source_filename").neq("source_filename", "").range(offset, offset + 999).execute()
+            for row in (batch.data or []):
+                sf = row.get("source_filename")
+                if sf:
+                    processed_files.add(sf)
+            if not batch.data or len(batch.data) < 1000:
+                break
+            offset += 1000
+        info["processed_files"] = len(processed_files)
+
+        # Count available files from document_chunks
+        chunk_result = supabase.rpc("get_unique_filenames").execute()
+        all_filenames = [row["filename"] for row in (chunk_result.data or []) if row.get("filename")]
+        info["total_chunk_files"] = len(all_filenames)
+
+        to_process = [f for f in all_filenames if f not in processed_files]
+        info["to_process"] = len(to_process)
+        info["sample_to_process"] = to_process[:5]
+    except Exception as e:
+        info["error"] = str(e)
+        import traceback
+        info["traceback"] = traceback.format_exc()
+    return info
+
 @app.post("/api/graph/bulk-extract", dependencies=[Depends(require_admin)])
 async def bulk_extract_graph():
     """Extract entities and relationships from all vectorized documents not yet in the graph."""
