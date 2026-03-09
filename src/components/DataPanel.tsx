@@ -627,7 +627,7 @@ function BulkExtractCard({ state, onStart, onDismiss }: {
   onStart: () => void;
   onDismiss: () => void;
 }) {
-  const { running, batch, filesProcessed, entitiesAdded, triplesAdded, filesSkipped, remainingFiles, totalUnprocessed, error, done } = state;
+  const { running, batch, filesProcessed, entitiesAdded, triplesAdded, filesSkipped, remainingFiles, error, done } = state;
   const total = filesProcessed + remainingFiles;
   const pct = total > 0 ? Math.min((filesProcessed / total) * 100, 100) : 0;
 
