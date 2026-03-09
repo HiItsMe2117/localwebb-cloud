@@ -780,7 +780,14 @@ export default function DataPanel() {
 
       setBulkExtract(prev => ({ ...prev, running: false, done: true }));
     } catch (err: any) {
-      const msg = err?.response?.data?.error || `Failed after ${totalFiles} docs. ${totalEntities} entities added before error.`;
+      console.error('Bulk extraction error:', err);
+      const serverError = err?.response?.data?.error;
+      const status = err?.response?.status;
+      const msg = serverError
+        ? `Error ${status}: ${serverError}`
+        : err?.message === 'Network Error'
+        ? 'Network error — API may have timed out. Try again.'
+        : `Failed after ${totalFiles} docs. ${totalEntities} entities added before error.`;
       setBulkExtract(prev => ({ ...prev, running: false, error: msg }));
     }
   }, []);

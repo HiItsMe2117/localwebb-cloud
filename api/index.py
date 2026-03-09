@@ -2938,13 +2938,19 @@ async def bulk_extract_graph():
         return JSONResponse(status_code=503, content={"error": "GenAI client not initialized"})
 
     try:
-        # Get all unique filenames already processed in the graph (via edges with source_filename)
-        existing_edges = graph_store._fetch_all("edges")
+        # Get unique filenames already processed in the graph (from edges.source_filename)
         processed_files = set()
-        for edge in existing_edges:
-            sf = edge.get("source_filename") or (edge.get("data") or {}).get("source_filename") or (edge.get("metadata") or {}).get("source_filename")
-            if sf:
-                processed_files.add(sf)
+        offset = 0
+        batch_size = 1000
+        while True:
+            batch = supabase.table("edges").select("source_filename").neq("source_filename", "").range(offset, offset + batch_size - 1).execute()
+            for row in (batch.data or []):
+                sf = row.get("source_filename")
+                if sf:
+                    processed_files.add(sf)
+            if not batch.data or len(batch.data) < batch_size:
+                break
+            offset += batch_size
 
         # Get unique filenames from document_chunks
         chunk_result = supabase.rpc("get_unique_filenames").execute() if hasattr(supabase, 'rpc') else None
