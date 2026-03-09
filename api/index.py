@@ -2971,49 +2971,14 @@ async def bulk_extract_graph():
         return JSONResponse(status_code=503, content={"error": "GenAI client not initialized"})
 
     try:
-        # Get unique filenames already processed in the graph (from edges.source_filename)
-        processed_files = set()
-        offset = 0
-        batch_size = 1000
-        while True:
-            batch = supabase.table("edges").select("source_filename").neq("source_filename", "").range(offset, offset + batch_size - 1).execute()
-            for row in (batch.data or []):
-                sf = row.get("source_filename")
-                if sf:
-                    processed_files.add(sf)
-            if not batch.data or len(batch.data) < batch_size:
-                break
-            offset += batch_size
-
-        # Get unique filenames from document_chunks
-        chunk_result = supabase.rpc("get_unique_filenames").execute() if hasattr(supabase, 'rpc') else None
-
-        # Fallback: query distinct filenames from document_chunks
-        if not chunk_result or not chunk_result.data:
-            all_chunks = []
-            offset = 0
-            batch_size = 1000
-            while True:
-                batch = supabase.table("document_chunks").select("filename").range(offset, offset + batch_size - 1).execute()
-                if not batch.data:
-                    break
-                all_chunks.extend(batch.data)
-                if len(batch.data) < batch_size:
-                    break
-                offset += batch_size
-            all_filenames = list(set(row["filename"] for row in all_chunks if row.get("filename")))
-        else:
-            all_filenames = [row["filename"] for row in chunk_result.data if row.get("filename")]
-
-        # Filter to unprocessed files
-        to_process = [f for f in all_filenames if f not in processed_files]
-        if not to_process:
-            return {"files_processed": 0, "entities_added": 0, "triples_added": 0, "files_skipped": 0,
-                    "message": "All vectorized documents already in graph"}
-
-        # Process in batches of 50 files
+        # Single SQL query: get unprocessed filenames (chunks not yet in edges)
         BATCH_SIZE = 10
-        batch = to_process[:BATCH_SIZE]
+        rpc_result = supabase.rpc("get_unprocessed_filenames", {"batch_limit": BATCH_SIZE}).execute()
+        batch = [row["filename"] for row in (rpc_result.data or []) if row.get("filename")]
+
+        if not batch:
+            return {"files_processed": 0, "entities_added": 0, "triples_added": 0, "files_skipped": 0,
+                    "remaining_files": 0, "message": "All vectorized documents already in graph"}
         total_entities = 0
         total_triples = 0
         files_ok = 0
@@ -3126,14 +3091,15 @@ async def bulk_extract_graph():
                 files_skipped += 1
                 continue
 
-        remaining = len(to_process) - BATCH_SIZE
+        # Check if more unprocessed files remain
+        next_check = supabase.rpc("get_unprocessed_filenames", {"batch_limit": 1}).execute()
+        has_more = bool(next_check.data)
         return {
             "files_processed": files_ok,
             "entities_added": total_entities,
             "triples_added": total_triples,
             "files_skipped": files_skipped,
-            "remaining_files": max(remaining, 0),
-            "total_unprocessed": len(to_process),
+            "remaining_files": 1 if has_more else 0,
         }
 
     except Exception as e:
