@@ -2942,7 +2942,7 @@ async def bulk_extract_graph():
         existing_edges = graph_store._fetch_all("edges")
         processed_files = set()
         for edge in existing_edges:
-            sf = (edge.get("data") or {}).get("source_filename") or (edge.get("metadata") or {}).get("source_filename")
+            sf = edge.get("source_filename") or (edge.get("data") or {}).get("source_filename") or (edge.get("metadata") or {}).get("source_filename")
             if sf:
                 processed_files.add(sf)
 
