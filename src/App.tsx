@@ -877,9 +877,15 @@ function AppContent() {
                     >
                       <Minus size={14} />
                     </button>
-                    <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)] min-w-[40px] text-center">
-                      {minDegree === 0 ? 'All' : `${minDegree}+`}
-                    </span>
+                    <input
+                      type="text"
+                      value={minDegree === 0 ? 'All' : `${minDegree}+`}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                        setMinDegree(raw === '' ? 0 : parseInt(raw, 10));
+                      }}
+                      className="text-[13px] font-mono text-[rgba(235,235,245,0.6)] min-w-[40px] w-[48px] text-center bg-transparent outline-none border-none"
+                    />
                     <button
                       onClick={() => setMinDegree(minDegree + 1)}
                       className="p-1 hover:bg-[#2C2C2E] rounded-full transition-colors text-[rgba(235,235,245,0.6)]"
