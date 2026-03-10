@@ -58,6 +58,7 @@ function AppContent() {
   const [minDegree, setMinDegree] = useState(50);
   const [showOutliers, setShowOutliers] = useState(true);
   const [showEdgeLabels, setShowEdgeLabels] = useState(true);
+  const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());  // empty = show all
   const [isLayouting, setIsLayouting] = useState(false);
   const [syncProgress, setSyncProgress] = useState(0);
   const [syncStatus, setSyncStatus] = useState('');
@@ -276,6 +277,8 @@ function AppContent() {
       if (deferredMinDegree > 0 && deg < deferredMinDegree) continue;
       // If outliers are hidden, node must have degree > 1
       if (!showOutliers && deg <= 1) continue;
+      // Entity type filter
+      if (activeTypes.size > 0 && !activeTypes.has((n.data?.entityType || n.data?.type || '').toUpperCase())) continue;
       visibleNodes.add(n.id);
     }
 
@@ -305,7 +308,7 @@ function AppContent() {
     const fNodes = nodes.filter((n) => visibleIds.has(n.id));
 
     return { filteredNodes: fNodes, filteredEdges: fEdges };
-  }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, showOutliers, deferredMinDegree]);
+  }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, showOutliers, deferredMinDegree, activeTypes]);
 
   // --- Graph search ---
   const graphSearchResults = useMemo(() => {
@@ -914,6 +917,41 @@ function AppContent() {
                     <Type size={14} />
                     {showEdgeLabels ? 'Labels On' : 'Labels Off'}
                   </button>
+                  {/* Entity type filter pills */}
+                  {(() => {
+                    const TYPE_COLORS: Record<string, string> = {
+                      PERSON: '#60a5fa', ORGANIZATION: '#fbbf24', LOCATION: '#4ade80',
+                      EVENT: '#a78bfa', DOCUMENT: '#fb923c', FINANCIAL_ENTITY: '#f87171',
+                    };
+                    const availableTypes = Array.from(new Set(
+                      nodes.map(n => (n.data?.entityType || n.data?.type || '').toUpperCase()).filter(Boolean)
+                    )).sort();
+                    if (availableTypes.length === 0) return null;
+                    return availableTypes.map(t => {
+                      const active = activeTypes.has(t);
+                      const color = TYPE_COLORS[t] || '#9ca3af';
+                      return (
+                        <button
+                          key={t}
+                          onClick={() => {
+                            setActiveTypes(prev => {
+                              const next = new Set(prev);
+                              if (next.has(t)) next.delete(t); else next.add(t);
+                              return next;
+                            });
+                          }}
+                          className="px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border"
+                          style={{
+                            backgroundColor: active ? color : '#1C1C1E',
+                            borderColor: active ? color : 'rgba(84,84,88,0.65)',
+                            color: active ? '#000' : 'rgba(235,235,245,0.6)',
+                          }}
+                        >
+                          {t.charAt(0) + t.slice(1).toLowerCase().replace('_', ' ')}
+                        </button>
+                      );
+                    });
+                  })()}
                   <button
                     onClick={onLayout}
                     disabled={isLayouting}
