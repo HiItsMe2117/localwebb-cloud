@@ -523,6 +523,8 @@ class TargetedSearchRequest(BaseModel):
     page: int = 1
     page_size: int = 50
     search_mode: str = "fulltext"  # "fulltext" or "exact"
+    batch_offset: int = 0  # chunk offset for batched extraction
+    batch_size: int = 25   # chunks per extraction batch
 
 class InvestigateRequest(BaseModel):
     query: str
@@ -2518,148 +2520,104 @@ async def targeted_search(request: TargetedSearchRequest):
         if not request.extract:
             return {"chunks": chunks, "stats": stats}
 
-        # --- Deep extract mode (SSE streaming) ---
-        async def deep_extract_stream():
-            try:
-                # Paginate to fetch ALL matching chunks
-                all_extract_rows = []
-                extract_offset = 0
-                EXTRACT_PAGE = 500
-                while True:
-                    if request.search_mode == "exact":
-                        extract_result = supabase.rpc("search_chunks_exact", {
-                            "search_query": keyword,
-                            "result_limit": EXTRACT_PAGE,
-                            "result_offset": extract_offset,
-                        }).execute()
-                    else:
-                        extract_result = supabase.rpc("search_chunks", {
-                            "search_query": keyword,
-                            "result_limit": EXTRACT_PAGE,
-                            "result_offset": extract_offset,
-                        }).execute()
-                    page_rows = extract_result.data or []
-                    all_extract_rows.extend(page_rows)
-                    if len(page_rows) < EXTRACT_PAGE:
-                        break
-                    extract_offset += EXTRACT_PAGE
+        # --- Deep extract mode (one batch per request) ---
+        import math
+        batch_size = max(1, min(50, request.batch_size))
+        batch_offset = max(0, request.batch_offset)
 
-                if not all_extract_rows:
-                    yield f"data: {json.dumps({'type': 'done', 'entities': 0, 'triples': 0})}\n\n"
-                    return
+        # Fetch one batch of chunks at the given offset
+        if request.search_mode == "exact":
+            batch_result = supabase.rpc("search_chunks_exact", {
+                "search_query": keyword,
+                "result_limit": batch_size,
+                "result_offset": batch_offset,
+            }).execute()
+        else:
+            batch_result = supabase.rpc("search_chunks", {
+                "search_query": keyword,
+                "result_limit": batch_size,
+                "result_offset": batch_offset,
+            }).execute()
 
-                total_chunks = len(all_extract_rows)
-                unique_docs = len(set(r.get("filename", "") for r in all_extract_rows))
-                EXTRACT_BATCH = 25
-                total_batches = -(-total_chunks // EXTRACT_BATCH)  # ceil division
+        batch_rows = batch_result.data or []
 
-                yield f"data: {json.dumps({'type': 'init', 'total_chunks': total_chunks, 'total_batches': total_batches, 'unique_docs': unique_docs})}\n\n"
+        if not batch_rows:
+            return {"status": "done", "batch_entities": 0, "batch_triples": 0, "has_more": False}
 
-                all_entities_map = {}
-                all_new_edges = []
-                seen_edge_ids = set()
+        # Get total_count from first row (returned by the RPC)
+        total_chunks = batch_rows[0].get("total_count", 0) if batch_rows else 0
+        has_more = (batch_offset + batch_size) < total_chunks
 
-                for batch_start in range(0, total_chunks, EXTRACT_BATCH):
-                    batch_num = batch_start // EXTRACT_BATCH + 1
-                    batch_rows = all_extract_rows[batch_start:batch_start + EXTRACT_BATCH]
-                    context_parts = []
-                    for row in batch_rows:
-                        context_parts.append(f"[Source: {row['filename']}, Page: {row['page']}]\n{row['text']}")
-                    context = "\n\n---\n\n".join(context_parts)
+        # Build context and run extraction
+        context_parts = []
+        for row in batch_rows:
+            context_parts.append(f"[Source: {row['filename']}, Page: {row['page']}]\n{row['text']}")
+        context = "\n\n---\n\n".join(context_parts)
+        prompt = EXTRACTION_PROMPT_TEMPLATE.format(context=context)
 
-                    prompt = EXTRACTION_PROMPT_TEMPLATE.format(context=context)
+        res = generate(
+            client,
+            model="gemini-2.5-pro",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CaseMap
+            )
+        )
+        output = res.parsed
+        quality_ents = filter_quality_entities(output.entities)
+        quality_ids = {e.id for e in quality_ents}
 
-                    try:
-                        res = generate(
-                            client,
-                            model="gemini-2.5-pro",
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                response_mime_type="application/json",
-                                response_schema=CaseMap
-                            )
-                        )
-                        output = res.parsed
-                        quality_ents = filter_quality_entities(output.entities)
-                        quality_ids = {e.id for e in quality_ents}
+        # Build node records for upsert
+        new_nodes = []
+        for ent in quality_ents:
+            new_nodes.append({
+                "id": ent.id,
+                "type": "entityNode",
+                "data": {
+                    "label": ent.label,
+                    "entityType": ent.type.upper(),
+                    "description": ent.description,
+                    "aliases": ent.aliases,
+                },
+                "position": {"x": 400 + 300 * math.cos(hash(ent.id) % 100), "y": 400 + 300 * math.sin(hash(ent.id) % 100)},
+            })
 
-                        batch_new_edges = 0
-                        for ent in quality_ents:
-                            if ent.id in all_entities_map:
-                                existing = all_entities_map[ent.id]
-                                if len(ent.description) > len(existing["data"]["description"]):
-                                    existing["data"]["description"] = ent.description
-                                existing_aliases = set(existing["data"].get("aliases", []))
-                                existing_aliases.update(ent.aliases)
-                                existing["data"]["aliases"] = list(existing_aliases)
-                            else:
-                                all_entities_map[ent.id] = {
-                                    "id": ent.id,
-                                    "type": "entityNode",
-                                    "data": {
-                                        "label": ent.label,
-                                        "entityType": ent.type.upper(),
-                                        "description": ent.description,
-                                        "aliases": ent.aliases,
-                                    },
-                                    "position": {"x": 0, "y": 0},
-                                }
+        # Build edge records for upsert
+        new_edges = []
+        for triple in output.triples:
+            if triple.subject_id not in quality_ids or triple.object_id not in quality_ids:
+                continue
+            edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
+            new_edges.append({
+                "id": edge_id,
+                "source": triple.subject_id,
+                "target": triple.object_id,
+                "label": triple.predicate.replace("_", " "),
+                "animated": triple.confidence == "INFERRED",
+                "style": {"strokeDasharray": "5 5"} if triple.confidence == "INFERRED" else {},
+                "data": {
+                    "predicate": triple.predicate,
+                    "evidence_text": triple.evidence_text,
+                    "source_filename": triple.source_filename,
+                    "source_page": triple.source_page,
+                    "confidence": triple.confidence,
+                    "date_mentioned": triple.date_mentioned,
+                },
+            })
 
-                        for triple in output.triples:
-                            if triple.subject_id not in quality_ids or triple.object_id not in quality_ids:
-                                continue
-                            edge_id = f"e-{triple.subject_id}-{triple.predicate}-{triple.object_id}"
-                            if edge_id in seen_edge_ids:
-                                continue
-                            seen_edge_ids.add(edge_id)
-                            batch_new_edges += 1
-                            all_new_edges.append({
-                                "id": edge_id,
-                                "source": triple.subject_id,
-                                "target": triple.object_id,
-                                "label": triple.predicate.replace("_", " "),
-                                "animated": triple.confidence == "INFERRED",
-                                "style": {"strokeDasharray": "5 5"} if triple.confidence == "INFERRED" else {},
-                                "data": {
-                                    "predicate": triple.predicate,
-                                    "evidence_text": triple.evidence_text,
-                                    "source_filename": triple.source_filename,
-                                    "source_page": triple.source_page,
-                                    "confidence": triple.confidence,
-                                    "date_mentioned": triple.date_mentioned,
-                                },
-                            })
+        # Upsert immediately
+        if new_nodes or new_edges:
+            graph_store.add_elements(new_nodes, new_edges)
 
-                        yield f"data: {json.dumps({'type': 'batch', 'batch': batch_num, 'total_batches': total_batches, 'batch_entities': len(quality_ents), 'batch_triples': batch_new_edges, 'total_entities': len(all_entities_map), 'total_triples': len(all_new_edges)})}\n\n"
-
-                    except Exception as batch_err:
-                        print(f"  Batch {batch_num} failed: {batch_err}")
-                        yield f"data: {json.dumps({'type': 'batch_error', 'batch': batch_num, 'error': str(batch_err)})}\n\n"
-                        continue
-
-                # Assign circular positions and upsert
-                yield f"data: {json.dumps({'type': 'saving', 'total_entities': len(all_entities_map), 'total_triples': len(all_new_edges)})}\n\n"
-
-                import math
-                total_ents = len(all_entities_map)
-                cx, cy = 400, 400
-                radius = max(200, total_ents * 30)
-                new_nodes = []
-                for i, node in enumerate(all_entities_map.values()):
-                    angle = (2 * math.pi * i) / max(total_ents, 1)
-                    node["position"] = {"x": cx + radius * math.cos(angle), "y": cy + radius * math.sin(angle)}
-                    new_nodes.append(node)
-
-                graph_store.add_elements(new_nodes, all_new_edges)
-
-                yield f"data: {json.dumps({'type': 'done', 'entities': len(new_nodes), 'triples': len(all_new_edges)})}\n\n"
-
-            except Exception as e:
-                print(f"Deep extract stream error: {e}")
-                import traceback; traceback.print_exc()
-                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-
-        return StreamingResponse(deep_extract_stream(), media_type="text/event-stream")
+        return {
+            "status": "ok",
+            "batch_entities": len(new_nodes),
+            "batch_triples": len(new_edges),
+            "has_more": has_more,
+            "next_offset": batch_offset + batch_size,
+            "total_chunks": total_chunks,
+        }
     except Exception as e:
         print(f"Targeted search failed: {e}")
         import traceback; traceback.print_exc()

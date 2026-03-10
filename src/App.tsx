@@ -1219,59 +1219,42 @@ function AppContent() {
                                     setIsExtractingInsights(true);
                                     setIsSyncing(true);
                                     setSyncProgress(2);
-                                    setSyncStatus(`Fetching all "${focusTarget}" documents...`);
+                                    const kw = focusTarget.trim();
+                                    const totalChunks = targetedResults.stats.total_mentions;
+                                    const batchSize = 25;
+                                    const totalBatches = Math.ceil(totalChunks / batchSize);
+                                    setSyncStatus(`Extracting from ${totalChunks.toLocaleString()} chunks — 0/${totalBatches} batches`);
+                                    let offset = 0;
+                                    let batchNum = 0;
+                                    let totalEntities = 0;
+                                    let totalTriples = 0;
                                     try {
-                                      const res = await fetch('/api/search/targeted', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                          keyword: focusTarget.trim(),
+                                      let hasMore = true;
+                                      while (hasMore) {
+                                        const res = await axios.post('/api/search/targeted', {
+                                          keyword: kw,
                                           extract: true,
                                           search_mode: searchMode,
-                                        }),
-                                      });
-                                      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                                      const reader = res.body?.getReader();
-                                      if (!reader) throw new Error('No response body');
-
-                                      const decoder = new TextDecoder();
-                                      let buffer = '';
-
-                                      while (true) {
-                                        const { done, value } = await reader.read();
-                                        if (done) break;
-                                        buffer += decoder.decode(value, { stream: true });
-                                        const lines = buffer.split('\n');
-                                        buffer = lines.pop() || '';
-
-                                        for (const line of lines) {
-                                          if (!line.startsWith('data: ')) continue;
-                                          try {
-                                            const data = JSON.parse(line.slice(6));
-                                            if (data.type === 'init') {
-                                              setSyncStatus(`Analyzing ${data.total_chunks.toLocaleString()} chunks across ${data.unique_docs.toLocaleString()} documents — ${data.total_batches} batches`);
-                                              setSyncProgress(5);
-                                            } else if (data.type === 'batch') {
-                                              const pct = Math.min(90, 5 + (data.batch / data.total_batches) * 85);
-                                              setSyncProgress(pct);
-                                              setSyncStatus(`Batch ${data.batch}/${data.total_batches} — ${data.total_entities.toLocaleString()} entities, ${data.total_triples.toLocaleString()} relationships`);
-                                            } else if (data.type === 'saving') {
-                                              setSyncProgress(92);
-                                              setSyncStatus(`Saving ${data.total_entities.toLocaleString()} entities and ${data.total_triples.toLocaleString()} relationships...`);
-                                            } else if (data.type === 'done') {
-                                              setSyncProgress(100);
-                                              if (data.entities === 0) {
-                                                setSyncStatus('No entities extracted — try a different keyword.');
-                                              } else {
-                                                setSyncStatus(`Done! ${data.entities.toLocaleString()} entities, ${data.triples.toLocaleString()} relationships`);
-                                                await loadGraph();
-                                                setActiveView('graph');
-                                              }
-                                            } else if (data.type === 'error') {
-                                              setSyncStatus(`Error: ${data.error}`);
-                                            }
-                                          } catch {}
-                                        }
+                                          batch_offset: offset,
+                                          batch_size: batchSize,
+                                        });
+                                        const data = res.data;
+                                        batchNum++;
+                                        totalEntities += data.batch_entities || 0;
+                                        totalTriples += data.batch_triples || 0;
+                                        hasMore = data.has_more;
+                                        offset = data.next_offset || (offset + batchSize);
+                                        const pct = Math.min(95, 5 + (batchNum / totalBatches) * 90);
+                                        setSyncProgress(pct);
+                                        setSyncStatus(`Batch ${batchNum}/${totalBatches} — ${totalEntities.toLocaleString()} entities, ${totalTriples.toLocaleString()} relationships`);
+                                      }
+                                      setSyncProgress(100);
+                                      if (totalEntities === 0) {
+                                        setSyncStatus('No entities extracted — try a different keyword.');
+                                      } else {
+                                        setSyncStatus(`Done! ${totalEntities.toLocaleString()} entities, ${totalTriples.toLocaleString()} relationships`);
+                                        await loadGraph();
+                                        setActiveView('graph');
                                       }
                                       setTargetedResults(null);
                                     } catch (err) {
