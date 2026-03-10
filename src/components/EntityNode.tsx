@@ -46,7 +46,7 @@ const fullHandles = (
 );
 
 // Selector to only re-render when CROSSING the threshold
-const isZoomedOutSelector = (s: ReactFlowState) => s.transform[2] < 0.6;
+const isZoomedOutSelector = (s: ReactFlowState) => s.transform[2] < 0.35;
 
 function EntityNode({ data, selected }: NodeProps) {
   const isZoomedOut = useStore(isZoomedOutSelector);
