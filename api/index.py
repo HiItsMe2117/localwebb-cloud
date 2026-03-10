@@ -3096,16 +3096,16 @@ async def bulk_extract_graph():
                 files_errored += 1
                 continue
 
-        # Check if more unprocessed files remain
-        next_check = supabase.rpc("get_unprocessed_filenames", {"batch_limit": 1}).execute()
-        has_more = bool(next_check.data)
+        # Count actual remaining unprocessed files
+        next_check = supabase.rpc("get_unprocessed_filenames", {"batch_limit": 100000}).execute()
+        remaining_count = len(next_check.data) if next_check.data else 0
         return {
             "files_processed": files_ok,
             "entities_added": total_entities,
             "triples_added": total_triples,
             "files_skipped": files_skipped,
             "files_errored": files_errored,
-            "remaining_files": 1 if has_more else 0,
+            "remaining_files": remaining_count,
         }
 
     except Exception as e:
