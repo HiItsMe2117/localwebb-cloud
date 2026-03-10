@@ -413,6 +413,22 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId, loadGraph]);
 
+  // Drag edge label along the connection line
+  const onEdgeLabelDrag = useCallback((edgeId: string, labelPosition: number) => {
+    setEdges(eds => eds.map(e =>
+      e.id === edgeId ? { ...e, data: { ...e.data, labelPosition } } : e
+    ));
+  }, [setEdges]);
+
+  const onEdgeLabelDragEnd = useCallback((edgeId: string) => {
+    const edge = edges.find(e => e.id === edgeId);
+    if (!edge?.data?.isCaseLocal) return;
+    const pos = edge.data?.labelPosition ?? 0.5;
+    axios.patch(`/api/cases/${caseId}/graph/edges/${edgeId}`, {
+      label_position: pos,
+    }).catch(err => console.error('Failed to save label position:', err));
+  }, [edges, caseId]);
+
   // Link two selected entities with a case-local edge
   const linkSelectedNodes = useCallback(async (isHypothesis = false) => {
     if (selectedNodeIds.size !== 2) return;
@@ -1238,6 +1254,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           skipInitialFitView={hasSavedViewport.current}
           showEdgeLabels={false}
           showMiniMap={showMiniMap}
+          onEdgeLabelDrag={onEdgeLabelDrag}
+          onEdgeLabelDragEnd={onEdgeLabelDragEnd}
         />
 
         {/* Lasso drawing overlay */}

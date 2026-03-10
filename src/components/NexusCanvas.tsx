@@ -14,6 +14,7 @@ import ReactFlow, {
 import type { Connection, Edge, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import EntityNode from './EntityNode';
+import DraggableLabelEdge from './DraggableLabelEdge';
 
 // Group ellipse overlay rendered inside the ReactFlow viewport
 function GroupEllipses({ groups, nodes, onGroupClick, onGroupDrag, onGroupDragEnd }: {
@@ -211,10 +212,13 @@ interface NexusProps {
   height?: string;
   showEdgeLabels?: boolean;
   showMiniMap?: boolean;
+  onEdgeLabelDrag?: (edgeId: string, labelPosition: number) => void;
+  onEdgeLabelDragEnd?: (edgeId: string) => void;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onMoveEnd, onGroupClick, onGroupDrag, onGroupDragEnd, groups = [], panOnDrag = true, skipInitialFitView = false, height, showEdgeLabels = true, showMiniMap = true }: NexusProps) {
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onMoveEnd, onGroupClick, onGroupDrag, onGroupDragEnd, groups = [], panOnDrag = true, skipInitialFitView = false, height, showEdgeLabels = true, showMiniMap = true, onEdgeLabelDrag, onEdgeLabelDragEnd }: NexusProps) {
   const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
+  const edgeTypes = useMemo(() => ({ draggable: DraggableLabelEdge }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
 
@@ -228,6 +232,24 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
       }
     }
   }, [nodes.length, fitView, skipInitialFitView]);
+
+  // Listen for draggable label events from DraggableLabelEdge
+  useEffect(() => {
+    const handleDrag = (e: Event) => {
+      const { edgeId, labelPosition } = (e as CustomEvent).detail;
+      onEdgeLabelDrag?.(edgeId, labelPosition);
+    };
+    const handleDragEnd = (e: Event) => {
+      const { edgeId } = (e as CustomEvent).detail;
+      onEdgeLabelDragEnd?.(edgeId);
+    };
+    window.addEventListener('edge-label-drag', handleDrag);
+    window.addEventListener('edge-label-drag-end', handleDragEnd);
+    return () => {
+      window.removeEventListener('edge-label-drag', handleDrag);
+      window.removeEventListener('edge-label-drag-end', handleDragEnd);
+    };
+  }, [onEdgeLabelDrag, onEdgeLabelDragEnd]);
 
   const onConnect = useCallback(
     (params: Connection) => onEdgesChange((eds: Edge[]) => addEdge(params, eds)),
@@ -263,13 +285,16 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
     return edges.map(e => {
       const isCaseLocal = e.data?.isCaseLocal;
       const isHypothesis = e.data?.isHypothesis;
+      const edgeLabel = isCaseLocal ? (e.label || undefined) : ((isHeavy || !showEdgeLabels) ? undefined : e.label);
+      const useDraggable = isCaseLocal && edgeLabel;
       return {
         ...e,
-        label: isCaseLocal ? (e.label || undefined) : ((isHeavy || !showEdgeLabels) ? undefined : e.label),
-        labelStyle: EDGE_LABEL_STYLE,
-        labelBgStyle: EDGE_LABEL_BG_STYLE,
-        labelBgPadding: EDGE_LABEL_BG_PADDING,
-        labelBgBorderRadius: EDGE_LABEL_BG_BORDER_RADIUS,
+        type: useDraggable ? 'draggable' : 'default',
+        label: edgeLabel,
+        labelStyle: useDraggable ? undefined : EDGE_LABEL_STYLE,
+        labelBgStyle: useDraggable ? undefined : EDGE_LABEL_BG_STYLE,
+        labelBgPadding: useDraggable ? undefined : EDGE_LABEL_BG_PADDING,
+        labelBgBorderRadius: useDraggable ? undefined : EDGE_LABEL_BG_BORDER_RADIUS,
         interactionWidth: 20,
         style: {
           ...(e.style || {}),
@@ -312,6 +337,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
         onMoveEnd={onMoveEnd}
         reconnectRadius={30}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         minZoom={0.1}
         maxZoom={2}
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}

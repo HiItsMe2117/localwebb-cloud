@@ -576,7 +576,8 @@ class CreateCaseEdgeRequest(BaseModel):
     is_hypothesis: bool = False
 
 class UpdateCaseEdgeRequest(BaseModel):
-    label: str = ""
+    label: Optional[str] = None
+    label_position: Optional[float] = None
 
 class CreateCustomNodeRequest(BaseModel):
     label: str
@@ -1627,6 +1628,7 @@ async def get_case_graph(case_id: str):
                     "source_filename": ce.get("source_filename", ""),
                     "source_page": ce.get("source_page"),
                     "confidence": ce.get("confidence", ""),
+                    "labelPosition": ce.get("label_position", 0.5),
                 },
             })
 
@@ -1817,16 +1819,23 @@ async def delete_case_graph_edge(case_id: str, edge_id: str):
 
 @app.patch("/api/cases/{case_id}/graph/edges/{edge_id}", dependencies=[Depends(require_admin)])
 async def update_case_graph_edge(case_id: str, edge_id: str, request: UpdateCaseEdgeRequest):
-    """Update a case-local edge's label."""
+    """Update a case-local edge's label and/or label position."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        updates = {}
+        if request.label is not None:
+            updates["label"] = request.label
+        if request.label_position is not None:
+            updates["label_position"] = request.label_position
+        if not updates:
+            return {"id": edge_id}
         result = supabase.table("case_graph_edges").update(
-            {"label": request.label}
+            updates
         ).eq("id", edge_id).eq("case_id", case_id).execute()
         if not result.data:
             return JSONResponse(status_code=404, content={"error": "Edge not found."})
-        return {"id": edge_id, "label": request.label}
+        return {"id": edge_id, **updates}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
