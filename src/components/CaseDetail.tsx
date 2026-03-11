@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
 import type { Case, CaseEvidence, InvestigationStep } from '../types';
@@ -14,6 +14,10 @@ interface CaseDetailProps {
   onStatusChange: (caseId: string, status: string) => void;
   onUpdate: (caseId: string, fields: Partial<Pick<Case, 'title' | 'category' | 'summary'>>) => Promise<void>;
   onDelete: (caseId: string) => void;
+  onTheoryInvestigate?: (theory: string) => void;
+  isTestingTheory?: boolean;
+  theorySteps?: InvestigationStep[];
+  theoryReportText?: string;
   readOnly?: boolean;
 }
 
@@ -62,7 +66,7 @@ function EvidenceText({ content }: { content: string }) {
   );
 }
 
-export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, onDelete, readOnly = false }: CaseDetailProps) {
+export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, onDelete, onTheoryInvestigate, isTestingTheory = false, theorySteps = [], theoryReportText = '', readOnly = false }: CaseDetailProps) {
   const [caseData, setCaseData] = useState<Case | null>(null);
   const [evidence, setEvidence] = useState<CaseEvidence[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -83,6 +87,8 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
   const [editCategory, setEditCategory] = useState('');
   const [editSummary, setEditSummary] = useState('');
   const [isSavingCase, setIsSavingCase] = useState(false);
+  const [showTheoryForm, setShowTheoryForm] = useState(false);
+  const [theoryText, setTheoryText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const autoResize = useCallback((el: HTMLTextAreaElement | null) => {
@@ -407,7 +413,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
           <div className="flex items-center gap-2">
             <button
               onClick={runInvestigation}
-              disabled={isInvestigating || isConsolidating}
+              disabled={isInvestigating || isConsolidating || isTestingTheory}
               className="flex-1 flex items-center justify-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors"
             >
               {isInvestigating ? (
@@ -420,7 +426,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
 
             <button
               onClick={consolidateEvidence}
-              disabled={isConsolidating || isInvestigating || evidence.length < 2}
+              disabled={isConsolidating || isInvestigating || isTestingTheory || evidence.length < 2}
               className="flex items-center justify-center gap-2 bg-[#AF52DE] hover:bg-[#9642C0] disabled:opacity-30 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors text-white"
               title="Synthesize all findings into one master report"
             >
@@ -431,6 +437,26 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
               )}
               {isConsolidating ? 'Synthesizing...' : 'Synthesize Report'}
             </button>
+
+            {onTheoryInvestigate && (
+              <button
+                onClick={() => setShowTheoryForm(v => !v)}
+                disabled={isInvestigating || isConsolidating || isTestingTheory}
+                className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors disabled:opacity-30 ${
+                  showTheoryForm
+                    ? 'bg-[#FF9F0A] text-white'
+                    : 'bg-[#FF9F0A]/20 text-[#FF9F0A] hover:bg-[#FF9F0A]/30'
+                }`}
+                title="Test a theory against the evidence corpus"
+              >
+                {isTestingTheory ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <FlaskConical size={14} />
+                )}
+                {isTestingTheory ? 'Testing...' : 'Test Theory'}
+              </button>
+            )}
 
             <button
               onClick={() => onStatusChange(caseId, isClosed ? 'active' : 'closed')}
@@ -529,6 +555,63 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
               {streamingText && (
                 <div className="text-[13px] text-[rgba(235,235,245,0.6)] whitespace-pre-wrap leading-relaxed">
                   {streamingText}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Theory form */}
+          {showTheoryForm && !isTestingTheory && onTheoryInvestigate && (
+            <div className="bg-[#1C1C1E] border border-[#FF9F0A]/30 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[13px] font-semibold text-white flex items-center gap-2">
+                  <FlaskConical size={14} className="text-[#FF9F0A]" />
+                  Test a Theory
+                </h3>
+                <button onClick={() => setShowTheoryForm(false)} className="p-1 hover:bg-[#2C2C2E] rounded-lg">
+                  <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+                </button>
+              </div>
+              <p className="text-[11px] text-[rgba(235,235,245,0.4)]">
+                Describe a theory to test against the evidence corpus. This case's data will be cross-referenced automatically.
+              </p>
+              <textarea
+                value={theoryText}
+                onChange={e => setTheoryText(e.target.value)}
+                placeholder="e.g., 'Epstein was funneling money through Deutsche Bank to fund VI properties'"
+                rows={3}
+                className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[13px] text-white focus:outline-none focus:border-[#FF9F0A] transition-colors placeholder:text-[rgba(235,235,245,0.2)] resize-none"
+              />
+              <button
+                onClick={() => {
+                  if (theoryText.trim()) {
+                    onTheoryInvestigate(theoryText.trim());
+                    setShowTheoryForm(false);
+                    setTheoryText('');
+                  }
+                }}
+                disabled={!theoryText.trim()}
+                className="w-full flex items-center justify-center gap-2 bg-[#FF9F0A] hover:bg-[#E08E09] disabled:opacity-30 px-4 py-2.5 rounded-xl text-[13px] font-semibold text-black transition-colors"
+              >
+                <FlaskConical size={14} />
+                Investigate Theory
+              </button>
+            </div>
+          )}
+
+          {/* Theory investigation progress */}
+          {isTestingTheory && (
+            <div className="bg-[#1C1C1E] border border-[#FF9F0A]/30 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Loader2 size={14} className="text-[#FF9F0A] animate-spin" />
+                <span className="text-[13px] font-semibold text-[#FF9F0A]">Theory Investigation in Progress</span>
+              </div>
+              {theorySteps.length > 0 && (
+                <InvestigationSteps steps={theorySteps} />
+              )}
+              {theoryReportText && (
+                <div className="text-[13px] text-[rgba(235,235,245,0.6)] whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto mt-3 border-t border-[rgba(84,84,88,0.35)] pt-3">
+                  {theoryReportText}
                 </div>
               )}
             </div>

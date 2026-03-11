@@ -588,7 +588,7 @@ function AppContent() {
     }
   };
 
-  const investigateTheory = async (theory: string, caseIds: string[]) => {
+  const investigateTheory = async (theory: string, caseIds: string[], attachedCaseId?: string) => {
     setIsTestingTheory(true);
     const initial: TheoryResult = { verdict: null, reportText: '', sources: [], steps: [], theory, entitySuggestions: [] };
     setTheoryResult(initial);
@@ -665,7 +665,7 @@ function AppContent() {
           theory,
           result: finalResult,
           followUpMessages: [],
-          attachedCaseId: null,
+          attachedCaseId: attachedCaseId || null,
         });
       }
     } catch (err: any) {
@@ -1547,7 +1547,7 @@ function AppContent() {
         )}
 
         {activeView === 'cases' && (
-          activeTheorySession && !activeCaseId ? (
+          activeTheorySession ? (
             <TheoryInvestigation
               session={activeTheorySession}
               onBack={() => setActiveTheorySession(null)}
@@ -1565,6 +1565,10 @@ function AppContent() {
               onStatusChange={updateCaseStatus}
               onUpdate={updateCaseFields}
               onDelete={deleteCase}
+              onTheoryInvestigate={(theory: string) => investigateTheory(theory, [activeCaseId], activeCaseId)}
+              isTestingTheory={isTestingTheory}
+              theorySteps={theoryResult?.steps || []}
+              theoryReportText={theoryResult?.reportText || ''}
               readOnly={readOnly}
             />
           ) : (
