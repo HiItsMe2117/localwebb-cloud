@@ -600,6 +600,14 @@ class TheoryInvestigateRequest(BaseModel):
     theory: str
     case_ids: List[str] = []
 
+
+class TheoryFollowUpRequest(BaseModel):
+    theory: str
+    verdict_summary: str
+    entity_context: str
+    evidence_summary: str
+    messages: List[Dict[str, str]]
+
 # --- Endpoints ---
 
 @app.get("/api")
@@ -1201,6 +1209,36 @@ async def investigate_theory(request: TheoryInvestigateRequest):
             semantic_search_fn=_semantic_search_pass,
             rerank_fn=None,
             cross_ref_cases=cross_ref_cases if cross_ref_cases else None,
+        ),
+        media_type="text/event-stream",
+    )
+
+
+@app.post("/api/theories/follow-up", dependencies=[Depends(require_admin)])
+async def theory_follow_up(request: TheoryFollowUpRequest):
+    """Follow-up conversation on a theory investigation. Returns SSE stream."""
+    if not index:
+        return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+
+    try:
+        from api.theory_followup import run_theory_followup
+    except ImportError:
+        from theory_followup import run_theory_followup
+
+    return StreamingResponse(
+        run_theory_followup(
+            theory=request.theory,
+            verdict_summary=request.verdict_summary,
+            entity_context=request.entity_context,
+            evidence_summary=request.evidence_summary,
+            messages=request.messages,
+            genai_client=client,
+            pinecone_index=index,
+            supabase_client=supabase,
+            semantic_search_fn=_semantic_search_pass,
+            rerank_fn=None,
         ),
         media_type="text/event-stream",
     )

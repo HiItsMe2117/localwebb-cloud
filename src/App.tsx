@@ -34,7 +34,8 @@ import CasesPanel from './components/CasesPanel';
 import CaseDetail from './components/CaseDetail';
 import LoginModal from './components/LoginModal';
 import { useAuth } from './contexts/AuthContext';
-import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, InvestigationStep, Source } from './types';
+import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source } from './types';
+import TheoryInvestigation from './components/TheoryInvestigation';
 
 type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
@@ -100,6 +101,9 @@ function AppContent() {
   const [scanFindings, setScanFindings] = useState<ScanFinding[]>([]);
   const [isTestingTheory, setIsTestingTheory] = useState(false);
   const [theoryResult, setTheoryResult] = useState<TheoryResult | null>(null);
+  const [activeTheorySession, setActiveTheorySession] = useState<TheorySession | null>(null);
+  const [isFollowUpStreaming, setIsFollowUpStreaming] = useState(false);
+  const theoryResultRef = useRef<TheoryResult | null>(null);
 
   // Graph search state
   const [graphSearch, setGraphSearch] = useState('');
@@ -586,7 +590,9 @@ function AppContent() {
 
   const investigateTheory = async (theory: string, caseIds: string[]) => {
     setIsTestingTheory(true);
-    setTheoryResult({ verdict: null, reportText: '', sources: [], steps: [], theory });
+    const initial: TheoryResult = { verdict: null, reportText: '', sources: [], steps: [], theory, entitySuggestions: [] };
+    setTheoryResult(initial);
+    theoryResultRef.current = initial;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
@@ -600,6 +606,15 @@ function AppContent() {
       if (!reader) throw new Error('No reader');
       const decoder = new TextDecoder();
       let buffer = '';
+
+      const updateResult = (updater: (prev: TheoryResult) => TheoryResult) => {
+        setTheoryResult(prev => {
+          if (!prev) return prev;
+          const next = updater(prev);
+          theoryResultRef.current = next;
+          return next;
+        });
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -615,8 +630,7 @@ function AppContent() {
           try {
             const evt = JSON.parse(raw);
             if (evt.type === 'step_status') {
-              setTheoryResult(prev => {
-                if (!prev) return prev;
+              updateResult(prev => {
                 const existing = prev.steps.findIndex((s: InvestigationStep) => s.step === evt.step);
                 const newStep: InvestigationStep = { step: evt.step, label: evt.label, status: evt.status, detail: evt.detail };
                 const steps = existing >= 0
@@ -625,17 +639,34 @@ function AppContent() {
                 return { ...prev, steps };
               });
             } else if (evt.type === 'text') {
-              setTheoryResult(prev => prev ? { ...prev, reportText: prev.reportText + (evt.text || '') } : prev);
+              updateResult(prev => ({ ...prev, reportText: prev.reportText + (evt.text || '') }));
             } else if (evt.type === 'sources') {
-              setTheoryResult(prev => prev ? { ...prev, sources: (evt.sources || []) as Source[] } : prev);
+              updateResult(prev => ({ ...prev, sources: (evt.sources || []) as Source[] }));
+            } else if (evt.type === 'entity_suggestions') {
+              updateResult(prev => ({ ...prev, entitySuggestions: evt.entities || [] }));
             } else if (evt.type === 'theory_verdict') {
-              const { type: _, ...verdictData } = evt;
-              setTheoryResult(prev => prev ? { ...prev, verdict: verdictData } : prev);
+              const { type: _, entity_suggestions: es, ...verdictData } = evt;
+              updateResult(prev => ({
+                ...prev,
+                verdict: verdictData,
+                entitySuggestions: prev.entitySuggestions.length > 0 ? prev.entitySuggestions : (es || []),
+              }));
             } else if (evt.type === 'done') {
               // stream finished, no-op
             }
           } catch { /* skip malformed */ }
         }
+      }
+
+      // Auto-transition to TheoryInvestigation view
+      const finalResult = theoryResultRef.current;
+      if (finalResult?.verdict) {
+        setActiveTheorySession({
+          theory,
+          result: finalResult,
+          followUpMessages: [],
+          attachedCaseId: null,
+        });
       }
     } catch (err: any) {
       console.error('Theory investigation failed:', err);
@@ -647,13 +678,14 @@ function AppContent() {
   };
 
   const acceptTheory = async () => {
-    if (!theoryResult?.verdict) return;
-    const v = theoryResult.verdict;
+    const src = activeTheorySession?.result || theoryResult;
+    if (!src?.verdict) return;
+    const v = src.verdict;
     try {
       const res = await axios.post('/api/cases', {
-        title: `Theory: ${theoryResult.theory.slice(0, 80)}`,
+        title: `Theory: ${src.theory.slice(0, 80)}`,
         category: v.category || 'other',
-        summary: theoryResult.reportText.slice(0, 2000),
+        summary: src.reportText.slice(0, 2000),
         confidence: v.confidence,
         entities: v.entities,
         suggested_questions: v.suggested_questions,
@@ -663,6 +695,7 @@ function AppContent() {
       setCases(prev => [newCase, ...prev]);
       setActiveCaseId(newCase.id);
       setTheoryResult(null);
+      setActiveTheorySession(null);
     } catch (err) {
       console.error('Failed to create case from theory:', err);
       toast.error('Failed to create case from theory');
@@ -671,6 +704,160 @@ function AppContent() {
 
   const dismissTheory = () => {
     setTheoryResult(null);
+    setActiveTheorySession(null);
+  };
+
+  const sendTheoryFollowUp = async (message: string) => {
+    if (!activeTheorySession || isFollowUpStreaming) return;
+
+    const userMsg: TheoryFollowUpMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: message,
+      sources: [],
+      isStreaming: false,
+    };
+    const assistantId = crypto.randomUUID();
+    const assistantMsg: TheoryFollowUpMessage = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      sources: [],
+      isStreaming: true,
+    };
+
+    setActiveTheorySession(prev => prev ? {
+      ...prev,
+      followUpMessages: [...prev.followUpMessages, userMsg, assistantMsg],
+    } : prev);
+    setIsFollowUpStreaming(true);
+
+    // Build context for the API
+    const result = activeTheorySession.result;
+    const verdictSummary = result.verdict
+      ? `${result.verdict.verdict} (${Math.round(result.verdict.confidence * 100)}% confidence). ${result.verdict.supporting_count} supporting, ${result.verdict.contradicting_count} contradicting.`
+      : 'No verdict available.';
+    const entityContext = result.entitySuggestions
+      .filter(e => e.on_graph)
+      .map(e => `${e.name} (${e.type}, ${e.edge_count} connections)`)
+      .join('; ');
+    const evidenceSummary = result.reportText.slice(0, 3000);
+    const allMessages = [
+      ...activeTheorySession.followUpMessages
+        .filter(m => !m.isStreaming)
+        .map(m => ({ role: m.role, content: m.content })),
+      { role: 'user' as const, content: message },
+    ];
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120_000);
+
+    try {
+      const res = await fetch('/api/theories/follow-up', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          theory: activeTheorySession.theory,
+          verdict_summary: verdictSummary,
+          entity_context: entityContext,
+          evidence_summary: evidenceSummary,
+          messages: allMessages,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No reader');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullText = '';
+      let finalSources: Source[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.type === 'text') {
+              fullText += evt.text || '';
+              setActiveTheorySession(prev => prev ? {
+                ...prev,
+                followUpMessages: prev.followUpMessages.map(m =>
+                  m.id === assistantId ? { ...m, content: fullText } : m
+                ),
+              } : prev);
+            } else if (evt.type === 'sources') {
+              finalSources = evt.sources || [];
+            } else if (evt.type === 'entity_suggestions') {
+              // Merge new entity suggestions
+              const newEntities: TheoryEntitySuggestion[] = evt.entities || [];
+              if (newEntities.length > 0) {
+                setActiveTheorySession(prev => {
+                  if (!prev) return prev;
+                  const existing = new Set(prev.result.entitySuggestions.map(e => e.name.toLowerCase()));
+                  const toAdd = newEntities.filter(e => !existing.has(e.name.toLowerCase()));
+                  if (toAdd.length === 0) return prev;
+                  return {
+                    ...prev,
+                    result: {
+                      ...prev.result,
+                      entitySuggestions: [...prev.result.entitySuggestions, ...toAdd],
+                    },
+                  };
+                });
+              }
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+
+      // Finalize the assistant message
+      setActiveTheorySession(prev => prev ? {
+        ...prev,
+        followUpMessages: prev.followUpMessages.map(m =>
+          m.id === assistantId ? { ...m, isStreaming: false, content: fullText || m.content, sources: finalSources } : m
+        ),
+      } : prev);
+    } catch (err: any) {
+      console.error('Follow-up failed:', err);
+      const errMsg = err.name === 'AbortError' ? 'Follow-up timed out' : `Follow-up failed: ${err.message}`;
+      toast.error(errMsg);
+      setActiveTheorySession(prev => prev ? {
+        ...prev,
+        followUpMessages: prev.followUpMessages.map(m =>
+          m.id === assistantId ? { ...m, isStreaming: false, content: errMsg } : m
+        ),
+      } : prev);
+    } finally {
+      clearTimeout(timeout);
+      setIsFollowUpStreaming(false);
+    }
+  };
+
+  const addTheoryEntity = (entity: TheoryEntitySuggestion) => {
+    if (!entity.on_graph || !entity.id) {
+      toast('This entity is not in the knowledge graph yet', { description: 'Discovered in documents — research it manually.' });
+      return;
+    }
+    if (!activeTheorySession?.attachedCaseId) {
+      toast('No case attached', { description: 'Accept this theory as a case first to add entities to it.' });
+      return;
+    }
+    axios.post(`/api/cases/${activeTheorySession.attachedCaseId}/graph/entities`, {
+      node_ids: [entity.id],
+    }).then(() => {
+      toast.success(`Added ${entity.name} to case graph`);
+    }).catch(() => {
+      toast.error(`Failed to add ${entity.name}`);
+    });
   };
 
   const updateCaseStatus = async (caseId: string, status: string) => {
@@ -1360,7 +1547,18 @@ function AppContent() {
         )}
 
         {activeView === 'cases' && (
-          activeCaseId ? (
+          activeTheorySession && !activeCaseId ? (
+            <TheoryInvestigation
+              session={activeTheorySession}
+              onBack={() => setActiveTheorySession(null)}
+              onSendFollowUp={sendTheoryFollowUp}
+              isFollowUpStreaming={isFollowUpStreaming}
+              onAcceptAsCase={acceptTheory}
+              onDismiss={dismissTheory}
+              onAddEntity={addTheoryEntity}
+              readOnly={readOnly}
+            />
+          ) : activeCaseId ? (
             <CaseDetail
               caseId={activeCaseId}
               onBack={() => setActiveCaseId(null)}

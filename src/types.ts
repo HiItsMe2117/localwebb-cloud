@@ -81,12 +81,36 @@ export interface TheoryVerdict {
   suggested_questions: string[];
 }
 
+export interface TheoryEntitySuggestion {
+  name: string;
+  id: string | null;
+  type: string;
+  on_graph: boolean;
+  edge_count: number;
+}
+
+export interface TheoryFollowUpMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  sources: Source[];
+  isStreaming: boolean;
+}
+
+export interface TheorySession {
+  theory: string;
+  result: TheoryResult;
+  followUpMessages: TheoryFollowUpMessage[];
+  attachedCaseId: string | null;
+}
+
 export interface TheoryResult {
   verdict: TheoryVerdict | null;
   reportText: string;
   sources: Source[];
   steps: InvestigationStep[];
   theory: string;
+  entitySuggestions: TheoryEntitySuggestion[];
 }
 
 export const CASE_CATEGORIES: Record<string, { label: string; color: string }> = {

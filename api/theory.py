@@ -230,6 +230,27 @@ async def _run_theory_inner(
     })
     await asyncio.sleep(0.3)
 
+    # Build classified entity suggestions (emitted later, before verdict)
+    entity_suggestions = []
+    for name in all_entity_names:
+        intel = entity_intels.get(name)
+        if intel and intel.get("found"):
+            entity_suggestions.append({
+                "name": intel.get("entity_name", name),
+                "id": intel.get("entity_id"),
+                "type": intel.get("entity_type", "UNKNOWN"),
+                "on_graph": True,
+                "edge_count": intel.get("edge_count", 0),
+            })
+        else:
+            entity_suggestions.append({
+                "name": name,
+                "id": None,
+                "type": "UNKNOWN",
+                "on_graph": False,
+                "edge_count": 0,
+            })
+
     # -------------------------------------------------------------------
     # Phase T-C: Graph Traversal
     # -------------------------------------------------------------------
@@ -383,6 +404,9 @@ async def _run_theory_inner(
         yield _sse("step_status", {"step": "case_crossref", "label": "Case Cross-Reference", "status": "done", "detail": "Skipped"})
 
     await asyncio.sleep(0.3)
+
+    # Emit entity suggestions before verdict synthesis
+    yield _sse("entity_suggestions", {"entities": entity_suggestions})
 
     # -------------------------------------------------------------------
     # Phase T-G: Verdict Synthesis
@@ -568,6 +592,7 @@ async def _run_theory_inner(
             "claims": verdict_data.get("claims", []),
             "category": verdict_data.get("category", "other"),
             "suggested_questions": verdict_data.get("suggested_questions", []),
+            "entity_suggestions": entity_suggestions,
         })
     except Exception as e:
         print(f"DEBUG: Verdict extraction failed: {e}")
@@ -581,6 +606,7 @@ async def _run_theory_inner(
             "claims": [],
             "category": "other",
             "suggested_questions": [],
+            "entity_suggestions": entity_suggestions,
         })
 
     yield _sse("done", {})
