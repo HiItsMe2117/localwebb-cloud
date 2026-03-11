@@ -596,9 +596,10 @@ function AppContent() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
+      const authToken = localStorage.getItem('auth_token');
       const res = await fetch('/api/theories/investigate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
         body: JSON.stringify({ theory, case_ids: caseIds }),
         signal: controller.signal,
       });
@@ -753,9 +754,10 @@ function AppContent() {
     const timeout = setTimeout(() => controller.abort(), 120_000);
 
     try {
+      const followUpAuthToken = localStorage.getItem('auth_token');
       const res = await fetch('/api/theories/follow-up', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(followUpAuthToken ? { Authorization: `Bearer ${followUpAuthToken}` } : {}) },
         body: JSON.stringify({
           theory: activeTheorySession.theory,
           verdict_summary: verdictSummary,
