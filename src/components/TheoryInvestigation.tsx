@@ -4,7 +4,6 @@ import {
   FlaskConical, ArrowUp, Loader2, MessageSquare, Network,
 } from 'lucide-react';
 import type { TheorySession, TheoryEntitySuggestion, Source } from '../types';
-import InvestigationSteps from './InvestigationSteps';
 import { getFileUrl } from '../utils/files';
 
 interface TheoryInvestigationProps {
