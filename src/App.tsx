@@ -607,14 +607,12 @@ function AppContent() {
       if (!reader) throw new Error('No reader');
       const decoder = new TextDecoder();
       let buffer = '';
+      let latestResult = initial;
 
       const updateResult = (updater: (prev: TheoryResult) => TheoryResult) => {
-        setTheoryResult(prev => {
-          if (!prev) return prev;
-          const next = updater(prev);
-          theoryResultRef.current = next;
-          return next;
-        });
+        latestResult = updater(latestResult);
+        theoryResultRef.current = latestResult;
+        setTheoryResult(latestResult);
       };
 
       while (true) {
@@ -660,11 +658,10 @@ function AppContent() {
       }
 
       // Auto-transition to TheoryInvestigation view
-      const finalResult = theoryResultRef.current;
-      if (finalResult?.verdict) {
+      if (latestResult.verdict) {
         setActiveTheorySession({
           theory,
-          result: finalResult,
+          result: latestResult,
           followUpMessages: [],
           attachedCaseId: attachedCaseId || null,
         });
@@ -682,24 +679,40 @@ function AppContent() {
     const src = activeTheorySession?.result || theoryResult;
     if (!src?.verdict) return;
     const v = src.verdict;
+    const attachedCaseId = activeTheorySession?.attachedCaseId;
+
     try {
-      const res = await axios.post('/api/cases', {
-        title: `Theory: ${src.theory.slice(0, 80)}`,
-        category: v.category || 'other',
-        summary: src.reportText.slice(0, 2000),
-        confidence: v.confidence,
-        entities: v.entities,
-        suggested_questions: v.suggested_questions,
-        evidence_sources: [],
-      });
-      const newCase = res.data.case;
-      setCases(prev => [newCase, ...prev]);
-      setActiveCaseId(newCase.id);
-      setTheoryResult(null);
-      setActiveTheorySession(null);
+      if (attachedCaseId) {
+        // Save theory results as evidence to the existing case
+        const theoryLabel = src.theory.length > 100 ? src.theory.slice(0, 100) + '...' : src.theory;
+        const evidenceContent = `## Theory Investigation: ${theoryLabel}\n\n**Verdict:** ${v.verdict.replace('_', ' ')} (${Math.round(v.confidence * 100)}% confidence)\n**Supporting:** ${v.supporting_count} | **Contradicting:** ${v.contradicting_count}\n\n${src.reportText}`;
+        await axios.post(`/api/cases/${attachedCaseId}/notes`, {
+          content: evidenceContent,
+        });
+        toast.success('Theory results saved to case');
+        setTheoryResult(null);
+        setActiveTheorySession(null);
+        // Stay on the case — activeCaseId is already set
+      } else {
+        // No attached case — create a new one
+        const res = await axios.post('/api/cases', {
+          title: `Theory: ${src.theory.slice(0, 80)}`,
+          category: v.category || 'other',
+          summary: src.reportText.slice(0, 2000),
+          confidence: v.confidence,
+          entities: v.entities,
+          suggested_questions: v.suggested_questions,
+          evidence_sources: [],
+        });
+        const newCase = res.data.case;
+        setCases(prev => [newCase, ...prev]);
+        setActiveCaseId(newCase.id);
+        setTheoryResult(null);
+        setActiveTheorySession(null);
+      }
     } catch (err) {
-      console.error('Failed to create case from theory:', err);
-      toast.error('Failed to create case from theory');
+      console.error('Failed to save theory:', err);
+      toast.error(attachedCaseId ? 'Failed to save theory to case' : 'Failed to create case from theory');
     }
   };
 

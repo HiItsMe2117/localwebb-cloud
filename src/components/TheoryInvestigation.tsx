@@ -356,7 +356,7 @@ export default function TheoryInvestigation({
               className="flex-1 flex items-center justify-center gap-2 bg-[#30D158]/20 hover:bg-[#30D158]/30 border border-[#30D158]/30 text-[#30D158] px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors"
             >
               <Check size={14} />
-              Accept as Case
+              {session.attachedCaseId ? 'Save to Case' : 'Accept as Case'}
             </button>
             <button
               onClick={onDismiss}
