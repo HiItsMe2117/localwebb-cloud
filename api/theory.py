@@ -163,6 +163,9 @@ async def _run_theory_inner(
         "- Every claim must be specific and falsifiable\n"
         '- "contradicting_search_queries" MUST genuinely seek disconfirming evidence, not strawmen\n'
         '- "entities_involved" must be specific named entities, NOT generic words\n'
+        '- "primary_entities" must ONLY include entities explicitly named or directly implied in the theory text. '
+        'Do NOT invent or assume additional entities. If the theory says "Israel funded Trump through Phunware", '
+        'the primary entities are Israel (or Israeli government), Trump (or Trump campaign), and Phunware — nothing else.\n'
         "- Think like a defense attorney poking holes in each claim\n\n"
         "Return JSON only."
     )
@@ -230,12 +233,12 @@ async def _run_theory_inner(
     })
     await asyncio.sleep(0.3)
 
-    # Build classified entity suggestions (emitted later, before verdict)
-    entity_suggestions = []
+    # Build classified entity suggestions with relevance filtering
+    raw_entity_suggestions = []
     for name in all_entity_names:
         intel = entity_intels.get(name)
         if intel and intel.get("found"):
-            entity_suggestions.append({
+            raw_entity_suggestions.append({
                 "name": intel.get("entity_name", name),
                 "id": intel.get("entity_id"),
                 "type": intel.get("entity_type", "UNKNOWN"),
@@ -243,13 +246,50 @@ async def _run_theory_inner(
                 "edge_count": intel.get("edge_count", 0),
             })
         else:
-            entity_suggestions.append({
+            raw_entity_suggestions.append({
                 "name": name,
                 "id": None,
                 "type": "UNKNOWN",
                 "on_graph": False,
                 "edge_count": 0,
             })
+
+    # Relevance filter: ask LLM which entities are actually relevant to the theory
+    entity_suggestions = raw_entity_suggestions
+    if len(raw_entity_suggestions) > 0:
+        try:
+            entity_names_list = [e["name"] for e in raw_entity_suggestions]
+            relevance_prompt = (
+                "You are filtering a list of entities for relevance to a specific theory.\n"
+                "ONLY keep entities that are directly relevant to testing this theory — "
+                "meaning they are mentioned in the theory, are a known participant in the alleged activity, "
+                "or there is a documented evidential connection to the claims.\n\n"
+                "Do NOT include entities just because they exist in a database or share a loose association. "
+                "If an entity is not clearly connected to the theory's specific claims, exclude it.\n\n"
+                f"THEORY: {theory}\n\n"
+                f"CLAIMS:\n" + "\n".join(f"- {c.get('claim_text', '')}" for c in claims) + "\n\n"
+                f"ENTITIES TO EVALUATE: {json.dumps(entity_names_list)}\n\n"
+                'Return JSON: {"relevant": ["entity1", "entity2", ...]} — only the names that pass the filter.\n'
+                "Return JSON only."
+            )
+            rel_res = await asyncio.to_thread(
+                generate, genai_client, model="gemini-2.0-flash",
+                contents=relevance_prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            rel_data = json.loads(_extract_json(rel_res.text))
+            relevant_names = set(n.lower() for n in rel_data.get("relevant", []))
+            if relevant_names:
+                entity_suggestions = [e for e in raw_entity_suggestions if e["name"].lower() in relevant_names]
+                # Always keep entities explicitly in the theory text
+                theory_lower = theory.lower()
+                for e in raw_entity_suggestions:
+                    if e["name"].lower() in theory_lower and e not in entity_suggestions:
+                        entity_suggestions.append(e)
+        except Exception as e:
+            print(f"DEBUG: Entity relevance filter failed: {e}")
+            # Fall back to unfiltered list
+            entity_suggestions = raw_entity_suggestions
 
     # -------------------------------------------------------------------
     # Phase T-C: Graph Traversal
