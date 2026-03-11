@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   ArrowLeft, Check, X, ChevronDown, AlertTriangle, HelpCircle,
-  FlaskConical, ArrowUp, Loader2, MessageSquare, Network,
+  FlaskConical, ArrowUp, Loader2, MessageSquare, Network, FileText, Share2,
 } from 'lucide-react';
 import type { TheorySession, TheoryEntitySuggestion, Source } from '../types';
 import { getFileUrl } from '../utils/files';
+import CaseNetworkMap from './CaseNetworkMap';
 
 interface TheoryInvestigationProps {
   session: TheorySession;
@@ -36,6 +37,7 @@ export default function TheoryInvestigation({
 }: TheoryInvestigationProps) {
   const [reportExpanded, setReportExpanded] = useState(false);
   const [inputValue, setInputValue] = useState('');
+  const [activeTab, setActiveTab] = useState<'investigation' | 'network'>('investigation');
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -92,6 +94,44 @@ export default function TheoryInvestigation({
         </div>
       </header>
 
+      {/* Tab bar — only show when inside a case */}
+      {session.attachedCaseId && (
+        <div className="shrink-0 flex bg-black border-b border-[rgba(84,84,88,0.65)]">
+          <button
+            onClick={() => setActiveTab('investigation')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[13px] font-semibold transition-colors relative ${
+              activeTab === 'investigation'
+                ? 'text-[#AF52DE]'
+                : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+            }`}
+          >
+            <FileText size={14} />
+            Investigation
+            {activeTab === 'investigation' && (
+              <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-[#AF52DE] rounded-full" />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('network')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[13px] font-semibold transition-colors relative ${
+              activeTab === 'network'
+                ? 'text-[#AF52DE]'
+                : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+            }`}
+          >
+            <Share2 size={14} />
+            Network Map
+            {activeTab === 'network' && (
+              <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-[#AF52DE] rounded-full" />
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Network Map tab */}
+      {activeTab === 'network' && session.attachedCaseId ? (
+        <CaseNetworkMap caseId={session.attachedCaseId} readOnly={readOnly} />
+      ) : (
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-5 py-4 space-y-4">
           {/* Theory + Verdict Summary */}
@@ -317,6 +357,7 @@ export default function TheoryInvestigation({
           <div ref={bottomRef} />
         </div>
       </div>
+      )}
 
       {/* Bottom input + actions */}
       <div className="shrink-0 border-t border-[rgba(84,84,88,0.65)] bg-black">
