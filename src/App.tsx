@@ -1317,45 +1317,37 @@ function AppContent() {
                               Exact Match
                             </button>
                           </div>
-                          <div className="flex gap-2 mb-2">
+                          <form
+                            className="flex gap-2 mb-2"
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              if (!focusTarget.trim() || isTargetedSearching) return;
+                              setIsTargetedSearching(true);
+                              setTargetedResults(null);
+                              setExpandedChunks(new Set());
+                              setSearchPage(1);
+                              axios.post('/api/search/targeted', { keyword: focusTarget.trim(), page: 1, page_size: 50, search_mode: searchMode })
+                                .then(res => setTargetedResults(res.data))
+                                .catch(err => console.error('Targeted search failed:', err))
+                                .finally(() => setIsTargetedSearching(false));
+                            }}
+                          >
                             <input
                               type="text"
                               value={focusTarget}
                               onChange={(e) => { setFocusTarget(e.target.value); setTargetedResults(null); setSearchPage(1); }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && focusTarget.trim() && !isTargetedSearching) {
-                                  setIsTargetedSearching(true);
-                                  setTargetedResults(null);
-                                  setExpandedChunks(new Set());
-                                  setSearchPage(1);
-                                  axios.post('/api/search/targeted', { keyword: focusTarget.trim(), page: 1, page_size: 50, search_mode: searchMode })
-                                    .then(res => setTargetedResults(res.data))
-                                    .catch(err => console.error('Targeted search failed:', err))
-                                    .finally(() => setIsTargetedSearching(false));
-                                }
-                              }}
                               placeholder="e.g. Trump, Epstein, Boeing..."
                               className="flex-1 bg-black/40 border border-[rgba(84,84,88,0.65)] rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-white/20"
                             />
                             <button
-                              onClick={() => {
-                                if (!focusTarget.trim() || isTargetedSearching) return;
-                                setIsTargetedSearching(true);
-                                setTargetedResults(null);
-                                setExpandedChunks(new Set());
-                                setSearchPage(1);
-                                axios.post('/api/search/targeted', { keyword: focusTarget.trim(), page: 1, page_size: 50, search_mode: searchMode })
-                                  .then(res => setTargetedResults(res.data))
-                                  .catch(err => console.error('Targeted search failed:', err))
-                                  .finally(() => setIsTargetedSearching(false));
-                              }}
+                              type="submit"
                               disabled={!focusTarget.trim() || isTargetedSearching}
                               className="bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-lg font-medium text-[13px] transition-colors shadow-[0_0_10px_rgba(0,122,255,0.3)] flex items-center gap-1.5"
                             >
                               {isTargetedSearching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
                               Search
                             </button>
-                          </div>
+                          </form>
 
                           {/* Results area */}
                           {targetedResults && (
