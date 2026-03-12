@@ -73,15 +73,74 @@ def save_progress(progress):
 
 REINDEX_PROGRESS_UPLOAD_INTERVAL = 20  # upload live progress every N files
 
+# Rate limit tracking
+_rate_limit_events = []  # timestamps of 429 errors
+_rate_limit_count = 0
+
+RATE_LIMIT_WINDOW = 300    # 5 minutes
+RATE_LIMIT_THRESHOLD = 3   # auto-pause after this many 429s in the window
+PAUSE_CHECK_INTERVAL = 30  # seconds between pause signal checks
+
+
+def check_control_signal(bucket):
+    """Check GCS for pause/resume commands. Returns 'run' or 'pause'."""
+    try:
+        blob = bucket.blob("reindex_control.json")
+        if not blob.exists():
+            return "run"
+        data = json.loads(blob.download_as_text())
+        return data.get("command", "run")
+    except Exception:
+        return "run"  # Fail-open
+
+
+def write_control_signal(bucket, command, reason=None):
+    """Write a control command to GCS."""
+    try:
+        from datetime import datetime, timezone
+        blob = bucket.blob("reindex_control.json")
+        data = {
+            "command": command,
+            "requested_at": datetime.now(timezone.utc).isoformat(),
+            "requested_by": "script" if reason else "ui",
+        }
+        if reason:
+            data["reason"] = reason
+        blob.upload_from_string(json.dumps(data), content_type="application/json")
+    except Exception:
+        pass
+
+
+def track_rate_limit():
+    """Record a rate limit event and return True if threshold exceeded."""
+    global _rate_limit_events, _rate_limit_count
+    now = time.time()
+    _rate_limit_events.append(now)
+    _rate_limit_count += 1
+    # Count events in the window
+    recent = [t for t in _rate_limit_events if now - t < RATE_LIMIT_WINDOW]
+    _rate_limit_events = recent  # prune old entries
+    return len(recent) >= RATE_LIMIT_THRESHOLD
+
+
+def is_rate_limit_error(error):
+    """Check if an exception is a rate limit / quota error."""
+    err_str = str(error).lower()
+    return "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str
+
 
 def upload_reindex_live_progress(bucket, completed, failed, total, vectors,
-                                  start_time, active=True, files_this_run=0):
+                                  start_time, active=True, files_this_run=0,
+                                  paused=False, pause_reason=None):
     """Upload lightweight progress JSON to GCS for the UI."""
     try:
         blob = bucket.blob("reindex_live_progress.json")
         from datetime import datetime, timezone
         data = {
             "active": active,
+            "paused": paused,
+            "pause_reason": pause_reason,
+            "rate_limit_count": _rate_limit_count,
             "files_completed": completed,
             "files_failed": failed,
             "total_files": total,
@@ -384,6 +443,12 @@ def embed_and_upsert(client, index, chunks_with_pages, filename, gcs_path,
                     batch = []
                 break
             except Exception as e:
+                if is_rate_limit_error(e):
+                    exceeded = track_rate_limit()
+                    print(f"    Rate limit hit ({_rate_limit_count} total): {e}")
+                    if exceeded:
+                        print(f"    AUTO-PAUSING: {RATE_LIMIT_THRESHOLD}+ rate limits in {RATE_LIMIT_WINDOW}s")
+                        return upserted  # bail out, main loop will handle pause
                 if attempt < MAX_RETRIES - 1:
                     wait = (attempt + 1) * 5
                     print(f"    Embed retry {attempt+1} chunk {i} (waiting {wait}s): {e}")
@@ -583,9 +648,45 @@ def main():
         total, progress["vectors_upserted"], start_iso, active=True,
         files_this_run=0)
 
+    # Reset any stale pause signal from a previous run
+    write_control_signal(bucket, "run")
+
     # Process each PDF with tqdm progress bar
     pbar = tqdm(to_process, desc="Vectorizing", unit="file", dynamic_ncols=True)
     for blob in pbar:
+        # --- Check for pause signal (user-requested or auto) ---
+        recent_limits = [t for t in _rate_limit_events if time.time() - t < RATE_LIMIT_WINDOW]
+        if len(recent_limits) >= RATE_LIMIT_THRESHOLD:
+            write_control_signal(bucket, "pause", reason="rate_limited")
+
+        signal = check_control_signal(bucket)
+        if signal == "pause":
+            # Determine reason
+            ctrl_blob = bucket.blob("reindex_control.json")
+            reason = "user_requested"
+            try:
+                ctrl_data = json.loads(ctrl_blob.download_as_text())
+                reason = ctrl_data.get("reason", "user_requested")
+            except Exception:
+                pass
+
+            pbar.set_postfix_str("PAUSED", refresh=True)
+            while check_control_signal(bucket) == "pause":
+                upload_reindex_live_progress(
+                    bucket, len(progress["completed"]), len(progress["failed"]),
+                    total, progress["vectors_upserted"], start_iso, active=True,
+                    files_this_run=files_processed_this_run,
+                    paused=True, pause_reason=reason)
+                print(f"  PAUSED ({reason}) — checking again in {PAUSE_CHECK_INTERVAL}s...")
+                time.sleep(PAUSE_CHECK_INTERVAL)
+
+            # Resumed — upload active status
+            print("  RESUMED")
+            upload_reindex_live_progress(
+                bucket, len(progress["completed"]), len(progress["failed"]),
+                total, progress["vectors_upserted"], start_iso, active=True,
+                files_this_run=files_processed_this_run)
+
         filename = blob.name.split("/")[-1]
         pbar.set_postfix_str(filename[:40], refresh=True)
 
@@ -685,6 +786,12 @@ def main():
 
         except Exception as e:
             print(f"  ERROR: {e}")
+            if is_rate_limit_error(e):
+                exceeded = track_rate_limit()
+                print(f"  Rate limit hit ({_rate_limit_count} total)")
+                if exceeded:
+                    print(f"  AUTO-PAUSING: {RATE_LIMIT_THRESHOLD}+ rate limits in {RATE_LIMIT_WINDOW}s")
+                    write_control_signal(bucket, "pause", reason="rate_limited")
             if filename not in progress["failed"]:
                 progress["failed"].append(filename)
             save_progress(progress)

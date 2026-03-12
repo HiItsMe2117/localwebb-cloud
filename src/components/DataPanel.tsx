@@ -262,6 +262,11 @@ function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress;
 
 interface ReindexProgress {
   active: boolean;
+  paused?: boolean;
+  pause_reason?: 'user_requested' | 'rate_limited' | null;
+  rate_limit_count?: number;
+  control_command?: string;
+  control_reason?: string;
   files_completed?: number;
   files_failed?: number;
   total_files?: number;
@@ -271,7 +276,12 @@ interface ReindexProgress {
   files_this_run?: number;
 }
 
-function ReindexProgressCard({ progress, onRefresh }: { progress: ReindexProgress; onRefresh: () => void }) {
+function ReindexProgressCard({ progress, onRefresh, onPause, onResume }: {
+  progress: ReindexProgress;
+  onRefresh: () => void;
+  onPause: () => void;
+  onResume: () => void;
+}) {
   const {
     files_completed = 0,
     files_failed = 0,
@@ -280,6 +290,9 @@ function ReindexProgressCard({ progress, onRefresh }: { progress: ReindexProgres
     started_at,
     last_updated,
     files_this_run = 0,
+    paused = false,
+    pause_reason,
+    rate_limit_count = 0,
   } = progress;
 
   const pct = total_files > 0 ? Math.min((files_completed / total_files) * 100, 100) : 0;
@@ -315,40 +328,77 @@ function ReindexProgressCard({ progress, onRefresh }: { progress: ReindexProgres
     else lastUpdatedText = `${(ago / 3600).toFixed(1)}h ago`;
   }
 
+  const accentColor = paused ? '#FF9F0A' : '#AF52DE';
+
   return (
-    <div className="bg-[#1C1C1E] border border-[#AF52DE] rounded-2xl p-4 mb-4 relative overflow-hidden">
-      <div className="absolute inset-x-0 top-0 h-px bg-[#AF52DE]" />
+    <div className={`bg-[#1C1C1E] border rounded-2xl p-4 mb-4 relative overflow-hidden`} style={{ borderColor: accentColor }}>
+      <div className="absolute inset-x-0 top-0 h-px" style={{ backgroundColor: accentColor }} />
 
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2.5">
           <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#AF52DE] opacity-75" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#AF52DE]" />
+            {!paused && <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: accentColor }} />}
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5" style={{ backgroundColor: accentColor }} />
           </span>
           <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
-            <Database size={14} className="text-[#AF52DE]" />
-            Vectorizing Documents
+            <Database size={14} style={{ color: accentColor }} />
+            {paused ? 'Vectorization Paused' : 'Vectorizing Documents'}
           </h3>
         </div>
-        <button
-          onClick={onRefresh}
-          className="text-[11px] text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)] transition-colors"
-        >
-          <RefreshCw size={12} />
-        </button>
+        <div className="flex items-center gap-2">
+          {!paused ? (
+            <button
+              onClick={onPause}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-[#FF9F0A]/20 text-[#FF9F0A] hover:bg-[#FF9F0A]/30 transition-colors"
+            >
+              <Pause size={10} />
+              Pause
+            </button>
+          ) : (
+            <button
+              onClick={onResume}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-[#30D158]/20 text-[#30D158] hover:bg-[#30D158]/30 transition-colors"
+            >
+              <Play size={10} />
+              Resume
+            </button>
+          )}
+          <button
+            onClick={onRefresh}
+            className="text-[11px] text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)] transition-colors"
+          >
+            <RefreshCw size={12} />
+          </button>
+        </div>
       </div>
+
+      {paused && pause_reason === 'rate_limited' && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-[#FF453A]/10 border border-[#FF453A]/30">
+          <p className="text-[11px] text-[#FF453A] font-medium">
+            Auto-paused: Gemini rate limit exceeded ({rate_limit_count} hits). Quota may need time to reset.
+          </p>
+        </div>
+      )}
+
+      {!paused && rate_limit_count > 0 && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-[#FF9F0A]/10 border border-[#FF9F0A]/30">
+          <p className="text-[11px] text-[#FF9F0A] font-medium">
+            Rate limits encountered: {rate_limit_count}
+          </p>
+        </div>
+      )}
 
       <div className="mb-3">
         <div className="flex justify-between items-center mb-1.5">
           <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
             {files_completed.toLocaleString()} / {total_files.toLocaleString()}
           </span>
-          <span className="text-[13px] font-mono text-[#AF52DE]">{pct.toFixed(1)}%</span>
+          <span className="text-[13px] font-mono" style={{ color: accentColor }}>{pct.toFixed(1)}%</span>
         </div>
         <div className="h-2.5 w-full bg-[#3A3A3C] rounded-full overflow-hidden">
           <div
-            className="h-full rounded-full transition-all duration-700 bg-[#AF52DE]"
-            style={{ width: `${pct}%` }}
+            className="h-full rounded-full transition-all duration-700"
+            style={{ width: `${pct}%`, backgroundColor: accentColor }}
           />
         </div>
       </div>
@@ -363,7 +413,7 @@ function ReindexProgressCard({ progress, onRefresh }: { progress: ReindexProgres
           <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Files/min</p>
         </div>
         <div className="text-center">
-          <p className="text-[15px] font-bold text-[#AF52DE]">{etaText}</p>
+          <p className="text-[15px] font-bold" style={{ color: accentColor }}>{etaText}</p>
           <p className="text-[10px] text-[rgba(235,235,245,0.4)]">ETA</p>
         </div>
         <div className="text-center">
@@ -883,13 +933,32 @@ export default function DataPanel() {
       const res = await fetch('/api/reindex-progress');
       if (!res.ok) return;
       const data: ReindexProgress = await res.json();
-      setReindexProgress(data.active ? data : null);
-      if (!data.active && reindexPollRef.current) {
+      // Show card when active OR paused (so user can resume)
+      setReindexProgress((data.active || data.paused) ? data : null);
+      if (!data.active && !data.paused && reindexPollRef.current) {
         clearInterval(reindexPollRef.current);
         reindexPollRef.current = null;
       }
     } catch {}
   }, []);
+
+  const pauseReindex = useCallback(async () => {
+    try {
+      await axios.post('/api/reindex-control', { command: 'pause' });
+      fetchReindexProgress();
+    } catch (err) {
+      console.error('Failed to pause reindex:', err);
+    }
+  }, [fetchReindexProgress]);
+
+  const resumeReindex = useCallback(async () => {
+    try {
+      await axios.post('/api/reindex-control', { command: 'resume' });
+      fetchReindexProgress();
+    } catch (err) {
+      console.error('Failed to resume reindex:', err);
+    }
+  }, [fetchReindexProgress]);
 
   const fetchStatus = async () => {
     setLoading(true);
@@ -942,7 +1011,7 @@ export default function DataPanel() {
           )}
 
           {reindexProgress && (
-            <ReindexProgressCard progress={reindexProgress} onRefresh={fetchReindexProgress} />
+            <ReindexProgressCard progress={reindexProgress} onRefresh={fetchReindexProgress} onPause={pauseReindex} onResume={resumeReindex} />
           )}
 
           <BulkExtractCard
