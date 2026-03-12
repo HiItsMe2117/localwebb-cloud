@@ -42,7 +42,7 @@ function GroupEllipses({ groups, nodes, onGroupClick, onGroupDrag, onGroupDragEn
   onGroupClickRef.current = onGroupClick;
   zoomRef.current = zoom;
 
-  const handleMouseMove = useCallback((e: MouseEvent) => {
+  const handlePointerMove = useCallback((e: PointerEvent) => {
     const state = dragState.current;
     if (!state) return;
     const dx = e.clientX - state.lastX;
@@ -55,10 +55,10 @@ function GroupEllipses({ groups, nodes, onGroupClick, onGroupDrag, onGroupDragEn
     onGroupDragRef.current?.(state.group, dx / zoomRef.current, dy / zoomRef.current);
   }, []);
 
-  const handleMouseUp = useCallback(() => {
+  const handlePointerUp = useCallback(() => {
     const state = dragState.current;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
+    document.removeEventListener('pointermove', handlePointerMove);
+    document.removeEventListener('pointerup', handlePointerUp);
     document.body.style.cursor = '';
     if (!state) return;
     if (state.hasMoved) {
@@ -67,23 +67,23 @@ function GroupEllipses({ groups, nodes, onGroupClick, onGroupDrag, onGroupDragEn
       onGroupClickRef.current?.(state.group);
     }
     dragState.current = null;
-  }, [handleMouseMove]);
+  }, [handlePointerMove]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent, group: GroupOverlay) => {
+  const handlePointerDown = useCallback((e: React.PointerEvent, group: GroupOverlay) => {
     e.stopPropagation();
     e.preventDefault();
     dragState.current = { group, lastX: e.clientX, lastY: e.clientY, hasMoved: false };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [handleMouseMove, handleMouseUp]);
+    document.addEventListener('pointermove', handlePointerMove);
+    document.addEventListener('pointerup', handlePointerUp);
+  }, [handlePointerMove, handlePointerUp]);
 
   useEffect(() => {
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', handlePointerUp);
       document.body.style.cursor = '';
     };
-  }, [handleMouseMove, handleMouseUp]);
+  }, [handlePointerMove, handlePointerUp]);
 
   const ellipses = useMemo(() => {
     if (groups.length === 0) return [];
@@ -155,8 +155,8 @@ function GroupEllipses({ groups, nodes, onGroupClick, onGroupDrag, onGroupDragEn
                 fill={e.color}
                 fontSize={11 / zoom}
                 fontWeight={600}
-                style={{ pointerEvents: 'auto', cursor: 'grab', userSelect: 'none' }}
-                onMouseDown={(ev) => handleMouseDown(ev, e)}
+                style={{ pointerEvents: 'auto', cursor: 'grab', userSelect: 'none', touchAction: 'none' }}
+                onPointerDown={(ev) => handlePointerDown(ev, e)}
               >
                 {e.label}
               </text>

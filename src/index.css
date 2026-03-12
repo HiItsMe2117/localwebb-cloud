@@ -89,3 +89,9 @@ body {
   border: 1px solid rgba(84,84,88,0.65) !important;
   border-radius: 10px !important;
 }
+
+/* Mobile touch fixes */
+@media (pointer: coarse) {
+  button, a, input, select, textarea { touch-action: manipulation; }
+  .react-flow__handle { width: 20px !important; height: 20px !important; }
+}

@@ -228,7 +228,7 @@ function ScrapeProgressCard({ progress, onRefresh }: { progress: ScrapeProgress;
             </div>
           </div>
 
-          <div className="grid grid-cols-4 gap-3 mb-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
             <div className="text-center">
               <p className="text-[15px] font-bold text-white">{files_uploaded.toLocaleString()}</p>
               <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Uploaded</p>
@@ -353,7 +353,7 @@ function ReindexProgressCard({ progress, onRefresh }: { progress: ReindexProgres
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-3 mb-2">
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 mb-2">
         <div className="text-center">
           <p className="text-[15px] font-bold text-white">{vectors_upserted.toLocaleString()}</p>
           <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Vectors</p>
@@ -727,7 +727,7 @@ function BulkExtractCard({ state, onStart, onPause, onResume, onDismiss }: {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="text-center">
           <p className="text-[15px] font-bold text-white">{entitiesAdded.toLocaleString()}</p>
           <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Entities</p>

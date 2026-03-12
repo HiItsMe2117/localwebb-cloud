@@ -410,18 +410,18 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
         </div>
 
         {!readOnly && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={runInvestigation}
               disabled={isInvestigating || isConsolidating || isTestingTheory}
-              className="flex-1 flex items-center justify-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors"
+              className="flex-1 min-w-0 flex items-center justify-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors"
             >
               {isInvestigating ? (
                 <Loader2 size={14} className="animate-spin" />
               ) : (
                 <Search size={14} />
               )}
-              {isInvestigating ? 'Investigating...' : 'Investigate Further'}
+              <span className="hidden sm:inline">{isInvestigating ? 'Investigating...' : 'Investigate Further'}</span>
             </button>
 
             <button
@@ -435,7 +435,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
               ) : (
                 <Wand2 size={14} />
               )}
-              {isConsolidating ? 'Synthesizing...' : 'Synthesize Report'}
+              <span className="hidden sm:inline">{isConsolidating ? 'Synthesizing...' : 'Synthesize Report'}</span>
             </button>
 
             {onTheoryInvestigate && (
@@ -454,7 +454,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
                 ) : (
                   <FlaskConical size={14} />
                 )}
-                {isTestingTheory ? 'Testing...' : 'Test Theory'}
+                <span className="hidden sm:inline">{isTestingTheory ? 'Testing...' : 'Test Theory'}</span>
               </button>
             )}
 
@@ -738,7 +738,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
 
           {/* Floating copy bar */}
           {selectedCards.size > 0 && (
-            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl px-4 py-2.5 shadow-2xl z-50">
+            <div className="fixed left-1/2 -translate-x-1/2 flex items-center gap-2 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl px-4 py-2.5 shadow-2xl z-50" style={{ bottom: 'calc(24px + env(safe-area-inset-bottom, 0px))' }}>
               <span className="text-[13px] text-[rgba(235,235,245,0.6)] font-medium">
                 {selectedCards.size} selected
               </span>

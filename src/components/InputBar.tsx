@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { ArrowUp, Settings2, X, SlidersHorizontal } from 'lucide-react';
 import { DOC_TYPES } from '../types';
+import useIsMobile from '../hooks/useIsMobile';
 
 interface InputBarProps {
   value: string;
@@ -28,6 +29,7 @@ export default function InputBar({
 }: InputBarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isMobile = useIsMobile();
 
   const hasFilters = docTypeFilter || personFilter || orgFilter;
 
@@ -52,7 +54,11 @@ export default function InputBar({
 
         {/* iOS Settings Popover */}
         {settingsOpen && (
-          <div className="absolute bottom-full left-0 right-0 mb-3 p-5 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl shadow-2xl z-20">
+          <div className={
+            isMobile
+              ? "fixed inset-0 z-50 bg-[#1C1C1E] overflow-y-auto p-5"
+              : "absolute bottom-full left-0 right-0 mb-3 p-5 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl shadow-2xl z-20"
+          }>
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
                 <SlidersHorizontal size={14} className="text-[#007AFF]" /> Query Configuration

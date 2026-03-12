@@ -3,6 +3,7 @@ import type { Edge, Node } from 'reactflow';
 import { X, ExternalLink, Loader2, FileText, Search, CheckCircle, AlertTriangle, Trash2 } from 'lucide-react';
 import { getFileUrl } from '../utils/files';
 import axios from 'axios';
+import useIsMobile from '../hooks/useIsMobile';
 
 interface EdgeEvidencePanelProps {
   edge: Edge | null;
@@ -22,6 +23,7 @@ const CONFIDENCE_COLORS: Record<string, string> = {
 };
 
 export default function EdgeEvidencePanel({ edge, allNodes, caseId, onClose, onPinEdge, onSolidify, onUpdateLabel, onDeleteEdge }: EdgeEvidencePanelProps) {
+  const isMobile = useIsMobile();
   const [editLabel, setEditLabel] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -102,7 +104,17 @@ export default function EdgeEvidencePanel({ edge, allNodes, caseId, onClose, onP
   const dateMentioned = edge.data?.date_mentioned;
 
   return (
-    <div className="absolute top-0 right-0 bottom-0 w-80 z-30 bg-[#1C1C1E] border-l border-[rgba(84,84,88,0.65)] shadow-2xl flex flex-col transform transition-transform duration-300 translate-x-0 animate-in slide-in-from-right duration-300">
+    <div className={
+      isMobile
+        ? "absolute bottom-0 left-0 right-0 max-h-[60vh] rounded-t-2xl z-30 bg-[#1C1C1E] border-t border-[rgba(84,84,88,0.65)] shadow-2xl flex flex-col"
+        : "absolute top-0 right-0 bottom-0 w-80 z-30 bg-[#1C1C1E] border-l border-[rgba(84,84,88,0.65)] shadow-2xl flex flex-col transform transition-transform duration-300 translate-x-0 animate-in slide-in-from-right duration-300"
+    }>
+      {/* Drag handle (mobile bottom sheet) */}
+      {isMobile && (
+        <div className="shrink-0 flex justify-center pt-2 pb-1">
+          <div className="w-10 h-1 rounded-full bg-[rgba(235,235,245,0.3)]" />
+        </div>
+      )}
       {/* Header */}
       <div className="shrink-0 px-4 py-3 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between">
         <div className="overflow-hidden">

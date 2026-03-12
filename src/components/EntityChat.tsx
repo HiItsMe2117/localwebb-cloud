@@ -161,7 +161,7 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
   };
 
   return (
-    <div className="flex flex-col h-[500px] bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl overflow-hidden mt-4">
+    <div className="flex flex-col h-[min(500px,60vh)] bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl overflow-hidden mt-4">
       {/* Chat Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (

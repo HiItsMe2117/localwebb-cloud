@@ -8,6 +8,7 @@ import NexusCanvas from './NexusCanvas';
 import EdgeEvidencePanel from './EdgeEvidencePanel';
 import Timeline from './Timeline';
 import axios from 'axios';
+import useIsMobile from '../hooks/useIsMobile';
 
 interface CaseNetworkMapProps {
   caseId: string;
@@ -49,6 +50,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: CaseNetworkMapProps) {
+  const isMobile = useIsMobile();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -79,7 +81,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const [lassoPoints, setLassoPoints] = useState<{ x: number; y: number }[]>([]);
   const [isDrawingLasso, setIsDrawingLasso] = useState(false);
   const lassoRef = useRef<HTMLDivElement>(null);
-  const [showMiniMap, setShowMiniMap] = useState(true);
+  const [showMiniMap, setShowMiniMap] = useState(() => window.innerWidth >= 768);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
@@ -231,7 +233,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     };
   }, [getViewport]);
 
-  const onLassoDown = useCallback((e: React.MouseEvent) => {
+  const onLassoDown = useCallback((e: React.PointerEvent) => {
     if (!lassoMode || e.button !== 0) return;
     e.preventDefault();
     const pt = lassoScreenToFlow(e.clientX, e.clientY);
@@ -239,7 +241,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     setIsDrawingLasso(true);
   }, [lassoMode, lassoScreenToFlow]);
 
-  const onLassoMove = useCallback((e: React.MouseEvent) => {
+  const onLassoMove = useCallback((e: React.PointerEvent) => {
     if (!isDrawingLasso) return;
     const pt = lassoScreenToFlow(e.clientX, e.clientY);
     setLassoPoints(prev => [...prev, pt]);
@@ -578,9 +580,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
-  // Close dropdowns on outside click
+  // Close dropdowns on outside click/tap
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
+    const handler = (e: PointerEvent) => {
       if (searchRef.current && !searchRef.current.contains(e.target as HTMLElement)) {
         setSearchResults([]);
       }
@@ -588,8 +590,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
         setContextNode(null);
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
   }, []);
 
   // Debounced entity search
@@ -1262,11 +1264,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
         {lassoMode && (
           <div
             className="absolute inset-0 z-10"
-            style={{ cursor: 'crosshair' }}
-            onMouseDown={onLassoDown}
-            onMouseMove={onLassoMove}
-            onMouseUp={onLassoUp}
-            onMouseLeave={onLassoUp}
+            style={{ cursor: 'crosshair', touchAction: 'none' }}
+            onPointerDown={onLassoDown}
+            onPointerMove={onLassoMove}
+            onPointerUp={onLassoUp}
+            onPointerLeave={onLassoUp}
           >
             {lassoPoints.length > 1 && (
               <svg className="absolute inset-0 w-full h-full pointer-events-none">
@@ -1297,7 +1299,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
         {contextNode && (
           <div
             ref={contextRef}
-            className="absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl overflow-hidden z-20 w-56"
+            className={
+              isMobile
+                ? "absolute bottom-0 left-0 right-0 rounded-t-2xl max-h-[60vh] bg-[#1C1C1E] border-t border-[rgba(84,84,88,0.65)] shadow-2xl overflow-hidden z-20"
+                : "absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl overflow-hidden z-20 w-56"
+            }
           >
             <div className="px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)]">
               <p className="text-[13px] font-semibold text-white truncate">{contextNode.data?.label}</p>
@@ -1345,7 +1351,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
         {/* Expand panel */}
         {expandNode && (
-          <div className="absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl z-20 w-72 max-h-[60vh] flex flex-col">
+          <div className={
+            isMobile
+              ? "absolute bottom-0 left-0 right-0 rounded-t-2xl max-h-[60vh] bg-[#1C1C1E] border-t border-[rgba(84,84,88,0.65)] shadow-2xl z-20 flex flex-col"
+              : "absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl z-20 w-72 max-h-[60vh] flex flex-col"
+          }>
             <div className="px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between shrink-0">
               <div className="overflow-hidden">
                 <p className="text-[13px] font-semibold text-white truncate">Neighbors of {expandNode.data?.label}</p>
@@ -1430,7 +1440,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
         {/* Group editing panel */}
         {editingGroup && (
-          <div className="absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl z-20 w-64 flex flex-col">
+          <div className={
+            isMobile
+              ? "absolute bottom-0 left-0 right-0 rounded-t-2xl max-h-[60vh] bg-[#1C1C1E] border-t border-[rgba(84,84,88,0.65)] shadow-2xl z-20 flex flex-col"
+              : "absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl z-20 w-64 flex flex-col"
+          }>
             <div className="px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: editingGroup.color }} />
@@ -1556,11 +1570,19 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
         {/* Case AI chat widget */}
         <div
-          className="absolute z-20 flex flex-col transition-all"
-          style={{ bottom: showMiniMap ? 165 : 14, right: showMiniMap ? 220 : 50, width: caseChatOpen ? 340 : 'auto' }}
+          className={
+            isMobile && caseChatOpen
+              ? "fixed inset-0 z-50 flex flex-col"
+              : "absolute z-20 flex flex-col transition-all"
+          }
+          style={isMobile && caseChatOpen ? undefined : { bottom: showMiniMap ? 165 : 14, right: showMiniMap ? 220 : 50, width: caseChatOpen ? 340 : 'auto' }}
         >
           {caseChatOpen ? (
-            <div className="bg-[#1C1C1E]/95 backdrop-blur-md border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl flex flex-col" style={{ height: 360 }}>
+            <div className={
+              isMobile
+                ? "bg-[#1C1C1E] flex-1 flex flex-col"
+                : "bg-[#1C1C1E]/95 backdrop-blur-md border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl flex flex-col"
+            } style={isMobile ? undefined : { height: 360 }}>
               {/* Header */}
               <div className="shrink-0 px-3 py-2 flex items-center justify-between border-b border-[rgba(84,84,88,0.35)]">
                 <div className="flex items-center gap-2">
@@ -1691,7 +1713,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
         {/* Description panel */}
         {descriptionNode && (
-          <div className="absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl z-20 w-72 flex flex-col">
+          <div className={
+            isMobile
+              ? "absolute bottom-0 left-0 right-0 rounded-t-2xl max-h-[60vh] bg-[#1C1C1E] border-t border-[rgba(84,84,88,0.65)] shadow-2xl z-20 flex flex-col"
+              : "absolute top-3 right-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl z-20 w-72 flex flex-col"
+          }>
             <div className="px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between shrink-0">
               <div className="overflow-hidden">
                 <p className="text-[13px] font-semibold text-white truncate">{descriptionNode.data?.label}</p>
@@ -1735,7 +1761,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
       {/* Analysis + chat panel */}
       {(analysisResult || isAnalyzing) && (
-        <div className="shrink-0 max-h-[50vh] flex flex-col border-t border-[rgba(84,84,88,0.65)] bg-[#1C1C1E]">
+        <div className="shrink-0 max-h-[30vh] sm:max-h-[50vh] flex flex-col border-t border-[rgba(84,84,88,0.65)] bg-[#1C1C1E]">
           {/* Header */}
           <div className="shrink-0 px-4 py-2.5 flex items-center justify-between border-b border-[rgba(84,84,88,0.35)]">
             <div className="flex items-center gap-2">
@@ -1822,7 +1848,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       )}
 
       {/* Footer stats + selection bar */}
-      <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex items-center justify-between overflow-x-auto gap-2">
+      <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2 shrink-0">
           {nodes.length > 0 && !readOnly && (
             <>
@@ -1835,7 +1861,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                 }`}
               >
                 <MousePointerClick size={11} />
-                Select
+                {!isMobile && 'Select'}
               </button>
               <button
                 onClick={() => setLassoMode(m => !m)}
@@ -1846,7 +1872,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                 }`}
               >
                 <Lasso size={11} />
-                Lasso
+                {!isMobile && 'Lasso'}
               </button>
               {selectedNodeIds.size > 0 && (
                 <>
@@ -1875,7 +1901,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                       <Plus size={11} />
                     </button>
                   </div>
-                  {selectedNodeIds.size >= 2 && (
+                  {selectedNodeIds.size >= 2 && !isMobile && (
                     <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden" title="Rotate selected entities">
                       <button
                         onClick={() => rotateNodes(Array.from(selectedNodeIds), -15)}
@@ -1905,7 +1931,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             }`}
           >
             <MapIcon size={11} />
-            Map
+            {!isMobile && 'Map'}
           </button>
           <button
             onClick={() => setShowTimeline(v => !v)}
@@ -1916,55 +1942,63 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             }`}
           >
             <Calendar size={11} />
-            Timeline
+            {!isMobile && 'Timeline'}
           </button>
-          <button
-            onClick={toggleFullscreen}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white"
-            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-          >
-            {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-          </button>
-          <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">
+          {!isMobile && (
             <button
-              onClick={() => { if (layoutMode === 'semantic') toggleSemanticLayout(); }}
-              className={`px-2 py-1 text-[11px] font-medium transition-colors ${
-                layoutMode === 'manual' ? 'bg-[#007AFF] text-white' : 'text-[rgba(235,235,245,0.5)] hover:text-white'
-              }`}
+              onClick={toggleFullscreen}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white"
+              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
             >
-              Manual
+              {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
             </button>
-            <button
-              onClick={() => { if (layoutMode === 'manual') toggleSemanticLayout(); }}
-              disabled={isComputingLayout}
-              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
-                layoutMode === 'semantic' ? 'bg-[#AF52DE] text-white' : 'text-[rgba(235,235,245,0.5)] hover:text-white'
-              }`}
-            >
-              {isComputingLayout ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
-              Semantic
-            </button>
-          </div>
-          <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
-            {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
-            {selectMode && selectedNodeIds.size === 0 && ' · Tap entities to select'}
-          </span>
+          )}
+          {!isMobile && (
+            <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">
+              <button
+                onClick={() => { if (layoutMode === 'semantic') toggleSemanticLayout(); }}
+                className={`px-2 py-1 text-[11px] font-medium transition-colors ${
+                  layoutMode === 'manual' ? 'bg-[#007AFF] text-white' : 'text-[rgba(235,235,245,0.5)] hover:text-white'
+                }`}
+              >
+                Manual
+              </button>
+              <button
+                onClick={() => { if (layoutMode === 'manual') toggleSemanticLayout(); }}
+                disabled={isComputingLayout}
+                className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+                  layoutMode === 'semantic' ? 'bg-[#AF52DE] text-white' : 'text-[rgba(235,235,245,0.5)] hover:text-white'
+                }`}
+              >
+                {isComputingLayout ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                Semantic
+              </button>
+            </div>
+          )}
+          {!isMobile && (
+            <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
+              {nodes.length} {nodes.length === 1 ? 'entity' : 'entities'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
+              {selectMode && selectedNodeIds.size === 0 && ' · Tap entities to select'}
+            </span>
+          )}
         </div>
         {selectedNodeIds.size > 0 && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] text-[rgba(235,235,245,0.6)] font-medium">
               {selectedNodeIds.size} selected
             </span>
             {selectedNodeIds.size === 2 && (
               <>
-                <input
-                  type="text"
-                  value={linkLabel}
-                  onChange={e => setLinkLabel(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') linkSelectedNodes(); }}
-                  placeholder="Label (optional)"
-                  className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-lg px-2 py-1 text-[11px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors w-28"
-                />
+                {!isMobile && (
+                  <input
+                    type="text"
+                    value={linkLabel}
+                    onChange={e => setLinkLabel(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') linkSelectedNodes(); }}
+                    placeholder="Label (optional)"
+                    className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-lg px-2 py-1 text-[11px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors w-28"
+                  />
+                )}
                 <button
                   onClick={() => linkSelectedNodes()}
                   disabled={isLinking}
@@ -1977,9 +2011,10 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                   onClick={() => linkSelectedNodes(true)}
                   disabled={isLinking}
                   className="flex items-center gap-1.5 bg-[#FBBF24] hover:bg-[#F5A623] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-black transition-colors"
+                  title="Hypothesize"
                 >
                   {isLinking ? <Loader2 size={11} className="animate-spin" /> : <AlertTriangle size={11} />}
-                  Hypothesize
+                  {!isMobile && 'Hypothesize'}
                 </button>
               </>
             )}
@@ -1989,16 +2024,18 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                   onClick={analyzeSelected}
                   disabled={isAnalyzing}
                   className="flex items-center gap-1.5 bg-[#AF52DE] hover:bg-[#9642C0] disabled:opacity-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+                  title="Similarities"
                 >
                   {isAnalyzing ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
-                  Similarities
+                  {!isMobile && 'Similarities'}
                 </button>
                 <button
                   onClick={createGroup}
                   className="flex items-center gap-1.5 bg-[#30D158] hover:bg-[#28B84C] px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
+                  title="Group"
                 >
                   <Circle size={11} />
-                  Group
+                  {!isMobile && 'Group'}
                 </button>
               </>
             )}
@@ -2007,7 +2044,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors"
             >
               <Copy size={11} />
-              {copied ? 'Copied!' : 'Copy'}
+              {copied ? 'Copied!' : (!isMobile ? 'Copy' : '')}
             </button>
             <button
               onClick={clearSelection}

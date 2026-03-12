@@ -2,6 +2,8 @@ import { useCallback, useRef, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getBezierPath } from 'reactflow';
 import type { EdgeProps } from 'reactflow';
 
+const isTouch = typeof window !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+
 /**
  * Custom edge with a label that can be dragged along the path.
  * Stores labelPosition (0–1) in edge.data.labelPosition.
@@ -43,8 +45,8 @@ export default function DraggableLabelEdge({
     startT: number;
   } | null>(null);
 
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent) => {
       e.stopPropagation();
       e.preventDefault();
       dragRef.current = { startX: e.clientX, startY: e.clientY, startT: t };
@@ -54,9 +56,9 @@ export default function DraggableLabelEdge({
       const dy = targetY - sourceY;
       const len = Math.sqrt(dx * dx + dy * dy);
 
-      const onMove = (ev: MouseEvent) => {
+      const onMove = (ev: PointerEvent) => {
         if (!dragRef.current) return;
-        // Project mouse delta onto the source→target axis
+        // Project pointer delta onto the source→target axis
         const deltaX = ev.clientX - dragRef.current.startX;
         const deltaY = ev.clientY - dragRef.current.startY;
         if (len < 1) return;
@@ -74,8 +76,8 @@ export default function DraggableLabelEdge({
       const onUp = () => {
         setDragging(false);
         dragRef.current = null;
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
 
         // Fire drag-end so position gets persisted
         window.dispatchEvent(
@@ -83,8 +85,8 @@ export default function DraggableLabelEdge({
         );
       };
 
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
     },
     [id, t, sourceX, sourceY, targetX, targetY]
   );
@@ -100,20 +102,21 @@ export default function DraggableLabelEdge({
       {label && (
         <EdgeLabelRenderer>
           <div
-            onMouseDown={onMouseDown}
+            onPointerDown={onPointerDown}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${mx}px, ${my}px)`,
               pointerEvents: 'all',
               cursor: dragging ? 'grabbing' : 'grab',
-              fontSize: 7,
+              fontSize: isTouch ? 9 : 7,
               fontWeight: 500,
               color: 'rgba(235,235,245,0.5)',
               background: 'rgba(28,28,30,0.85)',
-              padding: '2px 4px',
+              padding: isTouch ? '6px 8px' : '2px 4px',
               borderRadius: 3,
               userSelect: 'none',
               whiteSpace: 'nowrap',
+              touchAction: 'none',
             }}
             className="nodrag nopan"
           >
