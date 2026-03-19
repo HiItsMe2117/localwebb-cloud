@@ -40,9 +40,9 @@ import TheoryInvestigation from './components/TheoryInvestigation';
 type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
 function AppContent() {
-  const { isAdmin, logout } = useAuth();
+  const { isAdmin, hasAIPrivileges, logout } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const readOnly = !isAdmin;
+  const readOnly = !hasAIPrivileges;
 
   const [activeView, setActiveView] = useState<View>('chat');
 

@@ -6,7 +6,10 @@ import type { Session, User } from '@supabase/supabase-js';
 
 interface AuthContextType {
   isAdmin: boolean;
+  isPro: boolean;
+  isElite: boolean;
   isStandard: boolean;
+  hasAIPrivileges: boolean;
   isLoading: boolean;
   user: User | null;
   role: string | null;
@@ -18,7 +21,10 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
+  isPro: false,
+  isElite: false,
   isStandard: true,
+  hasAIPrivileges: false,
   isLoading: true,
   user: null,
   role: null,
@@ -93,10 +99,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isAdmin = role === 'admin';
+  const isPro = role === 'pro';
+  const isElite = role === 'elite';
   const isStandard = role === 'standard';
+  const hasAIPrivileges = ['admin', 'pro', 'elite'].includes(role || '');
 
   return (
-    <AuthContext.Provider value={{ isAdmin, isStandard, isLoading, user, role, logout, refreshSession }}>
+    <AuthContext.Provider value={{ isAdmin, isPro, isElite, isStandard, hasAIPrivileges, isLoading, user, role, logout, refreshSession }}>
       {children}
     </AuthContext.Provider>
   );

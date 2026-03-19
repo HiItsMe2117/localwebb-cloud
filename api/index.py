@@ -106,6 +106,24 @@ async def require_admin(user = Depends(require_user)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+async def require_paid(user = Depends(require_user)):
+    """Dependency that ensures the user has a paid role (pro, elite, or admin)."""
+    try:
+        profile_res = supabase.table("profiles").select("role").eq("id", user.id).execute()
+        if not profile_res.data:
+            raise HTTPException(status_code=403, detail="User profile not found")
+        
+        role = profile_res.data[0].get("role")
+        if role not in ["admin", "pro", "elite"]:
+            raise HTTPException(status_code=403, detail="Paid subscription required for this feature")
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Paid check error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 
 # --- Configuration ---
 GCS_BUCKET = os.getenv("GCS_BUCKET_NAME", "").strip()
@@ -1031,7 +1049,7 @@ QUERY_PROMPT_TEMPLATE = (
 
 
 @app.post("/api/query")
-async def query_index(request: FilteredQueryRequest, user = Depends(require_user)):
+async def query_index(request: FilteredQueryRequest, user = Depends(require_paid)):
     try:
         print(f"DEBUG: Starting query for: {request.query}")
 
@@ -1107,7 +1125,7 @@ async def query_index(request: FilteredQueryRequest, user = Depends(require_user
 
 
 @app.post("/api/investigate")
-async def investigate(request: InvestigateRequest, user = Depends(require_user)):
+async def investigate(request: InvestigateRequest, user = Depends(require_paid)):
     """Multi-step agentic investigation pipeline. Returns SSE stream."""
     if not index:
         return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
@@ -1246,7 +1264,7 @@ async def investigate_theory(request: TheoryInvestigateRequest):
 
 
 @app.post("/api/theories/follow-up")
-async def theory_follow_up(request: TheoryFollowUpRequest, user = Depends(require_admin)):
+async def theory_follow_up(request: TheoryFollowUpRequest, user = Depends(require_paid)):
     """Follow-up conversation on a theory investigation. Returns SSE stream."""
     if not index:
         return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
@@ -1438,7 +1456,7 @@ async def get_case(case_id: str, user = Depends(require_user)):
 
 
 @app.post("/api/cases/{case_id}/investigate")
-async def investigate_case(case_id: str, user = Depends(require_user)):
+async def investigate_case(case_id: str, user = Depends(require_paid)):
     """Run scoped investigation for a case. Returns SSE stream."""
     if not index:
         return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
@@ -1538,7 +1556,7 @@ async def investigate_case(case_id: str, user = Depends(require_user)):
 
 
 @app.post("/api/cases/{case_id}/consolidate")
-async def consolidate_case_evidence(case_id: str, user = Depends(require_user)):
+async def consolidate_case_evidence(case_id: str, user = Depends(require_paid)):
     """Synthesize all evidence into a single master report."""
     if not supabase or not client:
         return JSONResponse(status_code=503, content={"error": "Cloud clients not initialized."})
@@ -2337,7 +2355,7 @@ async def delete_case_graph_group(case_id: str, group_id: str, user = Depends(re
 
 
 @app.post("/api/cases/{case_id}/graph/analyze")
-async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequest, user = Depends(require_user)):
+async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequest, user = Depends(require_paid)):
     """Analyze a group of selected entities for similarities and patterns."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
@@ -2549,7 +2567,7 @@ Be specific, name names, and think like a journalist building a story. Keep it c
 
 
 @app.post("/api/cases/{case_id}/graph/chat")
-async def chat_case_graph(case_id: str, request: GraphChatRequest, user = Depends(require_user)):
+async def chat_case_graph(case_id: str, request: GraphChatRequest, user = Depends(require_paid)):
     """Chat about a group of selected entities with full graph context."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
@@ -2705,7 +2723,7 @@ Answer the researcher's questions using this context. Be specific, cite entity n
 
 
 @app.post("/api/cases/{case_id}/graph/case-chat")
-async def case_general_chat(case_id: str, request: CaseChatRequest, user = Depends(require_user)):
+async def case_general_chat(case_id: str, request: CaseChatRequest, user = Depends(require_paid)):
     """General chat about the entire case and its network map."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
