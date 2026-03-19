@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus, FlaskConical, ChevronDown, AlertTriangle, HelpCircle, Heart, Globe, Users } from 'lucide-react';
+import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus, FlaskConical, ChevronDown, AlertTriangle, HelpCircle, Heart, Globe } from 'lucide-react';
 import type { Case, ScanFinding, TheoryResult } from '../types';
 import { CASE_CATEGORIES } from '../types';
 import InvestigationSteps from './InvestigationSteps';
 import axios from 'axios';
-import { useAuth } from '../contexts/AuthContext';
 
 interface CasesPanelProps {
   cases: Case[];
@@ -260,7 +259,7 @@ function CaseCard({ caseData, onOpen }: {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
           <h3 className="text-[15px] font-semibold text-white truncate">{caseData.title}</h3>
-          {caseData.is_public && <Globe size={12} className="text-[rgba(235,235,245,0.3)]" title="Public Community Case" />}
+          {caseData.is_public && <Globe size={12} className="text-[rgba(235,235,245,0.3)]" />}
         </div>
         <div className="flex items-center gap-2">
           <CategoryBadge category={caseData.category} />

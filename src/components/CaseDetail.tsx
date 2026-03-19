@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical, Globe } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
 import type { Case, CaseEvidence, InvestigationStep } from '../types';

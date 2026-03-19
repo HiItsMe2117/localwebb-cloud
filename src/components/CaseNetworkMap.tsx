@@ -9,6 +9,7 @@ import EdgeEvidencePanel from './EdgeEvidencePanel';
 import Timeline from './Timeline';
 import axios from 'axios';
 import useIsMobile from '../hooks/useIsMobile';
+import type { WebSource } from '../types';
 
 interface CaseNetworkMapProps {
   caseId: string;

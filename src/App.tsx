@@ -34,13 +34,13 @@ import CasesPanel from './components/CasesPanel';
 import CaseDetail from './components/CaseDetail';
 import LoginModal from './components/LoginModal';
 import { useAuth } from './contexts/AuthContext';
-import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source } from './types';
+import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source, WebSource } from './types';
 import TheoryInvestigation from './components/TheoryInvestigation';
 
 type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
 function AppContent() {
-  const { isAdmin, login, logout } = useAuth();
+  const { isAdmin, logout } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const readOnly = !isAdmin;
 

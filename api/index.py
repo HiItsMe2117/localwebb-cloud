@@ -588,7 +588,6 @@ class LikeCaseRequest(BaseModel):
 
 class FollowUserRequest(BaseModel):
     target_user_id: str
- = "PERSON"
 
 class UpdateEntityDescriptionRequest(BaseModel):
     description: str = ""
@@ -661,7 +660,7 @@ async def get_file(filename: str, page: Optional[str] = Query(None)):
     return RedirectResponse(url=signed_url, status_code=302)
 
 @app.get("/api/graph")
-async def get_graph():
+async def get_graph(user = Depends(require_user)):
     return graph_store.load()
 
 @app.post("/api/graph/positions", dependencies=[Depends(require_admin)])
@@ -671,7 +670,7 @@ async def update_positions(updates: List[PositionUpdate]):
     return {"status": "positions updated"}
 
 @app.get("/api/insights")
-async def get_insights(depth: str = "standard", focus: Optional[str] = None, strict: bool = False):
+async def get_insights(depth: str = "standard", focus: Optional[str] = None, strict: bool = False, user = Depends(require_admin)):
     try:
         if not index:
             return {"error": "Pinecone index not initialized. Please check environment variables."}
@@ -1022,7 +1021,7 @@ QUERY_PROMPT_TEMPLATE = (
 
 
 @app.post("/api/query")
-async def query_index(request: FilteredQueryRequest):
+async def query_index(request: FilteredQueryRequest, user = Depends(require_user)):
     try:
         print(f"DEBUG: Starting query for: {request.query}")
 
@@ -1098,7 +1097,7 @@ async def query_index(request: FilteredQueryRequest):
 
 
 @app.post("/api/investigate")
-async def investigate(request: InvestigateRequest):
+async def investigate(request: InvestigateRequest, user = Depends(require_user)):
     """Multi-step agentic investigation pipeline. Returns SSE stream."""
     if not index:
         return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
@@ -1744,7 +1743,7 @@ async def unfollow_user(target_user_id: str, user = Depends(require_user)):
 # ─── Case Graph (Subgraph Builder) ───────────────────────────────────────────
 
 @app.get("/api/nodes/search")
-async def search_nodes(q: str = Query("", min_length=1)):
+async def search_nodes(q: str = Query("", min_length=1), user = Depends(require_user)):
     """Search nodes by label for the case graph entity picker."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
@@ -2971,11 +2970,13 @@ async def targeted_search(request: TargetedSearchRequest, user = Depends(require
 
 @app.post("/api/upload", dependencies=[Depends(require_admin)])
 async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    # Security: Sanitize filename to prevent directory traversal
+    safe_filename = os.path.basename(file.filename)
     temp_dir = tempfile.mkdtemp()
-    file_path = os.path.join(temp_dir, file.filename)
+    file_path = os.path.join(temp_dir, safe_filename)
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
-    background_tasks.add_task(process_upload, file_path, file.filename)
+    background_tasks.add_task(process_upload, file_path, safe_filename)
     return {"status": "Processing"}
 
 def extract_text_from_pdf(file_path, filename):
@@ -3145,7 +3146,7 @@ def process_upload(file_path, filename):
         shutil.rmtree(os.path.dirname(file_path), ignore_errors=True)
 
 @app.get("/api/scrape-progress")
-async def get_scrape_progress():
+async def get_scrape_progress(user = Depends(require_admin)):
     """Return live scraper progress from GCS."""
     try:
         if not bucket:
@@ -3159,7 +3160,7 @@ async def get_scrape_progress():
         return {"active": False}
 
 @app.get("/api/reindex-progress")
-async def get_reindex_progress():
+async def get_reindex_progress(user = Depends(require_admin)):
     """Return live reindex/vectorization progress from GCS."""
     try:
         if not bucket:
@@ -3205,7 +3206,7 @@ async def set_reindex_control(request: Request, _=Depends(require_admin)):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/api/datasets")
-async def get_datasets():
+async def get_datasets(user = Depends(require_admin)):
     """Return per-dataset pipeline stats from pipeline_status.json in GCS."""
     try:
         if not bucket:
@@ -3221,7 +3222,7 @@ async def get_datasets():
 
 
 @app.get("/api/infrastructure-health")
-async def infrastructure_health():
+async def infrastructure_health(user = Depends(require_admin)):
     """Probe GCS, Pinecone, Supabase, and API server health in parallel."""
     import asyncio
 

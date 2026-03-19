@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import type { ReactNode } from 'react';
 import axios from 'axios';
 import { supabase } from '../lib/supabase';
 import type { Session, User } from '@supabase/supabase-js';
@@ -31,7 +32,6 @@ export function useAuth() {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -55,7 +55,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const handleSession = async (currentSession: Session | null) => {
-    setSession(currentSession);
     setUser(currentSession?.user || null);
     
     if (currentSession?.user) {
