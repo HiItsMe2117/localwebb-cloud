@@ -891,7 +891,7 @@ function AppContent() {
     }
   };
 
-  const updateCaseFields = async (caseId: string, fields: Partial<Pick<Case, 'title' | 'category' | 'summary'>>) => {
+  const updateCaseFields = async (caseId: string, fields: Partial<Pick<Case, 'title' | 'category' | 'summary' | 'is_public'>>) => {
     try {
       const res = await axios.patch(`/api/cases/${caseId}`, fields);
       const updated = res.data.case;
