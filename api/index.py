@@ -82,6 +82,16 @@ async def require_user(authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="Authentication failed")
 
 
+async def optional_user(authorization: str = Header(None)):
+    """Optional version of require_user."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    try:
+        return await require_user(authorization)
+    except Exception:
+        return None
+
+
 async def require_admin(user = Depends(require_user)):
     """Dependency that ensures the authenticated user is an admin."""
     try:
@@ -660,7 +670,7 @@ async def get_file(filename: str, page: Optional[str] = Query(None)):
     return RedirectResponse(url=signed_url, status_code=302)
 
 @app.get("/api/graph")
-async def get_graph(user = Depends(require_user)):
+async def get_graph():
     return graph_store.load()
 
 @app.post("/api/graph/positions", dependencies=[Depends(require_admin)])
@@ -1381,6 +1391,22 @@ def log_usage(user, endpoint: str, model: str, usage_metadata, report_to_stripe:
         print(f"Usage logging failed: {e}")
 
 
+@app.get("/api/cases/trending")
+async def get_trending_cases(q: Optional[str] = Query(None), user = Depends(optional_user)):
+    """Fetch public cases, optionally filtered by a search query."""
+    try:
+        # Use service client to get all public cases regardless of who is asking
+        query = supabase.table("cases").select("*").eq("is_public", True)
+        if q:
+            # Simple ilike search on title and summary
+            query = query.or_(f"title.ilike.%{q}%,summary.ilike.%{q}%")
+        
+        res = query.order("updated_at", desc=True).limit(20).execute()
+        return {"cases": res.data or []}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.get("/api/cases/{case_id}")
 async def get_case(case_id: str, user = Depends(require_user)):
     """Get a case with its evidence, checking permissions."""
@@ -1678,21 +1704,6 @@ async def delete_case(case_id: str, user = Depends(require_user)):
 
 
 # ─── Social Features ─────────────────────────────────────────────────────────
-
-@app.get("/api/cases/trending")
-async def get_trending_cases(q: Optional[str] = Query(None), user = Depends(require_user)):
-    """Fetch public cases, optionally filtered by a search query."""
-    try:
-        query = supabase.table("cases").select("*").eq("is_public", True)
-        if q:
-            # Simple ilike search on title and summary
-            query = query.or_(f"title.ilike.%{q}%,summary.ilike.%{q}%")
-        
-        res = query.order("updated_at", desc=True).limit(20).execute()
-        return {"cases": res.data or []}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
 
 @app.post("/api/cases/like")
 async def like_case(request: LikeCaseRequest, user = Depends(require_user)):
