@@ -1290,17 +1290,26 @@ async def theory_follow_up(request: TheoryFollowUpRequest, user = Depends(requir
 
 
 @app.get("/api/cases")
-async def list_cases(user = Depends(require_user)):
+async def list_cases(user = Depends(optional_user)):
     """List all cases viewable by the user (owned or public), ordered by updated_at desc."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     try:
-        # Show cases owned by the user OR public cases
-        res = supabase.table("cases")\
-            .select("*")\
-            .or_(f"user_id.eq.{user.id},is_public.eq.true")\
-            .order("updated_at", desc=True)\
-            .execute()
+        if user:
+            # Show cases owned by the user OR public cases
+            res = supabase.table("cases")\
+                .select("*")\
+                .or_(f"user_id.eq.{user.id},is_public.eq.true")\
+                .order("updated_at", desc=True)\
+                .execute()
+        else:
+            # Show ONLY public cases for anonymous users
+            res = supabase.table("cases")\
+                .select("*")\
+                .eq("is_public", True)\
+                .order("updated_at", desc=True)\
+                .execute()
+        
         return {"cases": res.data or []}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
