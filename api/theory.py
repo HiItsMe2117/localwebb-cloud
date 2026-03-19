@@ -75,11 +75,12 @@ async def run_theory_investigation(
     semantic_search_fn,
     rerank_fn=None,
     cross_ref_cases: list = None,
+    mode: str = "files_only",
 ) -> AsyncGenerator[str, None]:
     try:
         async for event in _run_theory_inner(
             theory, genai_client, pinecone_index, supabase_client,
-            semantic_search_fn, rerank_fn, cross_ref_cases,
+            semantic_search_fn, rerank_fn, cross_ref_cases, mode,
         ):
             yield event
     except Exception as e:
@@ -97,6 +98,7 @@ async def _run_theory_inner(
     semantic_search_fn,
     rerank_fn=None,
     cross_ref_cases: list = None,
+    mode: str = "files_only",
 ) -> AsyncGenerator[str, None]:
     supporting_chunks = []
     contradicting_chunks = []
@@ -547,14 +549,40 @@ async def _run_theory_inner(
     # Stream synthesis
     synthesis_text_parts = []
     synthesis_failed = False
+    web_sources = []
     chunk_queue = _queue.Queue()
+
+    # Build config with optional Google Search tool
+    synthesis_config = None
+    if mode == "files_web":
+        synthesis_config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())]
+        )
 
     def _produce_chunks():
         try:
-            stream = generate_stream(genai_client, model="gemini-2.0-flash", contents=synthesis_prompt)
+            kwargs = dict(
+                model="gemini-2.0-flash",
+                contents=synthesis_prompt,
+            )
+            if synthesis_config:
+                kwargs["config"] = synthesis_config
+            stream = generate_stream(genai_client, **kwargs)
             for chunk in stream:
                 if chunk.text:
                     chunk_queue.put(("text", chunk.text))
+                # Collect usage metadata (usually in the final chunk)
+                usage = getattr(chunk, 'usage_metadata', None)
+                if usage:
+                    chunk_queue.put(("usage", usage))
+                # Collect grounding metadata from the final chunk
+                if hasattr(chunk, 'candidates') and chunk.candidates:
+                    candidate = chunk.candidates[0]
+                    gm = getattr(candidate, 'grounding_metadata', None)
+                    if gm:
+                        grounding_chunks = getattr(gm, 'grounding_chunks', None)
+                        if grounding_chunks:
+                            chunk_queue.put(("grounding", grounding_chunks))
         except Exception as exc:
             chunk_queue.put(("error", exc))
         finally:
@@ -570,9 +598,28 @@ async def _run_theory_inner(
                 break
             if item[0] == "error":
                 raise item[1]
+            elif item[0] == "grounding":
+                # Extract web sources from grounding chunks
+                import urllib.parse
+                for gc in item[1]:
+                    web = getattr(gc, 'web', None)
+                    if web:
+                        uri = getattr(web, 'uri', '') or ''
+                        title = getattr(web, 'title', '') or ''
+                        if uri:
+                            domain = urllib.parse.urlparse(uri).netloc.removeprefix('www.')
+                            web_sources.append({"title": title, "uri": uri, "domain": domain})
             elif item[0] == "text":
                 synthesis_text_parts.append(item[1])
                 yield _sse("text", {"text": item[1]})
+            elif item[0] == "usage":
+                # usage metadata is a simple object, we'll convert to dict for SSE
+                usage = item[1]
+                yield _sse("usage", {
+                    "prompt_token_count": getattr(usage, "prompt_token_count", 0),
+                    "candidates_token_count": getattr(usage, "candidates_token_count", 0),
+                    "total_token_count": getattr(usage, "total_token_count", 0),
+                })
             await asyncio.sleep(0.01)
 
         await producer
@@ -584,6 +631,22 @@ async def _run_theory_inner(
         yield _sse("step_status", {"step": "verdict_synthesis", "label": "Rendering Verdict", "status": "error", "detail": "Generation failed"})
     else:
         yield _sse("step_status", {"step": "verdict_synthesis", "label": "Rendering Verdict", "status": "done"})
+
+    # Emit web search step status and sources if mode is files_web
+    if mode == "files_web":
+        # Deduplicate web sources
+        seen_uris = set()
+        unique_web_sources = []
+        for ws in web_sources:
+            if ws["uri"] not in seen_uris:
+                seen_uris.add(ws["uri"])
+                unique_web_sources.append(ws)
+        
+        if unique_web_sources:
+            yield _sse("step_status", {"step": "web_search", "label": "Web Search", "status": "done", "detail": f"{len(unique_web_sources)} web sources"})
+            yield _sse("web_sources", {"web_sources": unique_web_sources})
+        else:
+            yield _sse("step_status", {"step": "web_search", "label": "Web Search", "status": "done", "detail": "No web sources needed"})
 
     # Deduplicate sources
     seen_source_keys = set()

@@ -34,6 +34,18 @@ load_dotenv()
 app = FastAPI(title="LocalWebb Cloud API")
 _server_start_time = time.time()
 
+# Import and include billing router
+try:
+    from api.billing import router as billing_router
+    app.include_router(billing_router)
+except ImportError:
+    # If called from within the 'api' package
+    try:
+        from billing import router as billing_router
+        app.include_router(billing_router)
+    except ImportError:
+        print("Warning: Billing router could not be loaded")
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     print(f"GLOBAL ERROR: {exc}")
@@ -51,54 +63,38 @@ app.add_middleware(
 )
 
 # --- Auth Configuration ---
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
-JWT_SECRET = os.getenv("JWT_SECRET", ADMIN_PASSWORD or "dev-secret-change-me")
+# Transitioned to Supabase Auth
 
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-async def require_admin(authorization: str = Header(None)):
-    """Dependency that blocks unauthenticated write requests."""
-    if not ADMIN_PASSWORD:
-        return  # Auth disabled if no password set
+async def require_user(authorization: str = Header(None)):
+    """Dependency that ensures the user is authenticated via Supabase."""
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=403, detail="Admin access required")
+        raise HTTPException(status_code=401, detail="Authentication required")
     token = authorization.split(" ", 1)[1]
+    
     try:
-        pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-    except pyjwt.InvalidTokenError:
-        raise HTTPException(status_code=403, detail="Invalid or expired token")
+        # Supabase client is initialized globally further down
+        user_res = supabase.auth.get_user(token)
+        if not user_res or not user_res.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return user_res.user
+    except Exception as e:
+        print(f"Auth error: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 
-@app.post("/api/auth/login")
-async def auth_login(request: LoginRequest):
-    if not ADMIN_PASSWORD:
-        raise HTTPException(status_code=404, detail="Auth not configured")
-    if request.username == ADMIN_USERNAME and request.password == ADMIN_PASSWORD:
-        token = pyjwt.encode(
-            {"sub": "admin", "exp": time.time() + 86400 * 7},
-            JWT_SECRET, algorithm="HS256",
-        )
-        return {"token": token}
-    raise HTTPException(status_code=401, detail="Invalid credentials")
-
-
-@app.get("/api/auth/me")
-async def auth_me(authorization: str = Header(None)):
-    if not ADMIN_PASSWORD:
-        return {"admin": True}  # No auth configured = everyone is admin
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    token = authorization.split(" ", 1)[1]
+async def require_admin(user = Depends(require_user)):
+    """Dependency that ensures the authenticated user is an admin."""
     try:
-        pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return {"admin": True}
-    except pyjwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        profile_res = supabase.table("profiles").select("role").eq("id", user.id).execute()
+        if not profile_res.data or profile_res.data[0].get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Role check error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 
 # --- Configuration ---
@@ -539,12 +535,14 @@ class CreateCaseRequest(BaseModel):
     entities: List[str] = []
     suggested_questions: List[str] = []
     evidence_sources: List[Dict[str, Any]] = []
+    is_public: bool = False
 
 class UpdateCaseRequest(BaseModel):
     status: Optional[str] = None
     title: Optional[str] = None
     category: Optional[str] = None
     summary: Optional[str] = None
+    is_public: Optional[bool] = None
 
 class AddNoteRequest(BaseModel):
     content: str
@@ -564,10 +562,12 @@ class AnalyzeEntitiesRequest(BaseModel):
 
 class GraphChatRequest(BaseModel):
     node_ids: List[str]
-    messages: List[Dict[str, str]]  # [{"role": "user"|"assistant", "content": "..."}]
+    messages: List[Dict[str, str]]
+    mode: Optional[str] = "files_only"
 
 class CaseChatRequest(BaseModel):
     messages: List[Dict[str, str]]
+    mode: Optional[str] = "files_only"
 
 class CreateCaseEdgeRequest(BaseModel):
     source_node_id: str
@@ -581,7 +581,14 @@ class UpdateCaseEdgeRequest(BaseModel):
 
 class CreateCustomNodeRequest(BaseModel):
     label: str
-    type: str = "PERSON"
+    type: str
+
+class LikeCaseRequest(BaseModel):
+    case_id: str
+
+class FollowUserRequest(BaseModel):
+    target_user_id: str
+ = "PERSON"
 
 class UpdateEntityDescriptionRequest(BaseModel):
     description: str = ""
@@ -599,7 +606,7 @@ class UpdateGroupRequest(BaseModel):
 class TheoryInvestigateRequest(BaseModel):
     theory: str
     case_ids: List[str] = []
-
+    mode: Optional[str] = "files_only"
 
 class TheoryFollowUpRequest(BaseModel):
     theory: str
@@ -607,6 +614,7 @@ class TheoryFollowUpRequest(BaseModel):
     entity_context: str
     evidence_summary: str
     messages: List[Dict[str, str]]
+    mode: Optional[str] = "files_only"
 
 # --- Endpoints ---
 
@@ -1200,8 +1208,8 @@ async def investigate_theory(request: TheoryInvestigateRequest):
     except ImportError:
         from theory import run_theory_investigation
 
-    return StreamingResponse(
-        run_theory_investigation(
+    async def stream_and_log():
+        async for event in run_theory_investigation(
             theory=request.theory,
             genai_client=client,
             pinecone_index=index,
@@ -1209,13 +1217,27 @@ async def investigate_theory(request: TheoryInvestigateRequest):
             semantic_search_fn=_semantic_search_pass,
             rerank_fn=None,
             cross_ref_cases=cross_ref_cases if cross_ref_cases else None,
-        ),
-        media_type="text/event-stream",
-    )
+            mode=request.mode
+        ):
+            yield event
+            if event.startswith("data: "):
+                try:
+                    data = json.loads(event[6:].strip())
+                    if data.get("type") == "usage":
+                        usage_dict = data.get("usage", {})
+                        usage_meta = type('Usage', (), {
+                            'prompt_token_count': usage_dict.get('prompt_token_count', 0),
+                            'candidates_token_count': usage_dict.get('candidates_token_count', 0),
+                            'total_token_count': usage_dict.get('total_token_count', 0)
+                        })
+                        log_usage(user, "/api/theories/investigate", "gemini-2.0-flash", usage_meta)
+                except Exception: pass
+
+    return StreamingResponse(stream_and_log(), media_type="text/event-stream")
 
 
-@app.post("/api/theories/follow-up", dependencies=[Depends(require_admin)])
-async def theory_follow_up(request: TheoryFollowUpRequest):
+@app.post("/api/theories/follow-up")
+async def theory_follow_up(request: TheoryFollowUpRequest, user = Depends(require_admin)):
     """Follow-up conversation on a theory investigation. Returns SSE stream."""
     if not index:
         return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
@@ -1227,8 +1249,8 @@ async def theory_follow_up(request: TheoryFollowUpRequest):
     except ImportError:
         from theory_followup import run_theory_followup
 
-    return StreamingResponse(
-        run_theory_followup(
+    async def stream_and_log():
+        async for event in run_theory_followup(
             theory=request.theory,
             verdict_summary=request.verdict_summary,
             entity_context=request.entity_context,
@@ -1239,30 +1261,50 @@ async def theory_follow_up(request: TheoryFollowUpRequest):
             supabase_client=supabase,
             semantic_search_fn=_semantic_search_pass,
             rerank_fn=None,
-        ),
-        media_type="text/event-stream",
-    )
+            mode=request.mode
+        ):
+            yield event
+            if event.startswith("data: "):
+                try:
+                    data = json.loads(event[6:].strip())
+                    if data.get("type") == "usage":
+                        usage_dict = data.get("usage", {})
+                        usage_meta = type('Usage', (), {
+                            'prompt_token_count': usage_dict.get('prompt_token_count', 0),
+                            'candidates_token_count': usage_dict.get('candidates_token_count', 0),
+                            'total_token_count': usage_dict.get('total_token_count', 0)
+                        })
+                        log_usage(user, "/api/theories/follow-up", "gemini-2.0-flash", usage_meta)
+                except Exception: pass
+
+    return StreamingResponse(stream_and_log(), media_type="text/event-stream")
 
 
 @app.get("/api/cases")
-async def list_cases():
-    """List all cases, ordered by updated_at desc."""
+async def list_cases(user = Depends(require_user)):
+    """List all cases viewable by the user (owned or public), ordered by updated_at desc."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     try:
-        res = supabase.table("cases").select("*").order("updated_at", desc=True).execute()
+        # Show cases owned by the user OR public cases
+        res = supabase.table("cases")\
+            .select("*")\
+            .or_(f"user_id.eq.{user.id},is_public.eq.true")\
+            .order("updated_at", desc=True)\
+            .execute()
         return {"cases": res.data or []}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases", dependencies=[Depends(require_admin)])
-async def create_case(request: CreateCaseRequest):
-    """Accept a finding — insert into cases table."""
+@app.post("/api/cases")
+async def create_case(request: CreateCaseRequest, user = Depends(require_user)):
+    """Create a new case attached to the current user."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     try:
         row = {
+            "user_id": user.id,
             "title": request.title,
             "category": request.category,
             "summary": request.summary,
@@ -1270,6 +1312,7 @@ async def create_case(request: CreateCaseRequest):
             "confidence": request.confidence,
             "entities": request.entities,
             "suggested_questions": request.suggested_questions,
+            "is_public": request.is_public,
         }
         res = supabase.table("cases").insert(row).execute()
         
@@ -1289,12 +1332,63 @@ async def create_case(request: CreateCaseRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+async def verify_case_ownership(case_id: str, user, write: bool = True):
+    """Verify if the user can view or write to a case."""
+    res = supabase.table("cases").select("user_id, is_public").eq("id", case_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Case not found")
+    
+    case = res.data[0]
+    is_owner = case.get("user_id") == str(user.id)
+    is_public = case.get("is_public", False)
+
+    if write and not is_owner:
+        raise HTTPException(status_code=403, detail="You do not have permission to modify this case")
+    
+    if not write and not (is_owner or is_public):
+        raise HTTPException(status_code=403, detail="You do not have permission to view this case")
+    
+    return case
+
+
+def log_usage(user, endpoint: str, model: str, usage_metadata, report_to_stripe: bool = False):
+    """Log token usage for a user request to Supabase (non-blocking)."""
+    if not usage_metadata:
+        return
+    try:
+        total_tokens = getattr(usage_metadata, "total_token_count", 0)
+        # Simple fire-and-forget logging.
+        supabase.table("usage_logs").insert({
+            "user_id": user.id if user else None,
+            "endpoint": endpoint,
+            "model": model,
+            "prompt_tokens": getattr(usage_metadata, "prompt_token_count", 0),
+            "completion_tokens": getattr(usage_metadata, "candidates_token_count", 0),
+            "total_tokens": total_tokens,
+        }).execute()
+
+        # Report overage tokens to Stripe if requested
+        if report_to_stripe and user and total_tokens > 0:
+            try:
+                from api.billing import report_usage_to_stripe
+                report_usage_to_stripe(user.id, total_tokens)
+            except ImportError:
+                try:
+                    from billing import report_usage_to_stripe
+                    report_usage_to_stripe(user.id, total_tokens)
+                except ImportError:
+                    pass
+    except Exception as e:
+        print(f"Usage logging failed: {e}")
+
+
 @app.get("/api/cases/{case_id}")
-async def get_case(case_id: str):
-    """Get a case with its evidence."""
+async def get_case(case_id: str, user = Depends(require_user)):
+    """Get a case with its evidence, checking permissions."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     try:
+        await verify_case_ownership(case_id, user, write=False)
         case_res = supabase.table("cases").select("*").eq("id", case_id).execute()
         if not case_res.data:
             return JSONResponse(status_code=404, content={"error": "Case not found"})
@@ -1309,8 +1403,8 @@ async def get_case(case_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/investigate", dependencies=[Depends(require_admin)])
-async def investigate_case(case_id: str):
+@app.post("/api/cases/{case_id}/investigate")
+async def investigate_case(case_id: str, user = Depends(require_user)):
     """Run scoped investigation for a case. Returns SSE stream."""
     if not index:
         return JSONResponse(status_code=503, content={"error": "Pinecone index not initialized."})
@@ -1319,12 +1413,11 @@ async def investigate_case(case_id: str):
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
 
-    # Load case data
-    case_res = supabase.table("cases").select("*").eq("id", case_id).execute()
-    if not case_res.data:
-        return JSONResponse(status_code=404, content={"error": "Case not found"})
-
-    case_data = case_res.data[0]
+    # Verify ownership
+    try:
+        case_data = await verify_case_ownership(case_id, user, write=True)
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content={"error": e.detail})
 
     try:
         from api.investigator import run_investigation
@@ -1382,6 +1475,16 @@ async def investigate_case(case_id: str):
                         full_text += data.get("text", "")
                     elif data.get("type") == "sources":
                         all_sources = data.get("sources", [])
+                    elif data.get("type") == "usage":
+                        # Log usage from stream
+                        usage_dict = data.get("usage", {})
+                        # Mock a usage metadata object for the helper
+                        usage_meta = type('Usage', (), {
+                            'prompt_token_count': usage_dict.get('prompt_token_count', 0),
+                            'candidates_token_count': usage_dict.get('candidates_token_count', 0),
+                            'total_token_count': usage_dict.get('total_token_count', 0)
+                        })
+                        log_usage(user, "/api/cases/investigate", "gemini-2.0-flash", usage_meta)
                     elif data.get("type") == "done" and full_text:
                         # Save evidence
                         try:
@@ -1400,13 +1503,16 @@ async def investigate_case(case_id: str):
     return StreamingResponse(stream_and_save(), media_type="text/event-stream")
 
 
-@app.post("/api/cases/{case_id}/consolidate", dependencies=[Depends(require_admin)])
-async def consolidate_case_evidence(case_id: str):
+@app.post("/api/cases/{case_id}/consolidate")
+async def consolidate_case_evidence(case_id: str, user = Depends(require_user)):
     """Synthesize all evidence into a single master report."""
     if not supabase or not client:
         return JSONResponse(status_code=503, content={"error": "Cloud clients not initialized."})
     
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         # 1. Fetch all evidence
         ev_res = supabase.table("case_evidence").select("*").eq("case_id", case_id).execute()
         evidence = ev_res.data or []
@@ -1453,7 +1559,11 @@ Produce a professional, final investigative product."""
         )
         summary_text = res.text
 
+        # Log usage
+        log_usage(user, "/api/cases/consolidate", "gemini-2.5-pro", res.usage_metadata)
+
         # 4. Save as a new "Consolidated" evidence type
+
         new_ev = {
             "case_id": case_id,
             "type": "fact_check", # Using fact_check color/style for now or we can add a new one
@@ -1468,16 +1578,14 @@ Produce a professional, final investigative product."""
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/notes", dependencies=[Depends(require_admin)])
-async def add_case_note(case_id: str, request: AddNoteRequest):
+@app.post("/api/cases/{case_id}/notes")
+async def add_case_note(case_id: str, request: AddNoteRequest, user = Depends(require_user)):
     """Add a note to a case."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     try:
-        # Verify case exists
-        case_res = supabase.table("cases").select("id").eq("id", case_id).execute()
-        if not case_res.data:
-            return JSONResponse(status_code=404, content={"error": "Case not found"})
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
 
         res = supabase.table("case_evidence").insert({
             "case_id": case_id,
@@ -1494,12 +1602,15 @@ async def add_case_note(case_id: str, request: AddNoteRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}/evidence/{evidence_id}", dependencies=[Depends(require_admin)])
-async def update_evidence(case_id: str, evidence_id: str, request: UpdateNoteRequest):
+@app.patch("/api/cases/{case_id}/evidence/{evidence_id}")
+async def update_evidence(case_id: str, evidence_id: str, request: UpdateNoteRequest, user = Depends(require_user)):
     """Update the content of a note."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         # Verify evidence exists and is a note
         ev_res = supabase.table("case_evidence").select("*").eq("id", evidence_id).eq("case_id", case_id).execute()
         if not ev_res.data:
@@ -1519,12 +1630,15 @@ async def update_evidence(case_id: str, evidence_id: str, request: UpdateNoteReq
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}", dependencies=[Depends(require_admin)])
-async def update_case(case_id: str, request: UpdateCaseRequest):
-    """Update case status or title."""
+@app.patch("/api/cases/{case_id}")
+async def update_case(case_id: str, request: UpdateCaseRequest, user = Depends(require_user)):
+    """Update case status, title, or visibility."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         updates = {}
         if request.status is not None:
             updates["status"] = request.status
@@ -1534,6 +1648,9 @@ async def update_case(case_id: str, request: UpdateCaseRequest):
             updates["category"] = request.category
         if request.summary is not None:
             updates["summary"] = request.summary
+        if request.is_public is not None:
+            updates["is_public"] = request.is_public
+        
         if not updates:
             return JSONResponse(status_code=400, content={"error": "No fields to update"})
 
@@ -1546,14 +1663,80 @@ async def update_case(case_id: str, request: UpdateCaseRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/cases/{case_id}", dependencies=[Depends(require_admin)])
-async def delete_case(case_id: str):
+@app.delete("/api/cases/{case_id}")
+async def delete_case(case_id: str, user = Depends(require_user)):
     """Delete a case and cascade evidence."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         supabase.table("cases").delete().eq("id", case_id).execute()
         return {"status": "deleted"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ─── Social Features ─────────────────────────────────────────────────────────
+
+@app.get("/api/cases/trending")
+async def get_trending_cases(q: Optional[str] = Query(None), user = Depends(require_user)):
+    """Fetch public cases, optionally filtered by a search query."""
+    try:
+        query = supabase.table("cases").select("*").eq("is_public", True)
+        if q:
+            # Simple ilike search on title and summary
+            query = query.or_(f"title.ilike.%{q}%,summary.ilike.%{q}%")
+        
+        res = query.order("updated_at", desc=True).limit(20).execute()
+        return {"cases": res.data or []}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/like")
+async def like_case(request: LikeCaseRequest, user = Depends(require_user)):
+    """Like a public case."""
+    try:
+        res = supabase.table("case_likes").insert({
+            "user_id": user.id,
+            "case_id": request.case_id
+        }).execute()
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/cases/like/{case_id}")
+async def unlike_case(case_id: str, user = Depends(require_user)):
+    """Remove a like from a case."""
+    try:
+        supabase.table("case_likes").delete().eq("user_id", user.id).eq("case_id", case_id).execute()
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/users/follow")
+async def follow_user(request: FollowUserRequest, user = Depends(require_user)):
+    """Follow another user."""
+    try:
+        supabase.table("user_follows").insert({
+            "follower_id": user.id,
+            "target_user_id": request.target_user_id
+        }).execute()
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/users/follow/{target_user_id}")
+async def unfollow_user(target_user_id: str, user = Depends(require_user)):
+    """Unfollow a user."""
+    try:
+        supabase.table("user_follows").delete().eq("follower_id", user.id).eq("target_user_id", target_user_id).execute()
+        return {"ok": True}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -1584,11 +1767,14 @@ async def search_nodes(q: str = Query("", min_length=1)):
 
 
 @app.get("/api/cases/{case_id}/graph")
-async def get_case_graph(case_id: str):
+async def get_case_graph(case_id: str, user = Depends(require_user)):
     """Fetch subgraph: pinned nodes + all edges between them."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify permissions
+        await verify_case_ownership(case_id, user, write=False)
+
         # Get pinned entities for this case
         pinned = supabase.table("case_graph_entities").select("*").eq("case_id", case_id).execute()
         pinned_rows = pinned.data or []
@@ -1716,12 +1902,15 @@ async def get_case_graph(case_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/entities", dependencies=[Depends(require_admin)])
-async def add_case_graph_entities(case_id: str, request: AddGraphEntitiesRequest):
+@app.post("/api/cases/{case_id}/graph/entities")
+async def add_case_graph_entities(case_id: str, request: AddGraphEntitiesRequest, user = Depends(require_user)):
     """Add entities to a case graph."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         pos_map = request.positions or {}
         records = []
         for nid in request.node_ids:
@@ -1736,12 +1925,15 @@ async def add_case_graph_entities(case_id: str, request: AddGraphEntitiesRequest
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/cases/{case_id}/graph/entities/{node_id}", dependencies=[Depends(require_admin)])
-async def remove_case_graph_entity(case_id: str, node_id: str):
+@app.delete("/api/cases/{case_id}/graph/entities/{node_id}")
+async def remove_case_graph_entity(case_id: str, node_id: str, user = Depends(require_user)):
     """Remove an entity from a case graph."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         supabase.table("case_graph_entities").delete().eq("case_id", case_id).eq("node_id", node_id).execute()
         # Clean up any case-local edges referencing this node
         supabase.table("case_graph_edges").delete().eq("case_id", case_id).eq("source_node_id", node_id).execute()
@@ -1751,12 +1943,15 @@ async def remove_case_graph_entity(case_id: str, node_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/positions", dependencies=[Depends(require_admin)])
-async def save_case_graph_positions(case_id: str, request: SavePositionsRequest):
+@app.post("/api/cases/{case_id}/graph/positions")
+async def save_case_graph_positions(case_id: str, request: SavePositionsRequest, user = Depends(require_user)):
     """Save dragged node positions for a case graph."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         for pos in request.positions:
             # Try regular pinned node first
             result = supabase.table("case_graph_entities").update({
@@ -1822,12 +2017,15 @@ async def expand_case_graph_node(case_id: str, node_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/edges", dependencies=[Depends(require_admin)])
-async def create_case_graph_edge(case_id: str, request: CreateCaseEdgeRequest):
+@app.post("/api/cases/{case_id}/graph/edges")
+async def create_case_graph_edge(case_id: str, request: CreateCaseEdgeRequest, user = Depends(require_user)):
     """Create a case-local edge between two entities."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         record = {
             "case_id": case_id,
             "source_node_id": request.source_node_id,
@@ -1843,24 +2041,30 @@ async def create_case_graph_edge(case_id: str, request: CreateCaseEdgeRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/cases/{case_id}/graph/edges/{edge_id}", dependencies=[Depends(require_admin)])
-async def delete_case_graph_edge(case_id: str, edge_id: str):
+@app.delete("/api/cases/{case_id}/graph/edges/{edge_id}")
+async def delete_case_graph_edge(case_id: str, edge_id: str, user = Depends(require_user)):
     """Delete a case-local edge."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         supabase.table("case_graph_edges").delete().eq("id", edge_id).eq("case_id", case_id).execute()
         return {"deleted": edge_id}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}/graph/edges/{edge_id}", dependencies=[Depends(require_admin)])
-async def update_case_graph_edge(case_id: str, edge_id: str, request: UpdateCaseEdgeRequest):
+@app.patch("/api/cases/{case_id}/graph/edges/{edge_id}")
+async def update_case_graph_edge(case_id: str, edge_id: str, request: UpdateCaseEdgeRequest, user = Depends(require_user)):
     """Update a case-local edge's label and/or label position."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         updates = {}
         if request.label is not None:
             updates["label"] = request.label
@@ -1887,12 +2091,15 @@ class SemanticLayoutRequest(BaseModel):
     node_labels: List[str]
 
 
-@app.post("/api/cases/{case_id}/graph/edges/{edge_id}/find-evidence", dependencies=[Depends(require_admin)])
-async def find_edge_evidence(case_id: str, edge_id: str, request: FindEvidenceRequest):
+@app.post("/api/cases/{case_id}/graph/edges/{edge_id}/find-evidence")
+async def find_edge_evidence(case_id: str, edge_id: str, request: FindEvidenceRequest, user = Depends(require_user)):
     """Search for evidence supporting a hypothesis edge."""
     if not supabase or not client or not index:
         return JSONResponse(status_code=503, content={"error": "Services not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         query = f"connection between {request.source_label} and {request.target_label}"
         rerank_fn = _get_rerank_fn()
         results = _semantic_search_pass(
@@ -1913,7 +2120,10 @@ async def find_edge_evidence(case_id: str, edge_id: str, request: FindEvidenceRe
 
 Respond with a brief assessment (2-3 sentences). If evidence supports a connection, describe it. If not, say so clearly."""
 
-        assessment = generate(prompt)
+        assessment_res = generate(prompt)
+        assessment = assessment_res.text
+        log_usage(user, "/api/cases/graph/find-evidence", "gemini-2.0-flash", assessment_res.usage_metadata)
+        
         best = results[0]
         return {
             "found": True,
@@ -1926,12 +2136,15 @@ Respond with a brief assessment (2-3 sentences). If evidence supports a connecti
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}/graph/edges/{edge_id}/solidify", dependencies=[Depends(require_admin)])
-async def solidify_hypothesis_edge(case_id: str, edge_id: str):
+@app.patch("/api/cases/{case_id}/graph/edges/{edge_id}/solidify")
+async def solidify_hypothesis_edge(case_id: str, edge_id: str, user = Depends(require_user)):
     """Convert a hypothesis edge to a confirmed edge with evidence."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         result = supabase.table("case_graph_edges").update({
             "is_hypothesis": False,
         }).eq("id", edge_id).eq("case_id", case_id).execute()
@@ -1942,12 +2155,15 @@ async def solidify_hypothesis_edge(case_id: str, edge_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/semantic-layout", dependencies=[Depends(require_admin)])
-async def compute_semantic_layout(case_id: str, request: SemanticLayoutRequest):
+@app.post("/api/cases/{case_id}/graph/semantic-layout")
+async def compute_semantic_layout(case_id: str, request: SemanticLayoutRequest, user = Depends(require_user)):
     """Compute semantic similarity matrix for layout clustering."""
     if not client:
         return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
     try:
+        # Verify permissions
+        await verify_case_ownership(case_id, user, write=False)
+
         if len(request.node_labels) < 2:
             return {"node_ids": request.node_ids, "similarities": []}
 
@@ -1982,12 +2198,15 @@ async def compute_semantic_layout(case_id: str, request: SemanticLayoutRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/custom-nodes", dependencies=[Depends(require_admin)])
-async def create_case_custom_node(case_id: str, request: CreateCustomNodeRequest):
+@app.post("/api/cases/{case_id}/graph/custom-nodes")
+async def create_case_custom_node(case_id: str, request: CreateCustomNodeRequest, user = Depends(require_user)):
     """Create a custom case-local entity node."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         record = {
             "case_id": case_id,
             "label": request.label,
@@ -2001,12 +2220,15 @@ async def create_case_custom_node(case_id: str, request: CreateCustomNodeRequest
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/cases/{case_id}/graph/custom-nodes/{node_id}", dependencies=[Depends(require_admin)])
-async def delete_case_custom_node(case_id: str, node_id: str):
+@app.delete("/api/cases/{case_id}/graph/custom-nodes/{node_id}")
+async def delete_case_custom_node(case_id: str, node_id: str, user = Depends(require_user)):
     """Delete a custom case-local entity node and its edges."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         # Delete any case edges involving this custom node
         supabase.table("case_graph_edges").delete().eq("case_id", case_id).eq("source_node_id", node_id).execute()
         supabase.table("case_graph_edges").delete().eq("case_id", case_id).eq("target_node_id", node_id).execute()
@@ -2017,12 +2239,15 @@ async def delete_case_custom_node(case_id: str, node_id: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}/graph/entities/{node_id}/description", dependencies=[Depends(require_admin)])
-async def update_entity_description(case_id: str, node_id: str, request: UpdateEntityDescriptionRequest):
+@app.patch("/api/cases/{case_id}/graph/entities/{node_id}/description")
+async def update_entity_description(case_id: str, node_id: str, request: UpdateEntityDescriptionRequest, user = Depends(require_user)):
     """Upsert a case-level description for any entity (global or custom)."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         supabase.table("case_entity_descriptions").upsert({
             "case_id": case_id,
             "node_id": node_id,
@@ -2034,12 +2259,15 @@ async def update_entity_description(case_id: str, node_id: str, request: UpdateE
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/groups", dependencies=[Depends(require_admin)])
-async def create_case_graph_group(case_id: str, request: CreateGroupRequest):
+@app.post("/api/cases/{case_id}/graph/groups")
+async def create_case_graph_group(case_id: str, request: CreateGroupRequest, user = Depends(require_user)):
     """Create a visual group circle around entities."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         result = supabase.table("case_graph_groups").insert({
             "case_id": case_id,
             "label": request.label,
@@ -2051,12 +2279,15 @@ async def create_case_graph_group(case_id: str, request: CreateGroupRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.patch("/api/cases/{case_id}/graph/groups/{group_id}", dependencies=[Depends(require_admin)])
-async def update_case_graph_group(case_id: str, group_id: str, request: UpdateGroupRequest):
+@app.patch("/api/cases/{case_id}/graph/groups/{group_id}")
+async def update_case_graph_group(case_id: str, group_id: str, request: UpdateGroupRequest, user = Depends(require_user)):
     """Update a group's label, color, or member nodes."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         updates = {}
         if request.label is not None:
             updates["label"] = request.label
@@ -2071,20 +2302,23 @@ async def update_case_graph_group(case_id: str, group_id: str, request: UpdateGr
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/cases/{case_id}/graph/groups/{group_id}", dependencies=[Depends(require_admin)])
-async def delete_case_graph_group(case_id: str, group_id: str):
+@app.delete("/api/cases/{case_id}/graph/groups/{group_id}")
+async def delete_case_graph_group(case_id: str, group_id: str, user = Depends(require_user)):
     """Delete a group (does not remove the entities themselves)."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
+        # Verify ownership
+        await verify_case_ownership(case_id, user, write=True)
+
         supabase.table("case_graph_groups").delete().eq("id", group_id).eq("case_id", case_id).execute()
         return {"deleted": group_id}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/analyze", dependencies=[Depends(require_admin)])
-async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequest):
+@app.post("/api/cases/{case_id}/graph/analyze")
+async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequest, user = Depends(require_user)):
     """Analyze a group of selected entities for similarities and patterns."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
@@ -2093,6 +2327,9 @@ async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequ
     if len(request.node_ids) < 2:
         return JSONResponse(status_code=400, content={"error": "Need at least 2 entities to analyze."})
     try:
+        # Verify permissions
+        await verify_case_ownership(case_id, user, write=False)
+
         node_ids = request.node_ids
 
         # Fetch node details
@@ -2181,6 +2418,7 @@ Be specific, reference actual entity names, and flag anything that looks unusual
             contents=prompt,
         )
         initial_analysis = res.text
+        log_usage(user, "/api/cases/analyze", "gemini-2.0-flash", res.usage_metadata)
 
         # --- Pass 2: Auto-follow-up on investigative leads ---
         # Ask Gemini to extract search terms from its own leads
@@ -2272,6 +2510,7 @@ Be specific, name names, and think like a journalist building a story. Keep it c
                     contents=follow_up_prompt,
                 )
                 follow_up = follow_up_res.text
+                log_usage(user, "/api/cases/analyze-followup", "gemini-2.0-flash", follow_up_res.usage_metadata)
             except Exception as follow_err:
                 print(f"Follow-up analysis failed: {follow_err}")
 
@@ -2290,14 +2529,17 @@ Be specific, name names, and think like a journalist building a story. Keep it c
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/chat", dependencies=[Depends(require_admin)])
-async def chat_case_graph(case_id: str, request: GraphChatRequest):
+@app.post("/api/cases/{case_id}/graph/chat")
+async def chat_case_graph(case_id: str, request: GraphChatRequest, user = Depends(require_user)):
     """Chat about a group of selected entities with full graph context."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     if not client:
         return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
     try:
+        # Verify permissions
+        await verify_case_ownership(case_id, user, write=False)
+
         node_ids = request.node_ids
 
         # Fetch node details (global nodes)
@@ -2405,27 +2647,55 @@ Answer the researcher's questions using this context. Be specific, cite entity n
         for msg in request.messages:
             contents.append(f"{'Researcher' if msg['role'] == 'user' else 'Journalist'}: {msg['content']}")
 
+        config = None
+        if request.mode == "files_web":
+            config = types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())]
+            )
+
         res = generate(
             client,
             model="gemini-2.0-flash",
             contents="\n\n".join(contents),
+            config=config,
         )
+        # Log usage (using a generic chat endpoint label for both)
+        log_usage(user, "/api/cases/chat", "gemini-2.0-flash", res.usage_metadata)
 
-        return {"response": res.text}
+        web_sources = []
+        if res.candidates and res.candidates[0].grounding_metadata:
+            gm = res.candidates[0].grounding_metadata
+            if gm.grounding_chunks:
+                import urllib.parse
+                for gc in gm.grounding_chunks:
+                    if gc.web:
+                        uri = gc.web.uri or ""
+                        if uri:
+                            domain = urllib.parse.urlparse(uri).netloc.removeprefix('www.')
+                            web_sources.append({
+                                "title": gc.web.title or "",
+                                "uri": uri,
+                                "domain": domain
+                            })
+
+        return {"response": res.text, "web_sources": web_sources}
     except Exception as e:
         print(f"Graph chat failed: {e}")
         import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/cases/{case_id}/graph/case-chat", dependencies=[Depends(require_admin)])
-async def case_general_chat(case_id: str, request: CaseChatRequest):
+@app.post("/api/cases/{case_id}/graph/case-chat")
+async def case_general_chat(case_id: str, request: CaseChatRequest, user = Depends(require_user)):
     """General chat about the entire case and its network map."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     if not client:
         return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
     try:
+        # Verify permissions
+        await verify_case_ownership(case_id, user, write=False)
+
         # Load case metadata
         case_res = supabase.table("cases").select("title, summary, category").eq("id", case_id).execute()
         case_data = case_res.data[0] if case_res.data else {}
@@ -2488,27 +2758,52 @@ CASE CONNECTIONS:
 
 {"GROUPS:" + chr(10) + chr(10).join(group_lines) if group_lines else ""}
 
-Answer the researcher's questions using this context. Be specific, cite entity names, and think like an investigative journalist — look for patterns, follow the money, identify intermediaries, and suggest leads. Keep responses concise and actionable."""
+Answer the researcher's questions using this context. Be specific, cite entity names, and think like an investigative journalist — look for patterns, follow the money, identify intermediaries, and suggest leads. Use Google Search (if enabled) to supplement your knowledge about these entities, their backgrounds, and any recent news if the provided case context is insufficient. Keep responses concise and actionable."""
 
         contents = [system_context]
         for msg in request.messages:
             contents.append(f"{'Researcher' if msg['role'] == 'user' else 'Journalist'}: {msg['content']}")
 
+        config = None
+        if request.mode == "files_web":
+            config = types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())]
+            )
+
         res = generate(
             client,
             model="gemini-2.0-flash",
             contents="\n\n".join(contents),
+            config=config,
         )
+        # Log usage (using a generic chat endpoint label for both)
+        log_usage(user, "/api/cases/chat", "gemini-2.0-flash", res.usage_metadata)
 
-        return {"response": res.text}
+        web_sources = []
+        if res.candidates and res.candidates[0].grounding_metadata:
+            gm = res.candidates[0].grounding_metadata
+            if gm.grounding_chunks:
+                import urllib.parse
+                for gc in gm.grounding_chunks:
+                    if gc.web:
+                        uri = gc.web.uri or ""
+                        if uri:
+                            domain = urllib.parse.urlparse(uri).netloc.removeprefix('www.')
+                            web_sources.append({
+                                "title": gc.web.title or "",
+                                "uri": uri,
+                                "domain": domain
+                            })
+
+        return {"response": res.text, "web_sources": web_sources}
     except Exception as e:
         print(f"Case chat failed: {e}")
         import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/search/targeted", dependencies=[Depends(require_admin)])
-async def targeted_search(request: TargetedSearchRequest):
+@app.post("/api/search/targeted")
+async def targeted_search(request: TargetedSearchRequest, user = Depends(require_admin)):
     """Keyword search + optional network extraction using Supabase full-text search."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
@@ -2611,6 +2906,9 @@ async def targeted_search(request: TargetedSearchRequest):
                 response_schema=CaseMap
             )
         )
+        # Log usage
+        log_usage(user, "/api/search/targeted", "gemini-2.5-pro", res.usage_metadata)
+
         output = res.parsed
         quality_ents = filter_quality_entities(output.entities)
         quality_ids = {e.id for e in quality_ents}
@@ -3053,8 +3351,8 @@ async def bulk_extract_status():
         info["traceback"] = traceback.format_exc()
     return info
 
-@app.post("/api/graph/bulk-extract", dependencies=[Depends(require_admin)])
-async def bulk_extract_graph():
+@app.post("/api/graph/bulk-extract")
+async def bulk_extract_graph(user = Depends(require_admin)):
     """Extract entities and relationships from all vectorized documents not yet in the graph."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized"})
@@ -3105,6 +3403,7 @@ async def bulk_extract_graph():
                         response_schema=CaseMap
                     )
                 )
+                log_usage(user, "/api/graph/bulk-extract", "gemini-2.5-pro", res.usage_metadata)
                 output = res.parsed
                 raw_ent_count = len(output.entities)
                 raw_tri_count = len(output.triples)
@@ -3231,8 +3530,8 @@ async def detect_communities():
         return graph_store.load()
 
 
-@app.post("/api/graph/deduplicate", dependencies=[Depends(require_admin)])
-async def deduplicate_graph():
+@app.post("/api/graph/deduplicate")
+async def deduplicate_graph(user = Depends(require_admin)):
     """Two-pass entity deduplication: heuristic merge then Gemini fuzzy merge."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
@@ -3319,6 +3618,8 @@ async def deduplicate_graph():
                             response_mime_type="application/json",
                         )
                     )
+                    # Note: deduplicate_graph doesn't have 'user' yet, I'll add it to the signature in next step
+                    log_usage(user, "/api/graph/deduplicate", "gemini-2.0-flash", res.usage_metadata)
                     merge_groups = json.loads(res.text)
                     if isinstance(merge_groups, list):
                         all_merge_groups.extend(merge_groups)

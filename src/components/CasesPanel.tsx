@@ -1,8 +1,10 @@
-import { useState, useRef } from 'react';
-import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus, FlaskConical, ChevronDown, AlertTriangle, HelpCircle } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus, FlaskConical, ChevronDown, AlertTriangle, HelpCircle, Heart, Globe, Users } from 'lucide-react';
 import type { Case, ScanFinding, TheoryResult } from '../types';
 import { CASE_CATEGORIES } from '../types';
 import InvestigationSteps from './InvestigationSteps';
+import axios from 'axios';
+import { useAuth } from '../contexts/AuthContext';
 
 interface CasesPanelProps {
   cases: Case[];
@@ -13,8 +15,8 @@ interface CasesPanelProps {
   onDismiss: (finding: ScanFinding) => void;
   onAcceptAll: () => void;
   onOpenCase: (caseId: string) => void;
-  onCreateCase: (title: string, category: string) => Promise<void>;
-  onTheoryInvestigate: (theory: string, caseIds: string[]) => void;
+  onCreateCase: (title: string, category: string) => void;
+  onTheoryInvestigate: (theory: string, caseIds: string[], mode: 'files_only' | 'files_web') => void;
   isTestingTheory: boolean;
   theoryResult: TheoryResult | null;
   onAcceptTheory: () => void;
@@ -226,23 +228,57 @@ function TheoryResultCard({ result, onAccept, onDismiss }: {
   );
 }
 
-function CaseCard({ caseData, onOpen }: { caseData: Case; onOpen: () => void }) {
+function CaseCard({ caseData, onOpen }: { 
+  caseData: Case & { liked?: boolean, likes_count?: number, owner_username?: string }; 
+  onOpen: () => void;
+}) {
+  const [liked, setLiked] = useState(caseData.liked || false);
+  const [likesCount, setLikesCount] = useState(caseData.likes_count || 0);
+
+  const handleLike = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      if (liked) {
+        await axios.delete(`/api/cases/like/${caseData.id}`);
+        setLiked(false);
+        setLikesCount(prev => prev - 1);
+      } else {
+        await axios.post('/api/cases/like', { case_id: caseData.id });
+        setLiked(true);
+        setLikesCount(prev => prev + 1);
+      }
+    } catch (err) {
+      console.error('Failed to toggle like:', err);
+    }
+  };
+
   return (
     <button
       onClick={onOpen}
-      className="w-full bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 text-left hover:bg-[#2C2C2E] transition-colors active:scale-[0.99]"
+      className="w-full bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 text-left hover:bg-[#2C2C2E] transition-colors active:scale-[0.99] flex items-center justify-between"
     >
-      <div className="flex items-center justify-between">
-        <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
           <h3 className="text-[15px] font-semibold text-white truncate">{caseData.title}</h3>
-          <div className="flex items-center gap-2 mt-1.5">
-            <CategoryBadge category={caseData.category} />
-            <span className="text-[11px] text-[rgba(235,235,245,0.3)]">
-              {new Date(caseData.updated_at).toLocaleDateString()}
-            </span>
-          </div>
+          {caseData.is_public && <Globe size={12} className="text-[rgba(235,235,245,0.3)]" title="Public Community Case" />}
         </div>
-        <ChevronRight size={18} className="text-[rgba(235,235,245,0.2)] shrink-0" />
+        <div className="flex items-center gap-2">
+          <CategoryBadge category={caseData.category} />
+          <span className="text-[11px] text-[rgba(235,235,245,0.3)]">
+            {caseData.owner_username ? `@${caseData.owner_username} • ` : ''}
+            {new Date(caseData.updated_at).toLocaleDateString()}
+          </span>
+        </div>
+      </div>
+      <div className="flex items-center gap-4 shrink-0">
+        <div 
+          onClick={handleLike}
+          className={`flex items-center gap-1.5 transition-colors cursor-pointer ${liked ? 'text-[#FF2D55]' : 'text-[rgba(235,235,245,0.3)] hover:text-white'}`}
+        >
+          <Heart size={16} fill={liked ? 'currentColor' : 'none'} />
+          <span className="text-[12px] font-mono">{likesCount}</span>
+        </div>
+        <ChevronRight size={18} className="text-[rgba(235,235,245,0.2)]" />
       </div>
     </button>
   );
@@ -254,14 +290,37 @@ export default function CasesPanel({
   onTheoryInvestigate, isTestingTheory, theoryResult, onAcceptTheory, onDismissTheory,
   readOnly = false,
 }: CasesPanelProps) {
+  const [activeTab, setActiveTab] = useState<'my-cases' | 'explore'>('my-cases');
+  const [exploreCases, setExploreCases] = useState<Case[]>([]);
+  const [isExploreLoading, setIsExploreLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newCategory, setNewCategory] = useState('other');
   const [isCreating, setIsCreating] = useState(false);
   const [showTheoryForm, setShowTheoryForm] = useState(false);
   const [theoryText, setTheoryText] = useState('');
+  const [theoryMode, setTheoryMode] = useState<'files_only' | 'files_web'>('files_only');
   const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
   const theoryTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const loadExploreCases = async (query = '') => {
+    setIsExploreLoading(true);
+    try {
+      const res = await axios.get(`/api/cases/trending${query ? `?q=${encodeURIComponent(query)}` : ''}`);
+      setExploreCases(res.data.cases || []);
+    } catch (err) {
+      console.error('Failed to load explore cases:', err);
+    } finally {
+      setIsExploreLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'explore') {
+      loadExploreCases(searchQuery);
+    }
+  }, [activeTab, searchQuery]);
 
   const activeCases = cases.filter(c => c.status === 'active');
   const closedCases = cases.filter(c => c.status === 'closed');
@@ -280,42 +339,62 @@ export default function CasesPanel({
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between">
-        <h1 className="text-[28px] font-bold tracking-tight text-white">Cases</h1>
-        {!readOnly && <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setShowTheoryForm(v => !v); setShowCreateForm(false); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
-              showTheoryForm ? 'bg-[#AF52DE] text-white' : 'bg-[#AF52DE]/20 text-[#AF52DE] hover:bg-[#AF52DE]/30'
-            }`}
-          >
-            <FlaskConical size={14} />
-            Theory
-          </button>
-          <button
-            onClick={() => { setShowCreateForm(v => !v); setShowTheoryForm(false); }}
-            className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors"
-          >
-            <Plus size={14} />
-            New Case
-          </button>
-          {hasCases && (
+      <header className="shrink-0 px-5 pt-4 pb-2 bg-black">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-[28px] font-bold tracking-tight text-white">Cases</h1>
+          {!readOnly && <div className="flex items-center gap-2">
             <button
-              onClick={onScan}
-              disabled={isScanning}
-              className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] transition-colors disabled:opacity-50"
+              onClick={() => { setShowTheoryForm(v => !v); setShowCreateForm(false); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
+                showTheoryForm ? 'bg-[#AF52DE] text-white' : 'bg-[#AF52DE]/20 text-[#AF52DE] hover:bg-[#AF52DE]/30'
+              }`}
             >
-              {isScanning ? (
-                <Loader2 size={12} className="animate-spin text-[#FF9F0A]" />
-              ) : (
-                <Search size={12} className="text-[rgba(235,235,245,0.4)]" />
-              )}
-              <span className="text-[rgba(235,235,245,0.6)]">
-                {isScanning ? 'Scanning...' : 'Scan'}
-              </span>
+              <FlaskConical size={14} />
+              Theory
             </button>
-          )}
-        </div>}
+            <button
+              onClick={() => { setShowCreateForm(v => !v); setShowTheoryForm(false); }}
+              className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors"
+            >
+              <Plus size={14} />
+              New Case
+            </button>
+            {hasCases && (
+              <button
+                onClick={onScan}
+                disabled={isScanning}
+                className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] transition-colors disabled:opacity-50"
+              >
+                {isScanning ? (
+                  <Loader2 size={12} className="animate-spin text-[#FF9F0A]" />
+                ) : (
+                  <Search size={12} className="text-[rgba(235,235,245,0.4)]" />
+                )}
+                <span className="text-[rgba(235,235,245,0.6)]">
+                  {isScanning ? 'Scanning...' : 'Scan'}
+                </span>
+              </button>
+            )}
+          </div>}
+        </div>
+
+        {/* Tab Switcher */}
+        <div className="flex items-center gap-6 border-b border-white/5">
+          <button 
+            onClick={() => setActiveTab('my-cases')}
+            className={`pb-2 text-[13px] font-bold transition-colors relative ${activeTab === 'my-cases' ? 'text-white' : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'}`}
+          >
+            My Cases
+            {activeTab === 'my-cases' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#007AFF] rounded-full" />}
+          </button>
+          <button 
+            onClick={() => setActiveTab('explore')}
+            className={`pb-2 text-[13px] font-bold transition-colors relative ${activeTab === 'explore' ? 'text-white' : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'}`}
+          >
+            Explore Community
+            {activeTab === 'explore' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#007AFF] rounded-full" />}
+          </button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto px-5 pb-6">
@@ -380,6 +459,36 @@ export default function CasesPanel({
                 <X size={14} className="text-[rgba(235,235,245,0.4)]" />
               </button>
             </div>
+
+            {/* Mode Toggle */}
+            <div className="flex items-center gap-3 mb-2">
+              <p className="text-[11px] text-[rgba(235,235,245,0.4)] font-medium">Source Scope</p>
+              <div className="inline-flex bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-lg p-0.5">
+                <button
+                  onClick={() => setTheoryMode('files_only')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    theoryMode === 'files_only'
+                      ? 'bg-[#3A3A3C] text-white shadow-sm'
+                      : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+                  }`}
+                >
+                  <Database size={12} />
+                  Files Only
+                </button>
+                <button
+                  onClick={() => setTheoryMode('files_web')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    theoryMode === 'files_web'
+                      ? 'bg-[#AF52DE]/20 text-[#AF52DE] shadow-sm'
+                      : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+                  }`}
+                >
+                  <Globe size={12} />
+                  Files + Web
+                </button>
+              </div>
+            </div>
+
             <textarea
               ref={theoryTextareaRef}
               value={theoryText}
@@ -416,7 +525,7 @@ export default function CasesPanel({
             <button
               onClick={() => {
                 if (theoryText.trim()) {
-                  onTheoryInvestigate(theoryText.trim(), selectedCaseIds);
+                  onTheoryInvestigate(theoryText.trim(), selectedCaseIds, theoryMode);
                 }
               }}
               disabled={!theoryText.trim()}
@@ -495,48 +604,84 @@ export default function CasesPanel({
           </div>
         )}
 
-        {/* Empty state */}
-        {!isScanning && !hasFindings && !hasCases && (
-          <div className="flex-1 flex flex-col items-center justify-center py-20">
-            <div className="w-16 h-16 bg-[#1C1C1E] rounded-full flex items-center justify-center mb-6 border border-[rgba(84,84,88,0.65)]">
-              <Shield size={32} className="text-[rgba(235,235,245,0.3)]" />
-            </div>
-            <h2 className="text-[22px] font-bold text-white mb-2">AI Case Builder</h2>
-            <p className="text-[rgba(235,235,245,0.6)] text-[15px] max-w-sm mx-auto text-center leading-relaxed mb-8">
-              Scan your knowledge graph and documents for suspicious patterns. The AI will propose investigation cases for your review.
-            </p>
-            <button
-              onClick={onScan}
-              className="flex items-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] px-6 py-3 rounded-full text-[15px] font-semibold transition-colors active:scale-95"
-            >
-              <Search size={18} />
-              Scan for Suspicious Activity
-            </button>
-          </div>
-        )}
-
         {/* Cases list */}
-        {!isScanning && !hasFindings && hasCases && (
-          <div className="space-y-6 max-w-2xl mx-auto">
-            {activeCases.length > 0 && (
-              <div className="space-y-3">
-                <h2 className="text-[13px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">
-                  Active ({activeCases.length})
-                </h2>
-                {activeCases.map(c => (
-                  <CaseCard key={c.id} caseData={c} onOpen={() => onOpenCase(c.id)} />
-                ))}
-              </div>
-            )}
+        {!isScanning && !hasFindings && (
+          <div className="space-y-6 max-w-2xl mx-auto mt-6">
+            {activeTab === 'my-cases' ? (
+              <>
+                {!hasCases && !showCreateForm && !showTheoryForm && (
+                  <div className="flex-1 flex flex-col items-center justify-center py-20">
+                    <div className="w-16 h-16 bg-[#1C1C1E] rounded-full flex items-center justify-center mb-6 border border-[rgba(84,84,88,0.65)]">
+                      <Shield size={32} className="text-[rgba(235,235,245,0.3)]" />
+                    </div>
+                    <h2 className="text-[22px] font-bold text-white mb-2">AI Case Builder</h2>
+                    <p className="text-[rgba(235,235,245,0.6)] text-[15px] max-w-sm mx-auto text-center leading-relaxed mb-8">
+                      Scan your knowledge graph and documents for suspicious patterns. The AI will propose investigation cases for your review.
+                    </p>
+                    <button
+                      onClick={onScan}
+                      className="flex items-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] px-6 py-3 rounded-full text-[15px] font-semibold transition-colors active:scale-95"
+                    >
+                      <Search size={18} />
+                      Scan for Suspicious Activity
+                    </button>
+                  </div>
+                )}
 
-            {closedCases.length > 0 && (
-              <div className="space-y-3">
-                <h2 className="text-[13px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">
-                  Closed ({closedCases.length})
-                </h2>
-                {closedCases.map(c => (
-                  <CaseCard key={c.id} caseData={c} onOpen={() => onOpenCase(c.id)} />
-                ))}
+                {activeCases.length > 0 && (
+                  <div className="space-y-3">
+                    <h2 className="text-[13px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">
+                      Active ({activeCases.length})
+                    </h2>
+                    {activeCases.map(c => (
+                      <CaseCard key={c.id} caseData={c} onOpen={() => onOpenCase(c.id)} />
+                    ))}
+                  </div>
+                )}
+
+                {closedCases.length > 0 && (
+                  <div className="space-y-3">
+                    <h2 className="text-[13px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">
+                      Closed ({closedCases.length})
+                    </h2>
+                    {closedCases.map(c => (
+                      <CaseCard key={c.id} caseData={c} onOpen={() => onOpenCase(c.id)} />
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="space-y-6">
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[rgba(235,235,245,0.3)]" size={16} />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Search community investigations..."
+                    className="w-full bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl pl-11 pr-4 py-3 text-[15px] text-white focus:outline-none focus:border-[#007AFF] transition-colors placeholder:text-[rgba(235,235,245,0.2)]"
+                  />
+                </div>
+
+                {isExploreLoading ? (
+                  <div className="flex flex-col items-center justify-center py-20">
+                    <Loader2 size={32} className="text-[#007AFF] animate-spin mb-4" />
+                    <p className="text-[13px] text-[rgba(235,235,245,0.4)]">Loading community cases...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {exploreCases.length > 0 ? (
+                      exploreCases.map(c => (
+                        <CaseCard key={c.id} caseData={c} onOpen={() => onOpenCase(c.id)} />
+                      ))
+                    ) : (
+                      <div className="text-center py-20">
+                        <Globe size={40} className="mx-auto text-[rgba(235,235,245,0.1)] mb-4" />
+                        <p className="text-[rgba(235,235,245,0.4)]">No public cases found matching your search.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -77,15 +77,17 @@ def _to_messages(contents):
 # ---------------------------------------------------------------------------
 class _GroqResponse:
     """Minimal stand-in for a Gemini GenerateContentResponse."""
-    def __init__(self, text, parsed=None):
+    def __init__(self, text, parsed=None, usage_metadata=None):
         self.text = text
         self.parsed = parsed
+        self.usage_metadata = usage_metadata
 
 
 class _GroqChunk:
     """Minimal stand-in for a Gemini streaming chunk."""
-    def __init__(self, text):
+    def __init__(self, text, usage_metadata=None):
         self.text = text
+        self.usage_metadata = usage_metadata
 
 # ---------------------------------------------------------------------------
 # Groq generation helpers
@@ -109,6 +111,16 @@ def _groq_generate(model, contents, config):
     completion = groq.chat.completions.create(**kwargs)
     text = completion.choices[0].message.content or ""
 
+    # Usage metadata (mimic Gemini)
+    usage = completion.usage
+    usage_metadata = None
+    if usage:
+        usage_metadata = type('Usage', (), {
+            'prompt_token_count': usage.prompt_tokens,
+            'candidates_token_count': usage.completion_tokens,
+            'total_token_count': usage.total_tokens
+        })
+
     # Attempt Pydantic parsing when a response_schema was requested
     parsed = None
     if schema_cls is not None:
@@ -121,7 +133,7 @@ def _groq_generate(model, contents, config):
         except Exception as parse_err:
             print(f"LLM: Groq response schema parse failed: {parse_err}")
 
-    return _GroqResponse(text=text, parsed=parsed)
+    return _GroqResponse(text=text, parsed=parsed, usage_metadata=usage_metadata)
 
 
 def _groq_generate_stream(model, contents, config):
@@ -133,9 +145,11 @@ def _groq_generate_stream(model, contents, config):
     messages = _to_messages(contents)
     kwargs = {"model": groq_model, "messages": messages, "stream": True}
 
+    # Note: Usage in streaming is usually only in the last chunk for OpenAI/Groq
     stream = groq.chat.completions.create(**kwargs)
     for chunk in stream:
         text = chunk.choices[0].delta.content or ""
+        # Groq/OpenAI doesn't always send usage in the stream chunks easily unless specified
         if text:
             yield _GroqChunk(text=text)
 

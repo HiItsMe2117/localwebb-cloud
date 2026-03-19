@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   ArrowLeft, Check, X, ChevronDown, AlertTriangle, HelpCircle,
-  FlaskConical, ArrowUp, Loader2, MessageSquare, Network, FileText, Share2,
+  FlaskConical, ArrowUp, Loader2, MessageSquare, Network, FileText, Share2, Globe, Database
 } from 'lucide-react';
 import type { TheorySession, TheoryEntitySuggestion, Source } from '../types';
 import { getFileUrl } from '../utils/files';
@@ -10,7 +10,7 @@ import CaseNetworkMap from './CaseNetworkMap';
 interface TheoryInvestigationProps {
   session: TheorySession;
   onBack: () => void;
-  onSendFollowUp: (message: string) => void;
+  onSendFollowUp: (message: string, mode: 'files_only' | 'files_web') => void;
   isFollowUpStreaming: boolean;
   onAcceptAsCase: () => void;
   onDismiss: () => void;
@@ -38,6 +38,7 @@ export default function TheoryInvestigation({
   const [reportExpanded, setReportExpanded] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [activeTab, setActiveTab] = useState<'investigation' | 'network'>('investigation');
+  const [mode, setMode] = useState<'files_only' | 'files_web'>('files_only');
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -66,7 +67,7 @@ export default function TheoryInvestigation({
     const text = inputValue.trim();
     if (!text || isFollowUpStreaming) return;
     setInputValue('');
-    onSendFollowUp(text);
+    onSendFollowUp(text, mode);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -260,7 +261,9 @@ export default function TheoryInvestigation({
                   </div>
                   {result.sources.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-[rgba(84,84,88,0.35)]">
-                      <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] mb-1.5 block">Sources</span>
+                      <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] mb-1.5 block flex items-center gap-1.5">
+                        <Database size={10} /> Document Sources
+                      </span>
                       <div className="flex flex-wrap gap-1">
                         {result.sources.map((source: Source, idx: number) => (
                           <a
@@ -272,6 +275,28 @@ export default function TheoryInvestigation({
                             className="text-[10px] bg-[#2C2C2E] hover:bg-[#3A3A3C] text-[rgba(235,235,245,0.5)] px-1.5 py-0.5 rounded transition-colors cursor-pointer hover:underline"
                           >
                             {idx + 1}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {result.webSources && result.webSources.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-[rgba(84,84,88,0.35)]">
+                      <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] mb-1.5 block flex items-center gap-1.5">
+                        <Globe size={10} /> Web Sources
+                      </span>
+                      <div className="flex flex-col gap-1">
+                        {result.webSources.map((source, idx) => (
+                          <a
+                            key={idx}
+                            href={source.uri}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] text-[#0A84FF] hover:underline flex items-center gap-2 truncate"
+                          >
+                            <span className="shrink-0 text-[10px] bg-[#0A84FF]/10 px-1.5 py-0.5 rounded text-[#0A84FF] font-mono">{idx + 1}</span>
+                            <span className="truncate">{source.title || source.domain}</span>
                           </a>
                         ))}
                       </div>
@@ -329,6 +354,23 @@ export default function TheoryInvestigation({
                           ))}
                         </div>
                       )}
+
+                      {msg.webSources && msg.webSources.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-[rgba(84,84,88,0.35)] flex flex-col gap-1">
+                          {msg.webSources.map((source, idx) => (
+                            <a
+                              key={idx}
+                              href={source.uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] text-[#0A84FF] hover:underline flex items-center gap-2 truncate"
+                            >
+                              <span className="shrink-0 text-[10px] bg-[#0A84FF]/10 px-1.5 py-0.5 rounded text-[#0A84FF] font-mono">{idx + 1}</span>
+                              <span className="truncate">{source.title || source.domain}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -344,7 +386,7 @@ export default function TheoryInvestigation({
                 {verdict.suggested_questions.slice(0, 4).map((q, i) => (
                   <button
                     key={i}
-                    onClick={() => onSendFollowUp(q)}
+                    onClick={() => onSendFollowUp(q, mode)}
                     className="text-[12px] text-[rgba(235,235,245,0.5)] bg-[#2C2C2E] hover:bg-[#3A3A3C] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 transition-colors text-left leading-relaxed"
                   >
                     {q}
@@ -361,9 +403,39 @@ export default function TheoryInvestigation({
 
       {/* Bottom input + actions */}
       <div className="shrink-0 border-t border-[rgba(84,84,88,0.65)] bg-black">
+        {/* Mode Toggle */}
+        {!readOnly && (
+          <div className="flex justify-center pt-3">
+            <div className="inline-flex bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-lg p-0.5">
+              <button
+                onClick={() => setMode('files_only')}
+                className={`flex items-center gap-1 px-3 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                  mode === 'files_only'
+                    ? 'bg-[#3A3A3C] text-white shadow-sm'
+                    : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+                }`}
+              >
+                <Database size={10} />
+                Files Only
+              </button>
+              <button
+                onClick={() => setMode('files_web')}
+                className={`flex items-center gap-1 px-3 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                  mode === 'files_web'
+                    ? 'bg-[#AF52DE]/20 text-[#AF52DE] shadow-sm'
+                    : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+                }`}
+              >
+                <Globe size={10} />
+                Files + Web
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Input area */}
         {!readOnly && (
-          <div className="px-4 pt-3 pb-2">
+          <div className="px-4 pt-2 pb-2">
             <div className="relative flex items-end gap-2 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-2xl px-3 py-1.5 focus-within:border-[#AF52DE]/40 transition-all">
               <textarea
                 ref={textareaRef}

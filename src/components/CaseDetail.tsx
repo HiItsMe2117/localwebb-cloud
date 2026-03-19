@@ -12,9 +12,9 @@ interface CaseDetailProps {
   caseId: string;
   onBack: () => void;
   onStatusChange: (caseId: string, status: string) => void;
-  onUpdate: (caseId: string, fields: Partial<Pick<Case, 'title' | 'category' | 'summary'>>) => Promise<void>;
+  onUpdate: (caseId: string, fields: Partial<Pick<Case, 'title' | 'category' | 'summary' | 'is_public'>>) => Promise<void>;
   onDelete: (caseId: string) => void;
-  onTheoryInvestigate?: (theory: string) => void;
+  onTheoryInvestigate?: (theory: string, mode: 'files_only' | 'files_web') => void;
   isTestingTheory?: boolean;
   theorySteps?: InvestigationStep[];
   theoryReportText?: string;
@@ -89,6 +89,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
   const [isSavingCase, setIsSavingCase] = useState(false);
   const [showTheoryForm, setShowTheoryForm] = useState(false);
   const [theoryText, setTheoryText] = useState('');
+  const [theoryMode, setTheoryMode] = useState<'files_only' | 'files_web'>('files_only');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const autoResize = useCallback((el: HTMLTextAreaElement | null) => {
@@ -460,6 +461,18 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
             )}
 
             <button
+              onClick={() => onUpdate(caseId, { is_public: !caseData.is_public })}
+              className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-colors ${
+                caseData.is_public 
+                  ? 'bg-[#30D158]/10 border-[#30D158]/30 text-[#30D158]' 
+                  : 'bg-[#1C1C1E] border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.4)] hover:bg-[#2C2C2E]'
+              }`}
+              title={caseData.is_public ? 'Make Private' : 'Make Public'}
+            >
+              {caseData.is_public ? <Globe size={16} /> : <Lock size={16} />}
+            </button>
+
+            <button
               onClick={() => onStatusChange(caseId, isClosed ? 'active' : 'closed')}
               className="w-10 h-10 rounded-xl bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] flex items-center justify-center hover:bg-[#2C2C2E] transition-colors"
               title={isClosed ? 'Reopen Case' : 'Close Case'}
@@ -576,6 +589,36 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
               <p className="text-[11px] text-[rgba(235,235,245,0.4)]">
                 Describe a theory to test against the evidence corpus. This case's data will be cross-referenced automatically.
               </p>
+
+              {/* Mode Toggle */}
+              <div className="flex items-center gap-3">
+                <p className="text-[11px] text-[rgba(235,235,245,0.4)] font-medium">Source Scope</p>
+                <div className="inline-flex bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-lg p-0.5">
+                  <button
+                    onClick={() => setTheoryMode('files_only')}
+                    className={`flex items-center gap-1 px-3 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                      theoryMode === 'files_only'
+                        ? 'bg-[#3A3A3C] text-white shadow-sm'
+                        : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+                    }`}
+                  >
+                    <Database size={12} />
+                    Files Only
+                  </button>
+                  <button
+                    onClick={() => setTheoryMode('files_web')}
+                    className={`flex items-center gap-1 px-3 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                      theoryMode === 'files_web'
+                        ? 'bg-[#FF9F0A]/20 text-[#FF9F0A] shadow-sm'
+                        : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+                    }`}
+                  >
+                    <Globe size={12} />
+                    Files + Web
+                  </button>
+                </div>
+              </div>
+
               <textarea
                 value={theoryText}
                 onChange={e => setTheoryText(e.target.value)}
@@ -586,7 +629,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
               <button
                 onClick={() => {
                   if (theoryText.trim()) {
-                    onTheoryInvestigate(theoryText.trim());
+                    onTheoryInvestigate(theoryText.trim(), theoryMode);
                     setShowTheoryForm(false);
                     setTheoryText('');
                   }

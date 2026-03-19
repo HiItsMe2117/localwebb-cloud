@@ -588,19 +588,19 @@ function AppContent() {
     }
   };
 
-  const investigateTheory = async (theory: string, caseIds: string[], attachedCaseId?: string) => {
+  const investigateTheory = async (theory: string, caseIds: string[], attachedCaseId?: string, mode: 'files_only' | 'files_web' = 'files_only') => {
     setIsTestingTheory(true);
     const initial: TheoryResult = { verdict: null, reportText: '', sources: [], steps: [], theory, entitySuggestions: [] };
     setTheoryResult(initial);
     theoryResultRef.current = initial;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 180_000);
+    const timeout = setTimeout(() => controller.abort(), 300_000); // Increased timeout for web search
     try {
       const authToken = localStorage.getItem('auth_token');
       const res = await fetch('/api/theories/investigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
-        body: JSON.stringify({ theory, case_ids: caseIds }),
+        body: JSON.stringify({ theory, case_ids: caseIds, mode }),
         signal: controller.signal,
       });
       const reader = res.body?.getReader();
@@ -641,6 +641,8 @@ function AppContent() {
               updateResult(prev => ({ ...prev, reportText: prev.reportText + (evt.text || '') }));
             } else if (evt.type === 'sources') {
               updateResult(prev => ({ ...prev, sources: (evt.sources || []) as Source[] }));
+            } else if (evt.type === 'web_sources') {
+              updateResult(prev => ({ ...prev, webSources: (evt.web_sources || []) as WebSource[] }));
             } else if (evt.type === 'entity_suggestions') {
               updateResult(prev => ({ ...prev, entitySuggestions: evt.entities || [] }));
             } else if (evt.type === 'theory_verdict') {
@@ -721,7 +723,7 @@ function AppContent() {
     setActiveTheorySession(null);
   };
 
-  const sendTheoryFollowUp = async (message: string) => {
+  const sendTheoryFollowUp = async (message: string, mode: 'files_only' | 'files_web' = 'files_only') => {
     if (!activeTheorySession || isFollowUpStreaming) return;
 
     const userMsg: TheoryFollowUpMessage = {
@@ -777,6 +779,7 @@ function AppContent() {
           entity_context: entityContext,
           evidence_summary: evidenceSummary,
           messages: allMessages,
+          mode
         }),
         signal: controller.signal,
       });
@@ -789,6 +792,7 @@ function AppContent() {
       let buffer = '';
       let fullText = '';
       let finalSources: Source[] = [];
+      let finalWebSources: WebSource[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -811,6 +815,8 @@ function AppContent() {
               } : prev);
             } else if (evt.type === 'sources') {
               finalSources = evt.sources || [];
+            } else if (evt.type === 'web_sources') {
+              finalWebSources = evt.web_sources || [];
             } else if (evt.type === 'entity_suggestions') {
               // Merge new entity suggestions
               const newEntities: TheoryEntitySuggestion[] = evt.entities || [];
@@ -838,7 +844,7 @@ function AppContent() {
       setActiveTheorySession(prev => prev ? {
         ...prev,
         followUpMessages: prev.followUpMessages.map(m =>
-          m.id === assistantId ? { ...m, isStreaming: false, content: fullText || m.content, sources: finalSources } : m
+          m.id === assistantId ? { ...m, isStreaming: false, content: fullText || m.content, sources: finalSources, webSources: finalWebSources } : m
         ),
       } : prev);
     } catch (err: any) {
@@ -918,8 +924,8 @@ function AppContent() {
     { id: 'chat', label: 'Chat', icon: MessageSquare },
     { id: 'cases', label: 'Cases', icon: Shield },
     { id: 'graph', label: 'Graph', icon: Network },
-    { id: 'docs', label: 'Docs', icon: Database },
-    { id: 'data', label: 'Data', icon: HardDrive },
+    ...(isAdmin ? [{ id: 'docs' as View, label: 'Docs', icon: Database }] : []),
+    ...(isAdmin ? [{ id: 'data' as View, label: 'Data', icon: HardDrive }] : []),
   ];
 
   const SyncOverlay = () => (
@@ -1658,7 +1664,6 @@ function AppContent() {
 
       {showLoginModal && (
         <LoginModal
-          onLogin={login}
           onClose={() => setShowLoginModal(false)}
         />
       )}

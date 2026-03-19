@@ -573,6 +573,10 @@ async def _run_investigation_inner(
                 for chunk in stream:
                     if chunk.text:
                         chunk_queue.put(("text", chunk.text))
+                    # Collect usage metadata (usually in the final chunk)
+                    usage = getattr(chunk, 'usage_metadata', None)
+                    if usage:
+                        chunk_queue.put(("usage", usage))
                     # Collect grounding metadata from the final chunk
                     if hasattr(chunk, 'candidates') and chunk.candidates:
                         candidate = chunk.candidates[0]
@@ -610,6 +614,14 @@ async def _run_investigation_inner(
             elif item[0] == "text":
                 synthesis_text_parts.append(item[1])
                 yield _sse("text", {"text": item[1]})
+            elif item[0] == "usage":
+                # usage metadata is a simple object, we'll convert to dict for SSE
+                usage = item[1]
+                yield _sse("usage", {
+                    "prompt_token_count": getattr(usage, "prompt_token_count", 0),
+                    "candidates_token_count": getattr(usage, "candidates_token_count", 0),
+                    "total_token_count": getattr(usage, "total_token_count", 0),
+                })
             await asyncio.sleep(0.01)
 
         await producer  # ensure thread completed

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, Calendar, AlertTriangle } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, Calendar, AlertTriangle, Globe, Database } from 'lucide-react';
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide } from 'd3-force';
 import NexusCanvas from './NexusCanvas';
 import EdgeEvidencePanel from './EdgeEvidencePanel';
@@ -93,7 +93,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisShared, setAnalysisShared] = useState<{ label: string; type: string; connected_to: string[] }[]>([]);
-  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string, webSources?: WebSource[] }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatting, setIsChatting] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -116,9 +116,10 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
   // Case chat (general AI chat about the whole case)
   const [caseChatOpen, setCaseChatOpen] = useState(false);
-  const [caseChatMessages, setCaseChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [caseChatMessages, setCaseChatMessages] = useState<{ role: 'user' | 'assistant', content: string, webSources?: WebSource[] }[]>([]);
   const [caseChatInput, setCaseChatInput] = useState('');
   const [isCaseChatting, setIsCaseChatting] = useState(false);
+  const [caseChatMode, setCaseChatMode] = useState<'files_only' | 'files_web'>('files_only');
   const caseChatEndRef = useRef<HTMLDivElement>(null);
 
   // Per-node scale overrides
@@ -332,8 +333,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       const res = await axios.post(`/api/cases/${caseId}/graph/chat`, {
         node_ids: analysisNodeIds.current,
         messages: newMessages,
+        mode: caseChatMode,
       });
-      setChatMessages(prev => [...prev, { role: 'assistant', content: res.data.response }]);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: res.data.response, webSources: res.data.web_sources }]);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     } catch (err) {
       console.error('Chat failed:', err);
@@ -341,7 +343,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     } finally {
       setIsChatting(false);
     }
-  }, [caseId, chatInput, chatMessages, isChatting]);
+  }, [caseId, chatInput, chatMessages, isChatting, caseChatMode]);
 
   // Case-level chat send
   const sendCaseChatMessage = useCallback(async () => {
@@ -353,8 +355,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     setIsCaseChatting(true);
     setTimeout(() => caseChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     try {
-      const res = await axios.post(`/api/cases/${caseId}/graph/case-chat`, { messages: newMessages });
-      setCaseChatMessages(prev => [...prev, { role: 'assistant', content: res.data.response }]);
+      const res = await axios.post(`/api/cases/${caseId}/graph/case-chat`, {
+        messages: newMessages,
+        mode: caseChatMode
+      });
+      setCaseChatMessages(prev => [...prev, { role: 'assistant', content: res.data.response, webSources: res.data.web_sources }]);
       setTimeout(() => caseChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     } catch (err) {
       console.error('Case chat failed:', err);
@@ -362,7 +367,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     } finally {
       setIsCaseChatting(false);
     }
-  }, [caseId, caseChatInput, caseChatMessages, isCaseChatting]);
+  }, [caseId, caseChatInput, caseChatMessages, isCaseChatting, caseChatMode]);
 
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -1623,6 +1628,22 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                         : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.6)]'
                     }`}>
                       <p className="text-[12px] whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                      {msg.webSources && msg.webSources.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-[rgba(84,84,88,0.35)] flex flex-col gap-1">
+                          {msg.webSources.map((source, idx) => (
+                            <a
+                              key={idx}
+                              href={source.uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] text-[#0A84FF] hover:underline flex items-center gap-2 truncate"
+                            >
+                              <span className="shrink-0 text-[10px] bg-[#0A84FF]/10 px-1.5 py-0.5 rounded text-[#0A84FF] font-mono">{idx + 1}</span>
+                              <span className="truncate">{source.title || source.domain}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1634,6 +1655,34 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                   </div>
                 )}
                 <div ref={caseChatEndRef} />
+              </div>
+
+              {/* Mode Toggle */}
+              <div className="shrink-0 px-2.5 py-1.5 flex justify-center border-t border-[rgba(84,84,88,0.2)]">
+                <div className="inline-flex bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-lg p-0.5">
+                  <button
+                    onClick={() => setCaseChatMode('files_only')}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                      caseChatMode === 'files_only'
+                        ? 'bg-[#3A3A3C] text-white shadow-sm'
+                        : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+                    }`}
+                  >
+                    <Database size={10} />
+                    Files
+                  </button>
+                  <button
+                    onClick={() => setCaseChatMode('files_web')}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                      caseChatMode === 'files_web'
+                        ? 'bg-[#007AFF]/20 text-[#007AFF] shadow-sm'
+                        : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+                    }`}
+                  >
+                    <Globe size={10} />
+                    Web
+                  </button>
+                </div>
               </div>
 
               {/* Input */}
@@ -1790,6 +1839,22 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                         : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.6)]'
                     }`}>
                       <p className="text-[13px] whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                      {msg.webSources && msg.webSources.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-[rgba(84,84,88,0.35)] flex flex-col gap-1">
+                          {msg.webSources.map((source, idx) => (
+                            <a
+                              key={idx}
+                              href={source.uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] text-[#0A84FF] hover:underline flex items-center gap-2 truncate"
+                            >
+                              <span className="shrink-0 text-[10px] bg-[#0A84FF]/10 px-1.5 py-0.5 rounded text-[#0A84FF] font-mono">{idx + 1}</span>
+                              <span className="truncate">{source.title || source.domain}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

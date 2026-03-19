@@ -94,6 +94,7 @@ export interface TheoryFollowUpMessage {
   role: 'user' | 'assistant';
   content: string;
   sources: Source[];
+  webSources?: WebSource[];
   isStreaming: boolean;
 }
 
@@ -108,6 +109,7 @@ export interface TheoryResult {
   verdict: TheoryVerdict | null;
   reportText: string;
   sources: Source[];
+  webSources?: WebSource[];
   steps: InvestigationStep[];
   theory: string;
   entitySuggestions: TheoryEntitySuggestion[];
