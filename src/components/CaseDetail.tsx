@@ -90,6 +90,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
   const [showTheoryForm, setShowTheoryForm] = useState(false);
   const [theoryText, setTheoryText] = useState('');
   const [theoryMode, setTheoryMode] = useState<'files_only' | 'files_web'>('files_only');
+  const [discoveredHubs, setDiscoveredHubs] = useState<any[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const autoResize = useCallback((el: HTMLTextAreaElement | null) => {
@@ -587,7 +588,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
                 The investigation identified these entities as potential 'infrastructures of protection' (banks, law firms, locations) connecting multiple actors in this case.
               </p>
               <div className="flex flex-wrap gap-2">
-                {discoveredHubs.map((hub, idx) => (
+                {discoveredHubs.map((hub: any, idx: number) => (
                   <div key={idx} className="bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl p-3 flex flex-col gap-1 w-full sm:w-[calc(50%-0.25rem)]">
                     <div className="flex items-center justify-between">
                       <span className="text-[13px] font-semibold text-white truncate">{hub.label || hub.id}</span>
