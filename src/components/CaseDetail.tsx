@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical, Globe } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical, Globe, Network } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
 import type { Case, CaseEvidence, InvestigationStep } from '../types';
@@ -164,6 +164,8 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
             if (eventType === 'step_status') {
               stepsMap.set(data.step, { step: data.step, label: data.label, status: data.status, detail: data.detail });
               setInvestigationSteps(Array.from(stepsMap.values()));
+            } else if (eventType === 'structural_hubs_discovered') {
+              setDiscoveredHubs(data.hubs || []);
             } else if (eventType === 'text' || (!eventType && data.text)) {
               fullText += data.text;
               setStreamingText(fullText);
@@ -571,6 +573,36 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
                   {streamingText}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Discovered Structural Hubs */}
+          {discoveredHubs.length > 0 && (
+            <div className="bg-[#1C1C1E] border border-[#AF52DE]/30 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Network size={14} className="text-[#AF52DE]" />
+                <span className="text-[13px] font-semibold text-[#AF52DE]">Structural Hubs Discovered</span>
+              </div>
+              <p className="text-[11px] text-[rgba(235,235,245,0.4)]">
+                The investigation identified these entities as potential 'infrastructures of protection' (banks, law firms, locations) connecting multiple actors in this case.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {discoveredHubs.map((hub, idx) => (
+                  <div key={idx} className="bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl p-3 flex flex-col gap-1 w-full sm:w-[calc(50%-0.25rem)]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[13px] font-semibold text-white truncate">{hub.label || hub.id}</span>
+                      <span className="text-[10px] uppercase tracking-wider font-bold text-[#AF52DE] bg-[#AF52DE]/10 px-1.5 py-0.5 rounded-md">
+                        {hub.type || 'ORGANIZATION'}
+                      </span>
+                    </div>
+                    {hub.connected_start_nodes && hub.connected_start_nodes.length > 0 && (
+                      <div className="text-[11px] text-[rgba(235,235,245,0.4)] mt-1">
+                        <span className="font-medium text-[rgba(235,235,245,0.6)]">Connects:</span> {hub.connected_start_nodes.map((n: any) => n.replace(/_/g, ' ')).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

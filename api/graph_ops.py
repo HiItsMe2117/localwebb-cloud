@@ -371,3 +371,88 @@ def bfs_collect_evidence(supabase_client, start_entity_id: str, max_hops: int = 
         frontier = next_frontier
 
     return collected_edges[:max_edges]
+
+
+def find_structural_hubs(supabase_client, start_node_ids: List[str], max_hops: int = 3) -> dict:
+    """
+    Perform a multi-hop BFS to find 'Structural Hubs' (Organizations, Locations)
+    that connect multiple starting entities.
+    Returns a dict with 'hubs' (list of node dicts) and 'edges' (list of traversed edge dicts).
+    """
+    if not start_node_ids:
+        return {"hubs": [], "edges": []}
+
+    # Maps node_id -> set of start_node_ids it can reach
+    visited_reach = {nid: {nid} for nid in start_node_ids}
+    frontier = list(start_node_ids)
+    collected_edges = []
+    seen_edge_ids = set()
+
+    for _hop in range(max_hops):
+        if not frontier:
+            break
+        
+        next_frontier = set()
+        
+        # Process frontier in chunks to avoid overly long URLs in Supabase PostgREST
+        chunk_size = 20
+        for i in range(0, len(frontier), chunk_size):
+            chunk = frontier[i:i+chunk_size]
+            
+            # Fetch all edges touching this chunk
+            edges_src = supabase_client.table("edges").select("*").in_("source", chunk).limit(200).execute()
+            edges_tgt = supabase_client.table("edges").select("*").in_("target", chunk).limit(200).execute()
+            
+            for e in (edges_src.data or []) + (edges_tgt.data or []):
+                if e["id"] not in seen_edge_ids:
+                    seen_edge_ids.add(e["id"])
+                    collected_edges.append(e)
+                
+                src = e["source"]
+                tgt = e["target"]
+                
+                # Current reachability for source and target
+                src_reach = visited_reach.get(src, set())
+                tgt_reach = visited_reach.get(tgt, set())
+                
+                # Combine reachability since they are connected
+                combined_reach = src_reach.union(tgt_reach)
+                
+                if src not in visited_reach or visited_reach[src] != combined_reach:
+                    visited_reach[src] = combined_reach
+                    if src not in start_node_ids:
+                        next_frontier.add(src)
+                
+                if tgt not in visited_reach or visited_reach[tgt] != combined_reach:
+                    visited_reach[tgt] = combined_reach
+                    if tgt not in start_node_ids:
+                        next_frontier.add(tgt)
+                        
+        frontier = list(next_frontier)
+
+    # Identify candidates: non-start nodes that connect 2+ start nodes
+    hub_candidates = [
+        nid for nid, reach in visited_reach.items() 
+        if len(reach) >= 2 and nid not in start_node_ids
+    ]
+    
+    hubs = []
+    if hub_candidates:
+        # Fetch node details to verify type
+        for i in range(0, len(hub_candidates), 20):
+            chunk = hub_candidates[i:i+20]
+            nodes_res = supabase_client.table("nodes").select("*").in_("id", chunk).execute()
+            for n in (nodes_res.data or []):
+                ntype = (n.get("type") or "").upper()
+                # Consider it a hub if it's explicitly not a person, or explicitly an org/location
+                if ntype in ["ORGANIZATION", "COMPANY", "LOCATION"] or (ntype and ntype != "PERSON"):
+                    n["connected_start_nodes"] = list(visited_reach[n["id"]])
+                    hubs.append(n)
+                    
+    # Sort by how many distinct start nodes they connect
+    hubs.sort(key=lambda x: len(x.get("connected_start_nodes", [])), reverse=True)
+    
+    return {
+        "hubs": hubs[:15],  # Top 15 hubs
+        "edges": collected_edges
+    }

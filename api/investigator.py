@@ -125,7 +125,7 @@ async def run_investigation(
     try:
         async for event in _run_investigation_inner(
             query, genai_client, pinecone_index, supabase_client,
-            semantic_search_fn, rerank_fn, mode=mode,
+            semantic_search_fn, rerank_fn, case_context=case_context, mode=mode,
         ):
             yield event
     except Exception as e:
@@ -142,6 +142,7 @@ async def _run_investigation_inner(
     supabase_client,
     semantic_search_fn,
     rerank_fn=None,
+    case_context: dict = None,
     mode: str = "files_only",
 ) -> AsyncGenerator[str, None]:
     all_context_chunks = []
@@ -149,6 +150,7 @@ async def _run_investigation_inner(
     seen_texts = set()
     entity_intel = {}
     graph_evidence = []
+    structural_hubs = []
     discovered_entities = []
     discovered_relationships = []
     errors_log = []
@@ -301,6 +303,39 @@ async def _run_investigation_inner(
     await asyncio.sleep(0.3)
 
     # ---------------------------------------------------------------
+    # Phase C-2: Structural Hub Discovery
+    # ---------------------------------------------------------------
+    if case_context and case_context.get("network_entities"):
+        yield _sse("step_status", {"step": "structural_discovery", "label": "Structural Discovery", "status": "running"})
+        await asyncio.sleep(0.1)
+
+        try:
+            from api.graph_ops import find_structural_hubs
+        except ImportError:
+            from graph_ops import find_structural_hubs
+
+        try:
+            start_ids = [ent["id"] for ent in case_context["network_entities"] if "id" in ent]
+            if start_ids:
+                hub_results = await asyncio.to_thread(find_structural_hubs, supabase_client, start_ids, max_hops=3)
+                structural_hubs = hub_results.get("hubs", [])
+                
+                # Emit an event if hubs are found so the frontend can suggest them
+                if structural_hubs:
+                    yield _sse("structural_hubs_discovered", {"hubs": structural_hubs})
+                    
+                detail = f"Found {len(structural_hubs)} structural hubs from {len(start_ids)} entities"
+                yield _sse("step_status", {"step": "structural_discovery", "label": "Structural Discovery", "status": "done", "detail": detail})
+            else:
+                yield _sse("step_status", {"step": "structural_discovery", "label": "Structural Discovery", "status": "done", "detail": "No valid entity IDs pinned"})
+        except Exception as e:
+            print(f"DEBUG: Structural discovery failed: {e}")
+            errors_log.append(f"Structural Discovery: {type(e).__name__} — {e}")
+            yield _sse("step_status", {"step": "structural_discovery", "label": "Structural Discovery", "status": "error", "detail": f"{type(e).__name__}: {e}"})
+
+        await asyncio.sleep(0.3)
+
+    # ---------------------------------------------------------------
     # Phase D: Multi-Pass Semantic Search
     # ---------------------------------------------------------------
     yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running", "detail": "Starting pass 1..."})
@@ -378,6 +413,26 @@ async def _run_investigation_inner(
         else:
             _add_chunks(results)
             pass_count += 1
+
+    # Pass 4: Structural Pivot (researching the enablers found in Phase C-2)
+    if structural_hubs:
+        yield _sse("step_status", {"step": "semantic_search", "label": "Research", "status": "running",
+                    "detail": f"Pivoting on {len(structural_hubs)} structural hubs..."})
+        
+        # Pick top 2 hubs for focused research
+        for hub in structural_hubs[:2]:
+            hub_name = hub.get("label", hub.get("id"))
+            # Research who else uses this bank/firm in the context of the main actors
+            pivot_query = f"{hub_name} {primary_entity or ''} {' '.join(secondary_entities[:1])}"
+            results, err = await asyncio.to_thread(
+                _safe_semantic_pass,
+                semantic_search_fn, pivot_query, genai_client, pinecone_index,
+                rerank_fn=rerank_fn, fetch_k=30, rerank_top_n=3,
+            )
+            if not err:
+                _add_chunks(results)
+                pass_count += 1
+            await asyncio.sleep(0.1)
 
     if errors:
         errors_log.append(f"Semantic Search: {len(errors)} pass(es) failed — {'; '.join(errors)}")
@@ -491,6 +546,13 @@ async def _run_investigation_inner(
             kw_ctx += f"- {e.get('source', '?')} --[{e.get('predicate', '?')}]--> {e.get('target', '?')}: {e.get('evidence_text', '')[:300]}\n"
         context_parts.append(kw_ctx)
 
+    if structural_hubs:
+        hub_ctx = "\n\nSTRUCTURAL HUBS (Potential Infrastructures of Protection):\n"
+        for hub in structural_hubs[:10]:
+            hub_ctx += f"- {hub.get('label', 'Unknown')} ({hub.get('type', 'UNKNOWN')})\n"
+            hub_ctx += f"  Connects: {', '.join(hub.get('connected_start_nodes', [])[:5])}\n"
+        context_parts.append(hub_ctx)
+
     full_context = "\n\n---\n\n".join(context_parts)
 
     if errors_log:
@@ -510,6 +572,7 @@ async def _run_investigation_inner(
         "Write a thorough investigative report with these sections:\n"
         "## Executive Summary\nBrief overview of key findings.\n\n"
         "## Key Connections\nImportant relationships and links discovered.\n\n"
+        "## Infrastructures of Protection\nCategorize the structural hubs into 'The Shield' (Legal/PR), 'The Engine' (Financial/Banks), and 'The Shadow' (Proxies/Shells/Locations).\n\n"
         "## Document Evidence\nSpecific evidence from source documents with citations [Source: filename].\n\n"
         "## Timeline\nChronological events if dates are available.\n\n"
         "## Assessment\nAnalytical assessment of the findings.\n\n"

@@ -1345,9 +1345,27 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               <FileText size={14} className="text-[#30D158]" />
               <span className="text-[13px] text-white">Description</span>
             </button>
+
+            {/* Detach from group option */}
+            {nodeGroupMap.has(contextNode.id) && (
+              <button
+                onClick={() => {
+                  const group = nodeGroupMap.get(contextNode.id);
+                  if (group) {
+                    const newIds = group.node_ids.filter(id => id !== contextNode.id);
+                    updateGroup(group.id, { node_ids: newIds });
+                  }
+                  setContextNode(null);
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
+              >
+                <X size={14} className="text-[#FF9500]" />
+                <span className="text-[13px] text-white">Detach from group</span>
+              </button>
+            )}
+
             <button
-              onClick={() => handleRemove(contextNode)}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#FF453A]/10 transition-colors"
+              onClick={() => handleRemove(contextNode)}              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#FF453A]/10 transition-colors"
             >
               <Trash2 size={14} className="text-[#FF453A]" />
               <span className="text-[13px] text-[#FF453A]">Remove from map</span>
@@ -1538,12 +1556,38 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               </div>
 
               {/* Member count */}
-              <p className="text-[11px] text-[rgba(235,235,245,0.3)]">
-                {editingGroup.node_ids.length} {editingGroup.node_ids.length === 1 ? 'entity' : 'entities'}
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] text-[rgba(235,235,245,0.3)] uppercase tracking-wider font-semibold">
+                  Members ({editingGroup.node_ids.length})
+                </p>
+              </div>
 
-              {/* Add selected nodes to group */}
-              {(() => {
+              {/* Member list with detach option */}
+              <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                {editingGroup.node_ids.map(nid => {
+                  const node = nodes.find(n => n.id === nid);
+                  return (
+                    <div key={nid} className="flex items-center justify-between gap-2 bg-[#2C2C2E]/50 rounded-lg px-2 py-1.5 group">
+                      <span className="text-[11px] text-white truncate flex-1">
+                        {node?.data?.label || nid.replace(/_/g, ' ')}
+                      </span>
+                      <button
+                        onClick={() => {
+                          const newIds = editingGroup.node_ids.filter(id => id !== nid);
+                          updateGroup(editingGroup.id, { node_ids: newIds });
+                          setEditingGroup(prev => prev ? { ...prev, node_ids: newIds } : null);
+                        }}
+                        className="p-1 hover:bg-[#FF453A]/20 rounded transition-colors"
+                        title="Remove from group"
+                      >
+                        <X size={10} className="text-[#FF453A]" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Add selected nodes to group */}              {(() => {
                 const newIds = [...selectedNodeIds].filter(id => !editingGroup.node_ids.includes(id));
                 if (newIds.length === 0) return null;
                 return (

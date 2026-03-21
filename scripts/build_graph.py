@@ -188,20 +188,25 @@ def collect_documents(pinecone_index):
 # Phase 2: Extract entities + triples via Gemini 2.0 Flash
 # ---------------------------------------------------------------------------
 EXTRACTION_PROMPT = (
-    "You are an investigative intelligence analyst. Extract entities and their relationships from this document.\n\n"
+    "You are a seasoned investigative intelligence analyst. Extract entities and their relationships from this document, "
+    "specifically focusing on 'Infrastructures of Protection'—the banks, law firms, trusts, and shell companies that "
+    "facilitate or shield the primary actors.\n\n"
     "RULES:\n"
     "1. Every entity needs an id (lowercase_snake_case), a label (display name), "
     "a type (PERSON, ORGANIZATION, LOCATION, EVENT, DOCUMENT, FINANCIAL_ENTITY), a description, and aliases (alternate names).\n"
+    "   - Categorize banks and investment firms as FINANCIAL_ENTITY.\n"
+    "   - Categorize law firms and courts as ORGANIZATION.\n"
     "2. Every relationship (triple) MUST include:\n"
     "   - subject_id and object_id referencing entity ids\n"
-    "   - predicate: a lowercase_snake_case verb phrase (e.g. 'flew_with', 'employed_by', 'transferred_funds_to', 'visited', 'owns')\n"
+    "   - predicate: a specific lowercase_snake_case verb phrase. PRIORITIZE functional dependencies like "
+    "     'banked_at', 'transferred_funds_to', 'represented_by', 'trustee_of', 'flew_on_plane_of', 'proxy_for', 'employed_by'.\n"
     "   - evidence_text: the EXACT verbatim quote from the document that proves this relationship\n"
     "   - source_filename: '{filename}'\n"
     "   - source_page: the page number from the [Page N] markers\n"
     "   - confidence: 'STATED' if directly stated in the text, 'INFERRED' if logically deduced from context\n"
     "   - date_mentioned: ISO date (YYYY-MM-DD) if a date is mentioned, null otherwise\n"
     "3. Do NOT invent relationships that aren't supported by the text.\n"
-    "4. Extract as many entities and relationships as the documents support.\n\n"
+    "4. Extract as many structural entities and relationships as the documents support.\n\n"
     "DOCUMENT ({filename}):\n{text}\n\n"
     "Return JSON with 'entities' and 'triples' keys."
 )
