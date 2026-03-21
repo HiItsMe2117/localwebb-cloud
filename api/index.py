@@ -1375,7 +1375,7 @@ async def verify_case_ownership(case_id: str, user, write: bool = True):
         raise HTTPException(status_code=404, detail="Case not found")
     
     case = res.data[0]
-    is_owner = case.get("user_id") == str(user.id)
+    is_owner = user is not None and case.get("user_id") == str(user.id)
     is_public = case.get("is_public", False)
 
     if write and not is_owner:
@@ -1435,7 +1435,7 @@ async def get_trending_cases(q: Optional[str] = Query(None), user = Depends(opti
 
 
 @app.get("/api/cases/{case_id}")
-async def get_case(case_id: str, user = Depends(require_user)):
+async def get_case(case_id: str, user = Depends(optional_user)):
     """Get a case with its evidence, checking permissions."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
@@ -1804,7 +1804,7 @@ async def search_nodes(q: str = Query("", min_length=1), user = Depends(require_
 
 
 @app.get("/api/cases/{case_id}/graph")
-async def get_case_graph(case_id: str, user = Depends(require_user)):
+async def get_case_graph(case_id: str, user = Depends(optional_user)):
     """Fetch subgraph: pinned nodes + all edges between them."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
