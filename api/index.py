@@ -34,18 +34,6 @@ load_dotenv()
 app = FastAPI(title="LocalWebb Cloud API")
 _server_start_time = time.time()
 
-# Import and include billing router
-try:
-    from api.billing import router as billing_router
-    app.include_router(billing_router)
-except ImportError:
-    # If called from within the 'api' package
-    try:
-        from billing import router as billing_router
-        app.include_router(billing_router)
-    except ImportError:
-        print("Warning: Billing router could not be loaded")
-
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     print(f"GLOBAL ERROR: {exc}")
@@ -201,6 +189,17 @@ def get_supabase_client():
     return None
 
 supabase: Client = get_supabase_client()
+
+# Import and include billing router (must be after supabase and require_user are defined)
+try:
+    from api.billing import router as billing_router
+    app.include_router(billing_router)
+except ImportError:
+    try:
+        from billing import router as billing_router
+        app.include_router(billing_router)
+    except ImportError:
+        print("Warning: Billing router could not be loaded")
 
 
 # New SupabaseStore class
