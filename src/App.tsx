@@ -24,6 +24,7 @@ import {
   Lock,
   LogOut,
   SlidersHorizontal,
+  Zap,
 } from 'lucide-react';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -34,6 +35,7 @@ import CasesPanel from './components/CasesPanel';
 import CaseDetail from './components/CaseDetail';
 import LoginModal from './components/LoginModal';
 import PasswordResetModal from './components/PasswordResetModal';
+import UpgradeModal from './components/UpgradeModal';
 import { useAuth } from './contexts/AuthContext';
 import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source, WebSource } from './types';
 import TheoryInvestigation from './components/TheoryInvestigation';
@@ -41,8 +43,9 @@ import TheoryInvestigation from './components/TheoryInvestigation';
 type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
 function AppContent() {
-  const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, logout } = useAuth();
+  const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, user, logout } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const readOnly = !hasAIPrivileges;
 
   const [activeView, setActiveView] = useState<View>('chat');
@@ -987,6 +990,8 @@ function AppContent() {
               orgFilter={orgFilter}
               onOrgFilterChange={setOrgFilter}
               readOnly={readOnly}
+              isLoggedIn={!!user}
+              onUpgrade={() => setShowUpgradeModal(true)}
             />
           </>
         )}
@@ -1645,13 +1650,22 @@ function AppContent() {
             );
           })}
           <button
-            onClick={() => isAdmin ? logout() : setShowLoginModal(true)}
+            onClick={() => {
+              if (isAdmin) logout();
+              else if (user && !hasAIPrivileges) setShowUpgradeModal(true);
+              else setShowLoginModal(true);
+            }}
             className="flex flex-col items-center justify-center gap-0.5 w-12 h-full transition-colors"
           >
             {isAdmin ? (
               <>
                 <LogOut size={20} className="text-[#30D158]" />
                 <span className="text-[10px] font-medium text-[#30D158]">Admin</span>
+              </>
+            ) : user && !hasAIPrivileges ? (
+              <>
+                <Zap size={20} className="text-[#007AFF]" />
+                <span className="text-[10px] font-medium text-[#007AFF]">Upgrade</span>
               </>
             ) : (
               <>
@@ -1672,6 +1686,12 @@ function AppContent() {
       {isRecovering && (
         <PasswordResetModal
           onClose={() => setIsRecovering(false)}
+        />
+      )}
+
+      {showUpgradeModal && (
+        <UpgradeModal
+          onClose={() => setShowUpgradeModal(false)}
         />
       )}
     </div>

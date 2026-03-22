@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Settings2, X, SlidersHorizontal } from 'lucide-react';
+import { ArrowUp, Settings2, X, SlidersHorizontal, Zap } from 'lucide-react';
 import { DOC_TYPES } from '../types';
 import useIsMobile from '../hooks/useIsMobile';
 
@@ -17,6 +17,8 @@ interface InputBarProps {
   orgFilter: string;
   onOrgFilterChange: (v: string) => void;
   readOnly?: boolean;
+  isLoggedIn?: boolean;
+  onUpgrade?: () => void;
 }
 
 export default function InputBar({
@@ -26,6 +28,8 @@ export default function InputBar({
   personFilter, onPersonFilterChange,
   orgFilter, onOrgFilterChange,
   readOnly = false,
+  isLoggedIn = false,
+  onUpgrade,
 }: InputBarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -47,6 +51,30 @@ export default function InputBar({
       if (value.trim() && !isStreaming) onSend();
     }
   };
+
+  // Logged-in free user: show upgrade banner instead of disabled input
+  if (readOnly && isLoggedIn && onUpgrade) {
+    return (
+      <div className="bg-black px-4 pb-2 pt-2">
+        <div className="max-w-4xl mx-auto">
+          <button
+            onClick={onUpgrade}
+            className="w-full flex items-center justify-center gap-3 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-[22px] p-4 hover:border-[#007AFF]/40 transition-all group"
+          >
+            <div className="w-8 h-8 rounded-full bg-[#007AFF]/20 flex items-center justify-center group-hover:bg-[#007AFF]/30 transition-colors">
+              <Zap size={16} className="text-[#007AFF]" />
+            </div>
+            <span className="text-[14px] text-[rgba(235,235,245,0.6)] group-hover:text-white transition-colors">
+              Upgrade your plan to start investigating
+            </span>
+            <span className="text-[13px] font-semibold text-[#007AFF] bg-[#007AFF]/10 px-3 py-1 rounded-full">
+              View Plans
+            </span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-black px-4 pb-2 pt-2">
