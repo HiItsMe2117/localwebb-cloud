@@ -13,9 +13,9 @@ interface AuthContextType {
   isLoading: boolean;
   user: User | null;
   role: string | null;
+  isRecovering: boolean;
+  setIsRecovering: (v: boolean) => void;
   logout: () => Promise<void>;
-  // login is no longer a simple function here, as Supabase Auth UI or standard Supabase calls will handle it.
-  // We provide a refresh helper instead
   refreshSession: () => Promise<void>;
 }
 
@@ -28,6 +28,8 @@ const AuthContext = createContext<AuthContextType>({
   isLoading: true,
   user: null,
   role: null,
+  isRecovering: false,
+  setIsRecovering: () => {},
   logout: async () => {},
   refreshSession: async () => {},
 });
@@ -40,6 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRecovering, setIsRecovering] = useState(false);
 
   const fetchRole = async (userId: string) => {
     try {
@@ -82,7 +85,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, currentSession) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsRecovering(true);
+      }
       handleSession(currentSession);
     });
 
@@ -105,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hasAIPrivileges = ['admin', 'pro', 'elite'].includes(role || '');
 
   return (
-    <AuthContext.Provider value={{ isAdmin, isPro, isElite, isStandard, hasAIPrivileges, isLoading, user, role, logout, refreshSession }}>
+    <AuthContext.Provider value={{ isAdmin, isPro, isElite, isStandard, hasAIPrivileges, isLoading, user, role, isRecovering, setIsRecovering, logout, refreshSession }}>
       {children}
     </AuthContext.Provider>
   );

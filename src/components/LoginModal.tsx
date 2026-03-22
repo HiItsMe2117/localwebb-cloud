@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Loader2, Lock, Eye, EyeOff, UserPlus } from 'lucide-react';
+import { X, Loader2, Lock, Eye, EyeOff, UserPlus, Mail } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -10,11 +10,12 @@ interface LoginModalProps {
 export default function LoginModal({ onClose }: LoginModalProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [username, setUsername] = useState(''); // Only used for sign up
+  const [username, setUsername] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const { refreshSession } = useAuth();
 
   const handleSubmit = async () => {
@@ -114,23 +115,59 @@ export default function LoginModal({ onClose }: LoginModalProps) {
           </button>
         </div>
 
+        {!isSignUp && !resetSent && (
+          <button
+            type="button"
+            onClick={async () => {
+              if (!email.trim()) {
+                setError('Enter your email first');
+                return;
+              }
+              setIsLoading(true);
+              setError('');
+              try {
+                const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim());
+                if (resetError) throw resetError;
+                setResetSent(true);
+              } catch (err: any) {
+                setError(err.message || 'Failed to send reset email');
+              } finally {
+                setIsLoading(false);
+              }
+            }}
+            className="w-full text-right text-[12px] text-[rgba(235,235,245,0.4)] hover:text-[#007AFF] transition-colors -mt-2"
+          >
+            Forgot password?
+          </button>
+        )}
+
+        {resetSent && (
+          <div className="flex items-center gap-2 bg-[#007AFF]/10 rounded-xl px-4 py-2.5">
+            <Mail size={14} className="text-[#007AFF] shrink-0" />
+            <p className="text-[12px] text-[#007AFF]">Check your email for a reset link.</p>
+          </div>
+        )}
+
         {error && (
           <p className="text-[12px] text-[#FF453A] text-center">{error}</p>
         )}
 
-        <button
-          onClick={handleSubmit}
-          disabled={!email.trim() || !password.trim() || (isSignUp && !username.trim()) || isLoading}
-          className="w-full flex items-center justify-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-30 px-4 py-2.5 rounded-xl text-[13px] font-semibold transition-colors"
-        >
-          {isLoading ? <Loader2 size={14} className="animate-spin" /> : (isSignUp ? <UserPlus size={14} /> : <Lock size={14} />)}
-          {isSignUp ? 'Create Account' : 'Sign In'}
-        </button>
+        {!resetSent && (
+          <button
+            onClick={handleSubmit}
+            disabled={!email.trim() || !password.trim() || (isSignUp && !username.trim()) || isLoading}
+            className="w-full flex items-center justify-center gap-2 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-30 px-4 py-2.5 rounded-xl text-[13px] font-semibold transition-colors"
+          >
+            {isLoading ? <Loader2 size={14} className="animate-spin" /> : (isSignUp ? <UserPlus size={14} /> : <Lock size={14} />)}
+            {isSignUp ? 'Create Account' : 'Sign In'}
+          </button>
+        )}
 
         <button
           onClick={() => {
             setIsSignUp(!isSignUp);
             setError('');
+            setResetSent(false);
           }}
           className="w-full text-center text-[12px] text-[rgba(235,235,245,0.6)] hover:text-white transition-colors mt-2"
         >

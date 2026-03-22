@@ -33,6 +33,7 @@ import { getFileUrl } from './utils/files';
 import CasesPanel from './components/CasesPanel';
 import CaseDetail from './components/CaseDetail';
 import LoginModal from './components/LoginModal';
+import PasswordResetModal from './components/PasswordResetModal';
 import { useAuth } from './contexts/AuthContext';
 import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source, WebSource } from './types';
 import TheoryInvestigation from './components/TheoryInvestigation';
@@ -40,7 +41,7 @@ import TheoryInvestigation from './components/TheoryInvestigation';
 type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
 function AppContent() {
-  const { isAdmin, hasAIPrivileges, logout } = useAuth();
+  const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, logout } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const readOnly = !hasAIPrivileges;
 
@@ -1665,6 +1666,12 @@ function AppContent() {
       {showLoginModal && (
         <LoginModal
           onClose={() => setShowLoginModal(false)}
+        />
+      )}
+
+      {isRecovering && (
+        <PasswordResetModal
+          onClose={() => setIsRecovering(false)}
         />
       )}
     </div>
