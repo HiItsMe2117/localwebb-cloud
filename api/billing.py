@@ -20,7 +20,7 @@ async def create_checkout_session(tier: str, user = Depends(require_user)):
     """Create a Stripe Checkout session for a subscription."""
     try:
         # Get or create Stripe Customer
-        profile_res = supabase.table("profiles").select("stripe_customer_id, email").eq("id", user.id).single().execute()
+        profile_res = supabase.table("profiles").select("stripe_customer_id").eq("id", user.id).single().execute()
         profile = profile_res.data
         
         customer_id = profile.get("stripe_customer_id")
