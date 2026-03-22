@@ -1,22 +1,33 @@
 import { useState } from 'react';
-import { X, Zap, Crown, Loader2, Check } from 'lucide-react';
+import { X, Zap, Crown, Loader2, Check, Info } from 'lucide-react';
 import axios from 'axios';
 
 interface UpgradeModalProps {
   onClose: () => void;
 }
 
-const TIERS = [
+interface Feature {
+  label: string;
+  description: string;
+}
+
+const TIERS: {
+  id: string;
+  name: string;
+  icon: typeof Zap;
+  color: string;
+  features: Feature[];
+}[] = [
   {
     id: 'basic',
     name: 'Basic',
     icon: Zap,
     color: '#007AFF',
     features: [
-      'AI-powered investigations',
-      'Case management',
-      'Knowledge graph access',
-      'Standard query limits',
+      { label: 'AI-powered investigations', description: 'Ask questions in natural language and get sourced answers drawn from indexed documents and evidence.' },
+      { label: 'Case management', description: 'Create and organize cases to track entities, evidence, and connections across your investigations.' },
+      { label: 'Knowledge graph', description: 'Visualize relationships between people, organizations, and events in an interactive network map.' },
+      { label: 'Standard query limits', description: 'A set number of AI-powered queries per month suitable for routine research.' },
     ],
   },
   {
@@ -25,13 +36,38 @@ const TIERS = [
     icon: Crown,
     color: '#FFD60A',
     features: [
-      'Everything in Basic',
-      'Unlimited investigations',
-      'Theory analysis',
-      'Priority processing',
+      { label: 'Everything in Basic', description: 'All Basic features included — investigations, case management, and knowledge graph.' },
+      { label: 'Unlimited investigations', description: 'No caps on AI-powered queries. Investigate as deeply and as often as you need.' },
+      { label: 'Theory analysis', description: 'Build and test investigative theories by asking the AI to find supporting or contradicting evidence across all sources.' },
+      { label: 'Priority processing', description: 'Your queries are processed ahead of the queue for faster response times.' },
     ],
   },
-] as const;
+];
+
+function FeatureItem({ feature, color }: { feature: Feature; color: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <li className="text-[12px] text-[rgba(235,235,245,0.6)]">
+      <div className="flex items-center gap-2">
+        <Check size={12} style={{ color }} className="shrink-0" />
+        <span className="flex-1">{feature.label}</span>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+          className={`shrink-0 p-0.5 rounded transition-colors ${expanded ? 'text-white' : 'text-[rgba(235,235,245,0.25)] hover:text-[rgba(235,235,245,0.5)]'}`}
+        >
+          <Info size={12} />
+        </button>
+      </div>
+      {expanded && (
+        <p className="mt-1 ml-5 text-[11px] text-[rgba(235,235,245,0.4)] leading-relaxed">
+          {feature.description}
+        </p>
+      )}
+    </li>
+  );
+}
 
 export default function UpgradeModal({ onClose }: UpgradeModalProps) {
   const [loadingTier, setLoadingTier] = useState<string | null>(null);
@@ -103,10 +139,7 @@ export default function UpgradeModal({ onClose }: UpgradeModalProps) {
                 </div>
                 <ul className="space-y-1.5">
                   {tier.features.map((f) => (
-                    <li key={f} className="flex items-center gap-2 text-[12px] text-[rgba(235,235,245,0.6)]">
-                      <Check size={12} style={{ color: tier.color }} className="shrink-0" />
-                      {f}
-                    </li>
+                    <FeatureItem key={f.label} feature={f} color={tier.color} />
                   ))}
                 </ul>
               </button>
