@@ -130,7 +130,6 @@ GCS_BUCKET = os.getenv("GCS_BUCKET_NAME", "").strip()
 PINECONE_API_KEY = (os.getenv("PINECONE_API_KEY") or os.getenv("PINCONE_API_KEY") or "").strip()
 PINECONE_INDEX_NAME = (os.getenv("PINECONE_INDEX") or os.getenv("pinecone_index") or "").strip()
 GOOGLE_API_KEY = (os.getenv("GOOGLE_API_KEY") or "").strip()
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip() # Added Supabase URL
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip() # Added Supabase Key
 
@@ -644,47 +643,7 @@ class TheoryFollowUpRequest(BaseModel):
     messages: List[Dict[str, str]]
     mode: Optional[str] = "files_only"
 
-class AdminAuthRequest(BaseModel):
-    password: str
-
 # --- Endpoints ---
-
-@app.post("/api/admin/auth")
-async def admin_auth(req: AdminAuthRequest):
-    """Verify admin password and return a session token."""
-    if not ADMIN_PASSWORD:
-        raise HTTPException(status_code=503, detail="Admin password not configured")
-    if not supabase:
-        raise HTTPException(status_code=503, detail="Supabase not initialized")
-    if req.password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-    try:
-        # Find the admin user
-        profiles = supabase.table("profiles").select("id").eq("role", "admin").limit(1).execute()
-        if not profiles.data:
-            raise HTTPException(status_code=500, detail="No admin user found")
-
-        admin_id = profiles.data[0]["id"]
-
-        # Get admin email via service-role admin API
-        admin_user = supabase.auth.admin.get_user_by_id(admin_id)
-        admin_email = admin_user.user.email
-
-        # Generate a magic-link token (no email is sent)
-        link_response = supabase.auth.admin.generate_link({
-            "type": "magiclink",
-            "email": admin_email,
-        })
-
-        return {
-            "token_hash": link_response.properties.hashed_token,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Admin auth error: {e}")
-        raise HTTPException(status_code=500, detail="Authentication failed")
 
 @app.get("/api")
 async def api_health():

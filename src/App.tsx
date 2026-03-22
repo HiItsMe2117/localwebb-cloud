@@ -32,7 +32,7 @@ import { getLayoutedElements, computeDegreeMap } from './utils/layout';
 import { getFileUrl } from './utils/files';
 import CasesPanel from './components/CasesPanel';
 import CaseDetail from './components/CaseDetail';
-import AdminPasswordModal from './components/AdminPasswordModal';
+import LoginModal from './components/LoginModal';
 import { useAuth } from './contexts/AuthContext';
 import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source, WebSource } from './types';
 import TheoryInvestigation from './components/TheoryInvestigation';
@@ -1663,7 +1663,7 @@ function AppContent() {
       </nav>
 
       {showLoginModal && (
-        <AdminPasswordModal
+        <LoginModal
           onClose={() => setShowLoginModal(false)}
         />
       )}
