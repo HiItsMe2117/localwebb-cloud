@@ -13,3 +13,4 @@ beautifulsoup4
 tqdm
 supabase
 PyJWT
+stripe
