@@ -39,8 +39,8 @@ async def create_checkout_session(tier: str, user = Depends(require_user)):
             payment_method_types=["card"],
             line_items=[{"price": price_id, "quantity": 1}],
             mode="subscription",
-            success_url=f"{FRONTEND_URL}/billing?success=true",
-            cancel_url=f"{FRONTEND_URL}/billing?canceled=true",
+            success_url=f"{FRONTEND_URL}/?checkout=success",
+            cancel_url=f"{FRONTEND_URL}/?checkout=canceled",
         )
         return {"url": session.url}
     except Exception as e:
@@ -57,7 +57,7 @@ async def create_portal_session(user = Depends(require_user)):
 
         session = stripe.billing_portal.Session.create(
             customer=customer_id,
-            return_url=f"{FRONTEND_URL}/billing",
+            return_url=f"{FRONTEND_URL}/",
         )
         return {"url": session.url}
     except Exception as e:

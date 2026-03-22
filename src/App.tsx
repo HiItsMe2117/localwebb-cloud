@@ -25,6 +25,7 @@ import {
   LogOut,
   SlidersHorizontal,
   Zap,
+  CreditCard,
 } from 'lucide-react';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -43,7 +44,7 @@ import TheoryInvestigation from './components/TheoryInvestigation';
 type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
 function AppContent() {
-  const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, user, logout } = useAuth();
+  const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, user, logout, refreshSession } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const readOnly = !hasAIPrivileges;
@@ -184,6 +185,40 @@ function AppContent() {
       console.error("Failed to load graph:", err);
     } finally {
       hasAttemptedInitialLoad.current = true;
+    }
+  };
+
+  // Handle Stripe checkout return
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const checkout = params.get('checkout');
+    if (!checkout) return;
+
+    window.history.replaceState({}, '', window.location.pathname);
+
+    if (checkout === 'success') {
+      toast.success('Subscription activated!', {
+        description: 'Your account has been upgraded.',
+      });
+      const poll = (n: number) => {
+        refreshSession();
+        if (n > 0) setTimeout(() => poll(n - 1), 2000);
+      };
+      poll(4);
+    } else if (checkout === 'canceled') {
+      toast('Checkout canceled', {
+        description: 'No charges were made.',
+      });
+    }
+  }, []);
+
+  // Open Stripe billing portal for subscription management
+  const handleOpenBillingPortal = async () => {
+    try {
+      const res = await axios.post('/api/billing/create-portal-session');
+      window.location.href = res.data.url;
+    } catch {
+      toast.error('Failed to open billing portal');
     }
   };
 
@@ -1652,6 +1687,7 @@ function AppContent() {
           <button
             onClick={() => {
               if (isAdmin) logout();
+              else if (user && hasAIPrivileges) handleOpenBillingPortal();
               else if (user && !hasAIPrivileges) setShowUpgradeModal(true);
               else setShowLoginModal(true);
             }}
@@ -1661,6 +1697,11 @@ function AppContent() {
               <>
                 <LogOut size={20} className="text-[#30D158]" />
                 <span className="text-[10px] font-medium text-[#30D158]">Admin</span>
+              </>
+            ) : user && hasAIPrivileges ? (
+              <>
+                <CreditCard size={20} className="text-[#30D158]" />
+                <span className="text-[10px] font-medium text-[#30D158]">Billing</span>
               </>
             ) : user && !hasAIPrivileges ? (
               <>
