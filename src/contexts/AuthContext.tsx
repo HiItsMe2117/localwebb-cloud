@@ -16,7 +16,7 @@ interface AuthContextType {
   isRecovering: boolean;
   setIsRecovering: (v: boolean) => void;
   logout: () => Promise<void>;
-  refreshSession: () => Promise<void>;
+  refreshSession: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -31,7 +31,7 @@ const AuthContext = createContext<AuthContextType>({
   isRecovering: false,
   setIsRecovering: () => {},
   logout: async () => {},
-  refreshSession: async () => {},
+  refreshSession: async () => null,
 });
 
 export function useAuth() {
@@ -95,9 +95,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  const refreshSession = async () => {
+  const refreshSession = async (): Promise<string | null> => {
     const { data: { session: currentSession } } = await supabase.auth.getSession();
     await handleSession(currentSession);
+    if (currentSession?.user) {
+      return await fetchRole(currentSession.user.id);
+    }
+    return null;
   };
 
   const logout = useCallback(async () => {
@@ -108,7 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isPro = role === 'pro';
   const isElite = role === 'elite';
   const isStandard = role === 'standard';
-  const hasAIPrivileges = ['admin', 'pro', 'elite'].includes(role || '');
+  const hasAIPrivileges = ['admin', 'pro', 'elite', 'basic'].includes(role || '');
 
   return (
     <AuthContext.Provider value={{ isAdmin, isPro, isElite, isStandard, hasAIPrivileges, isLoading, user, role, isRecovering, setIsRecovering, logout, refreshSession }}>
