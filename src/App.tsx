@@ -37,6 +37,7 @@ import CaseDetail from './components/CaseDetail';
 import LoginModal from './components/LoginModal';
 import PasswordResetModal from './components/PasswordResetModal';
 import UpgradeModal from './components/UpgradeModal';
+import AccountSettingsModal from './components/AccountSettingsModal';
 import { useAuth } from './contexts/AuthContext';
 import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source, WebSource } from './types';
 import TheoryInvestigation from './components/TheoryInvestigation';
@@ -47,6 +48,7 @@ function AppContent() {
   const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, user, logout, refreshSession } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
   const readOnly = !hasAIPrivileges;
 
   const [activeView, setActiveView] = useState<View>('chat');
@@ -200,11 +202,19 @@ function AppContent() {
       toast.success('Subscription activated!', {
         description: 'Your account has been upgraded.',
       });
-      const poll = (n: number) => {
-        refreshSession();
-        if (n > 0) setTimeout(() => poll(n - 1), 2000);
+      const PAID_ROLES = ['admin', 'pro', 'elite', 'basic'];
+      const poll = async (n: number) => {
+        const currentRole = await refreshSession();
+        if (currentRole && PAID_ROLES.includes(currentRole)) return;
+        if (n > 0) {
+          setTimeout(() => poll(n - 1), 2000);
+        } else {
+          toast.info('Still syncing your subscription...', {
+            description: 'This may take a moment. Try refreshing if features are still locked.',
+          });
+        }
       };
-      poll(4);
+      poll(5);
     } else if (checkout === 'canceled') {
       toast('Checkout canceled', {
         description: 'No charges were made.',
@@ -1686,27 +1696,15 @@ function AppContent() {
           })}
           <button
             onClick={() => {
-              if (isAdmin) logout();
-              else if (user && hasAIPrivileges) handleOpenBillingPortal();
-              else if (user && !hasAIPrivileges) setShowUpgradeModal(true);
+              if (user) setShowAccountSettings(true);
               else setShowLoginModal(true);
             }}
             className="flex flex-col items-center justify-center gap-0.5 w-12 h-full transition-colors"
           >
-            {isAdmin ? (
+            {user ? (
               <>
-                <LogOut size={20} className="text-[#30D158]" />
-                <span className="text-[10px] font-medium text-[#30D158]">Admin</span>
-              </>
-            ) : user && hasAIPrivileges ? (
-              <>
-                <CreditCard size={20} className="text-[#30D158]" />
-                <span className="text-[10px] font-medium text-[#30D158]">Billing</span>
-              </>
-            ) : user && !hasAIPrivileges ? (
-              <>
-                <Zap size={20} className="text-[#007AFF]" />
-                <span className="text-[10px] font-medium text-[#007AFF]">Upgrade</span>
+                <SettingsIcon size={20} className="text-[rgba(235,235,245,0.6)]" />
+                <span className="text-[10px] font-medium text-[rgba(235,235,245,0.6)]">Account</span>
               </>
             ) : (
               <>
@@ -1733,6 +1731,13 @@ function AppContent() {
       {showUpgradeModal && (
         <UpgradeModal
           onClose={() => setShowUpgradeModal(false)}
+        />
+      )}
+
+      {showAccountSettings && (
+        <AccountSettingsModal
+          onClose={() => setShowAccountSettings(false)}
+          onUpgrade={() => setShowUpgradeModal(true)}
         />
       )}
     </div>
