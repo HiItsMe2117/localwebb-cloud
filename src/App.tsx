@@ -22,10 +22,7 @@ import {
   Search,
   CircleOff,
   Lock,
-  LogOut,
   SlidersHorizontal,
-  Zap,
-  CreditCard,
 } from 'lucide-react';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -45,7 +42,7 @@ import TheoryInvestigation from './components/TheoryInvestigation';
 type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
 
 function AppContent() {
-  const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, user, logout, refreshSession } = useAuth();
+  const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, user, refreshSession } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
@@ -222,15 +219,7 @@ function AppContent() {
     }
   }, []);
 
-  // Open Stripe billing portal for subscription management
-  const handleOpenBillingPortal = async () => {
-    try {
-      const res = await axios.post('/api/billing/create-portal-session');
-      window.location.href = res.data.url;
-    } catch {
-      toast.error('Failed to open billing portal');
-    }
-  };
+
 
   useEffect(() => {
     loadGraph();
