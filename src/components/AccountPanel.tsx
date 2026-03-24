@@ -244,6 +244,13 @@ export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
                 <Zap size={14} />
                 Upgrade Plan
               </button>
+              <button
+                disabled
+                className="w-full flex items-center justify-center gap-2 bg-[#2C2C2E] border border-[rgba(84,84,88,0.35)] rounded-xl px-4 py-2.5 text-[14px] text-[rgba(235,235,245,0.2)] cursor-default"
+              >
+                <XCircle size={14} />
+                Cancel Anytime — No Hassle
+              </button>
             </div>
           )}
         </div>
