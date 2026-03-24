@@ -16,6 +16,7 @@ import {
   Play,
 } from 'lucide-react';
 import axios from 'axios';
+import { useAuth } from '../contexts/AuthContext';
 
 const DATASET_INFO: Record<string, { name: string; description: string }> = {
   '1': { name: 'FBI Interviews & Police Reports', description: 'Palm Beach PD 2005-2008, FBI summaries' },
@@ -483,6 +484,7 @@ function formatMetric(service: string, metrics: Record<string, any>): string {
 }
 
 function InfrastructureCard() {
+  const { isAdmin, isLoading: authLoading } = useAuth();
   const [health, setHealth] = useState<InfraHealth | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -492,9 +494,7 @@ function InfrastructureCard() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/infrastructure-health');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: InfraHealth = await res.json();
+      const { data } = await axios.get<InfraHealth>('/api/infrastructure-health');
       setHealth(data);
     } catch (err: any) {
       setError(err.message);
@@ -503,7 +503,10 @@ function InfrastructureCard() {
     }
   };
 
-  useEffect(() => { fetchHealth(); }, []);
+  useEffect(() => {
+    console.log('[InfraCard] Auth guard — authLoading:', authLoading, '| isAdmin:', isAdmin);
+    if (!authLoading && isAdmin) fetchHealth();
+  }, [authLoading, isAdmin]);
 
   const statusColor = (s: string) =>
     s === 'healthy' ? '#30D158' : s === 'down' ? '#FF453A' : 'rgba(235,235,245,0.3)';
@@ -806,6 +809,7 @@ function BulkExtractCard({ state, onStart, onPause, onResume, onDismiss }: {
 }
 
 export default function DataPanel() {
+  const { isAdmin, isLoading: authLoading } = useAuth();
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -917,9 +921,7 @@ export default function DataPanel() {
 
   const fetchScrapeProgress = useCallback(async () => {
     try {
-      const res = await fetch('/api/scrape-progress');
-      if (!res.ok) return;
-      const data: ScrapeProgress = await res.json();
+      const { data } = await axios.get<ScrapeProgress>('/api/scrape-progress');
       setScrapeProgress(data.active ? data : null);
       if (!data.active && pollRef.current) {
         clearInterval(pollRef.current);
@@ -930,9 +932,7 @@ export default function DataPanel() {
 
   const fetchReindexProgress = useCallback(async () => {
     try {
-      const res = await fetch('/api/reindex-progress');
-      if (!res.ok) return;
-      const data: ReindexProgress = await res.json();
+      const { data } = await axios.get<ReindexProgress>('/api/reindex-progress');
       // Show card when active OR paused (so user can resume)
       setReindexProgress((data.active || data.paused) ? data : null);
       if (!data.active && !data.paused && reindexPollRef.current) {
@@ -964,9 +964,7 @@ export default function DataPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/datasets');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const { data } = await axios.get('/api/datasets');
       setStatus(data);
     } catch (err: any) {
       setError(err.message);
@@ -976,6 +974,9 @@ export default function DataPanel() {
   };
 
   useEffect(() => {
+    console.log('[DataPanel] Auth guard — authLoading:', authLoading, '| isAdmin:', isAdmin, '| axios auth:', axios.defaults.headers.common['Authorization'] ? 'SET' : 'MISSING');
+    if (authLoading || !isAdmin) return;
+    console.log('[DataPanel] Firing admin fetches (datasets, scrape-progress, reindex-progress)');
     fetchStatus();
     fetchScrapeProgress();
     fetchReindexProgress();
@@ -985,7 +986,7 @@ export default function DataPanel() {
       if (pollRef.current) clearInterval(pollRef.current);
       if (reindexPollRef.current) clearInterval(reindexPollRef.current);
     };
-  }, [fetchScrapeProgress, fetchReindexProgress]);
+  }, [fetchScrapeProgress, fetchReindexProgress, authLoading, isAdmin]);
 
   const datasetNums = Object.keys(DATASET_INFO).sort((a, b) => parseInt(a) - parseInt(b));
 

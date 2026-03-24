@@ -56,6 +56,7 @@ app.add_middleware(
 async def require_user(authorization: str = Header(None)):
     """Dependency that ensures the user is authenticated via Supabase."""
     if not authorization or not authorization.startswith("Bearer "):
+        print(f"[Auth] 401 — header present: {authorization is not None}, starts with Bearer: {bool(authorization and authorization.startswith('Bearer '))}")
         raise HTTPException(status_code=401, detail="Authentication required")
     token = authorization.split(" ", 1)[1]
     
@@ -95,14 +96,14 @@ async def require_admin(user = Depends(require_user)):
 
 
 async def require_paid(user = Depends(require_user)):
-    """Dependency that ensures the user has a paid role (pro, elite, or admin)."""
+    """Dependency that ensures the user has a paid role (basic, pro, elite, or admin)."""
     try:
         profile_res = supabase.table("profiles").select("role").eq("id", user.id).execute()
         if not profile_res.data:
             raise HTTPException(status_code=403, detail="User profile not found")
-        
+
         role = profile_res.data[0].get("role")
-        if role not in ["admin", "pro", "elite"]:
+        if role not in ["admin", "pro", "elite", "basic"]:
             raise HTTPException(status_code=403, detail="Paid subscription required for this feature")
         return user
     except HTTPException:
@@ -2128,7 +2129,7 @@ class SemanticLayoutRequest(BaseModel):
 
 
 @app.post("/api/cases/{case_id}/graph/edges/{edge_id}/find-evidence")
-async def find_edge_evidence(case_id: str, edge_id: str, request: FindEvidenceRequest, user = Depends(require_user)):
+async def find_edge_evidence(case_id: str, edge_id: str, request: FindEvidenceRequest, user = Depends(require_paid)):
     """Search for evidence supporting a hypothesis edge."""
     if not supabase or not client or not index:
         return JSONResponse(status_code=503, content={"error": "Services not initialized."})
@@ -2192,7 +2193,7 @@ async def solidify_hypothesis_edge(case_id: str, edge_id: str, user = Depends(re
 
 
 @app.post("/api/cases/{case_id}/graph/semantic-layout")
-async def compute_semantic_layout(case_id: str, request: SemanticLayoutRequest, user = Depends(require_user)):
+async def compute_semantic_layout(case_id: str, request: SemanticLayoutRequest, user = Depends(require_paid)):
     """Compute semantic similarity matrix for layout clustering."""
     if not client:
         return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
