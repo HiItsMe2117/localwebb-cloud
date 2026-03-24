@@ -95,15 +95,46 @@ async def require_admin(user = Depends(require_user)):
 
 
 async def require_paid(user = Depends(require_user)):
-    """Dependency that ensures the user has a paid role (basic, pro, elite, or admin)."""
+    """Dependency that ensures the user has a paid role (basic, pro, elite, or admin).
+    Also checks that the subscription hasn't expired past current_period_end."""
     try:
-        profile_res = supabase.table("profiles").select("role").eq("id", user.id).execute()
+        profile_res = supabase.table("profiles").select(
+            "role, subscription_status, current_period_end"
+        ).eq("id", user.id).execute()
         if not profile_res.data:
             raise HTTPException(status_code=403, detail="User profile not found")
 
-        role = profile_res.data[0].get("role")
-        if role not in ["admin", "pro", "elite", "basic"]:
+        profile = profile_res.data[0]
+        role = profile.get("role")
+
+        # Admins always pass
+        if role == "admin":
+            return user
+
+        if role not in ["pro", "elite", "basic"]:
             raise HTTPException(status_code=403, detail="Paid subscription required for this feature")
+
+        # Check subscription hasn't expired (close the loophole)
+        period_end = profile.get("current_period_end")
+        if period_end:
+            from datetime import datetime, timezone
+            try:
+                if isinstance(period_end, (int, float)):
+                    expiry = datetime.fromtimestamp(period_end, tz=timezone.utc)
+                else:
+                    expiry = datetime.fromisoformat(str(period_end).replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) > expiry:
+                    # Subscription expired — downgrade and reject
+                    supabase.table("profiles").update({
+                        "role": "standard",
+                        "subscription_status": "expired",
+                    }).eq("id", user.id).execute()
+                    raise HTTPException(status_code=403, detail="Subscription expired")
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # If date parsing fails, don't block — let them through
+
         return user
     except HTTPException:
         raise

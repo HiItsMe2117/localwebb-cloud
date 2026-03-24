@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Loader2, CreditCard, LogOut, Zap, ExternalLink, Clock, User } from 'lucide-react';
+import { Loader2, CreditCard, LogOut, Zap, ExternalLink, Clock, User, XCircle, RotateCcw } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -24,6 +24,7 @@ interface AccountData {
   username: string | null;
   role: string;
   subscription_status: string;
+  cancel_at_period_end: boolean;
   current_period_end: string | null;
   member_since: string | null;
   usage: {
@@ -70,17 +71,21 @@ function formatDate(d: string | number | null): string {
 }
 
 export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
-  const { logout } = useAuth();
+  const { logout, refreshSession } = useAuth();
   const [data, setData] = useState<AccountData | null>(null);
   const [loading, setLoading] = useState(true);
   const [billingLoading, setBillingLoading] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  useEffect(() => {
+  const fetchAccount = () => {
     axios.get('/api/billing/account')
       .then(res => setData(res.data))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { fetchAccount(); }, []);
 
   const handleBilling = async () => {
     setBillingLoading(true);
@@ -89,6 +94,31 @@ export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
       window.location.href = res.data.url;
     } catch {
       setBillingLoading(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    setCancelLoading(true);
+    try {
+      await axios.post('/api/billing/cancel');
+      await refreshSession();
+      fetchAccount();
+      setShowCancelConfirm(false);
+    } catch {
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
+  const handleReactivate = async () => {
+    setCancelLoading(true);
+    try {
+      await axios.post('/api/billing/reactivate');
+      await refreshSession();
+      fetchAccount();
+    } catch {
+    } finally {
+      setCancelLoading(false);
     }
   };
 
@@ -109,7 +139,8 @@ export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
   }
 
   const planLabel = ROLE_LABELS[data.role] || 'Free';
-  const isActive = data.subscription_status === 'active';
+  const isActive = data.subscription_status === 'active' || data.subscription_status === 'canceling';
+  const isCanceling = data.subscription_status === 'canceling' || data.cancel_at_period_end;
   const sortedEndpoints = Object.entries(data.usage.by_endpoint)
     .sort(([, a], [, b]) => b.tokens - a.tokens);
   const maxTokens = sortedEndpoints.length > 0 ? sortedEndpoints[0][1].tokens : 1;
@@ -146,7 +177,7 @@ export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
         {/* Subscription */}
         <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-5">
           <h3 className="text-[13px] font-semibold text-[rgba(235,235,245,0.6)] uppercase tracking-wider mb-3">Subscription</h3>
-          {isActive ? (
+          {isActive && !isCanceling ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -158,17 +189,46 @@ export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
                   <span>Renews {formatDate(data.current_period_end)}</span>
                 </div>
               </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleBilling}
+                  disabled={billingLoading}
+                  className="flex-1 flex items-center justify-center gap-2 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[14px] text-white hover:border-[rgba(84,84,88,1)] transition-colors disabled:opacity-50"
+                >
+                  {billingLoading ? <Loader2 size={14} className="animate-spin" /> : <CreditCard size={14} />}
+                  Manage Billing
+                </button>
+                <button
+                  onClick={() => setShowCancelConfirm(true)}
+                  className="flex items-center justify-center gap-2 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[14px] text-[#FF453A] hover:border-[#FF453A]/30 transition-colors"
+                >
+                  <XCircle size={14} />
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : isCanceling ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-[#FF9F0A]" />
+                  <span className="text-[14px] text-[#FF9F0A]">Canceling</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[13px] text-[rgba(235,235,245,0.4)]">
+                  <Clock size={12} />
+                  <span>Access until {formatDate(data.current_period_end)}</span>
+                </div>
+              </div>
+              <p className="text-[13px] text-[rgba(235,235,245,0.4)]">
+                Your subscription will end on {formatDate(data.current_period_end)}. You won't be charged again.
+              </p>
               <button
-                onClick={handleBilling}
-                disabled={billingLoading}
-                className="w-full flex items-center justify-center gap-2 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-2.5 text-[14px] text-white hover:border-[rgba(84,84,88,1)] transition-colors disabled:opacity-50"
+                onClick={handleReactivate}
+                disabled={cancelLoading}
+                className="w-full flex items-center justify-center gap-2 bg-[#007AFF] rounded-xl px-4 py-2.5 text-[14px] font-semibold text-white hover:bg-[#0071E3] transition-colors disabled:opacity-50"
               >
-                {billingLoading ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <CreditCard size={14} />
-                )}
-                Manage Billing & Cancel
+                {cancelLoading ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                Keep My Subscription
               </button>
             </div>
           ) : (
@@ -187,6 +247,35 @@ export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
             </div>
           )}
         </div>
+
+        {/* Cancel Confirmation */}
+        {showCancelConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+            <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-6 max-w-sm w-full space-y-4">
+              <h3 className="text-[17px] font-bold text-white text-center">Cancel Subscription?</h3>
+              <p className="text-[14px] text-[rgba(235,235,245,0.6)] text-center leading-relaxed">
+                You'll keep full access until <span className="text-white font-medium">{formatDate(data.current_period_end)}</span>.
+                After that, your account will switch to the free plan.
+              </p>
+              <div className="space-y-2 pt-1">
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelLoading}
+                  className="w-full flex items-center justify-center gap-2 bg-[#FF453A] rounded-xl px-4 py-3 text-[15px] font-semibold text-white hover:bg-[#FF453A]/90 transition-colors disabled:opacity-50"
+                >
+                  {cancelLoading ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                  Yes, Cancel Subscription
+                </button>
+                <button
+                  onClick={() => setShowCancelConfirm(false)}
+                  className="w-full flex items-center justify-center gap-2 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-4 py-3 text-[15px] text-white hover:border-[rgba(84,84,88,1)] transition-colors"
+                >
+                  Never Mind
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Billing History */}
         {data.billing.invoices.length > 0 && (

@@ -26,7 +26,7 @@ async def get_account(user = Depends(require_user)):
     try:
         # Profile + subscription info
         profile_res = supabase.table("profiles").select(
-            "username, role, subscription_status, current_period_end, stripe_customer_id, created_at"
+            "username, role, subscription_status, current_period_end, stripe_customer_id, stripe_subscription_id, created_at"
         ).eq("id", user.id).single().execute()
         profile = profile_res.data or {}
 
@@ -67,11 +67,27 @@ async def get_account(user = Depends(require_user)):
             except Exception:
                 pass
 
+        # Check if subscription is pending cancellation in Stripe
+        cancel_at_period_end = False
+        sub_status = profile.get("subscription_status", "inactive")
+        stripe_sub_id = profile.get("stripe_subscription_id")
+
+        if stripe_sub_id and sub_status in ("active", "canceling"):
+            try:
+                stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
+                cancel_at_period_end = stripe_sub.cancel_at_period_end
+                if cancel_at_period_end and sub_status != "canceling":
+                    supabase.table("profiles").update({"subscription_status": "canceling"}).eq("id", user.id).execute()
+                    sub_status = "canceling"
+            except Exception:
+                pass
+
         return {
             "email": user.email,
             "username": profile.get("username"),
             "role": profile.get("role", "standard"),
-            "subscription_status": profile.get("subscription_status", "inactive"),
+            "subscription_status": sub_status,
+            "cancel_at_period_end": cancel_at_period_end,
             "current_period_end": profile.get("current_period_end"),
             "member_since": profile.get("created_at"),
             "usage": usage_data,
@@ -137,6 +153,77 @@ async def create_portal_session(user = Depends(require_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/cancel")
+async def cancel_subscription(user = Depends(require_user)):
+    """Cancel the user's subscription at the end of the current billing period.
+    Access continues until current_period_end, then auto-downgrades."""
+    try:
+        profile_res = supabase.table("profiles").select(
+            "stripe_subscription_id, subscription_status"
+        ).eq("id", user.id).single().execute()
+        profile = profile_res.data or {}
+
+        sub_id = profile.get("stripe_subscription_id")
+        if not sub_id:
+            raise HTTPException(status_code=400, detail="No active subscription found")
+
+        status = profile.get("subscription_status")
+        if status not in ("active", "trialing"):
+            raise HTTPException(status_code=400, detail="Subscription is not active")
+
+        # Cancel at period end — user keeps access until the billing period expires
+        subscription = stripe.Subscription.modify(
+            sub_id,
+            cancel_at_period_end=True,
+        )
+
+        # Update local status to reflect pending cancellation
+        supabase.table("profiles").update({
+            "subscription_status": "canceling",
+        }).eq("id", user.id).execute()
+
+        from datetime import datetime, timezone
+        period_end = subscription.current_period_end
+        end_date = datetime.fromtimestamp(period_end, tz=timezone.utc).strftime("%B %d, %Y")
+
+        return {
+            "ok": True,
+            "access_until": period_end,
+            "message": f"Subscription canceled. You'll have access until {end_date}.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/reactivate")
+async def reactivate_subscription(user = Depends(require_user)):
+    """Undo a pending cancellation (before the period ends)."""
+    try:
+        profile_res = supabase.table("profiles").select(
+            "stripe_subscription_id, subscription_status"
+        ).eq("id", user.id).single().execute()
+        profile = profile_res.data or {}
+
+        sub_id = profile.get("stripe_subscription_id")
+        if not sub_id:
+            raise HTTPException(status_code=400, detail="No subscription found")
+
+        # Remove the cancel-at-period-end flag
+        stripe.Subscription.modify(sub_id, cancel_at_period_end=False)
+
+        supabase.table("profiles").update({
+            "subscription_status": "active",
+        }).eq("id", user.id).execute()
+
+        return {"ok": True, "message": "Subscription reactivated."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
     """Handle Stripe webhooks to update subscription status."""
@@ -154,6 +241,7 @@ async def stripe_webhook(request: Request):
         customer_id = subscription.customer
         status = subscription.status
         period_end = subscription.current_period_end
+        cancel_at_period_end = subscription.get("cancel_at_period_end", False)
 
         # Determine role from the subscription's price
         role = "standard"
@@ -161,9 +249,19 @@ async def stripe_webhook(request: Request):
             price_id = subscription["items"]["data"][0]["price"]["id"]
             role = PRICE_TO_ROLE.get(price_id, "basic")
 
+        # If active but set to cancel at period end, keep role but mark as canceling
+        local_status = status
+        if status == "active" and cancel_at_period_end:
+            local_status = "canceling"
+
+        # If subscription is canceled/deleted, downgrade to standard
+        if status in ("canceled", "unpaid", "incomplete_expired"):
+            role = "standard"
+            local_status = "inactive"
+
         # Update profile in Supabase
         supabase.table("profiles").update({
-            "subscription_status": status,
+            "subscription_status": local_status,
             "stripe_subscription_id": subscription.id,
             "current_period_end": period_end,
             "role": role,
