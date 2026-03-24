@@ -503,10 +503,7 @@ function InfrastructureCard() {
     }
   };
 
-  useEffect(() => {
-    console.log('[InfraCard] Auth guard — authLoading:', authLoading, '| isAdmin:', isAdmin);
-    if (!authLoading && isAdmin) fetchHealth();
-  }, [authLoading, isAdmin]);
+  useEffect(() => { if (!authLoading && isAdmin) fetchHealth(); }, [authLoading, isAdmin]);
 
   const statusColor = (s: string) =>
     s === 'healthy' ? '#30D158' : s === 'down' ? '#FF453A' : 'rgba(235,235,245,0.3)';
@@ -974,9 +971,7 @@ export default function DataPanel() {
   };
 
   useEffect(() => {
-    console.log('[DataPanel] Auth guard — authLoading:', authLoading, '| isAdmin:', isAdmin, '| axios auth:', axios.defaults.headers.common['Authorization'] ? 'SET' : 'MISSING');
     if (authLoading || !isAdmin) return;
-    console.log('[DataPanel] Firing admin fetches (datasets, scrape-progress, reindex-progress)');
     fetchStatus();
     fetchScrapeProgress();
     fetchReindexProgress();

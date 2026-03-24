@@ -71,11 +71,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRole(currentRole);
       // Attach token to axios requests for the Python backend
       axios.defaults.headers.common['Authorization'] = `Bearer ${currentSession.access_token}`;
-      console.log('[Auth] Session set — role:', currentRole, '| token prefix:', currentSession.access_token?.slice(0, 10) + '...');
     } else {
       setRole(null);
       delete axios.defaults.headers.common['Authorization'];
-      console.log('[Auth] No session — cleared axios auth header');
     }
     setIsLoading(false);
   };

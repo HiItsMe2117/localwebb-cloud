@@ -56,7 +56,6 @@ app.add_middleware(
 async def require_user(authorization: str = Header(None)):
     """Dependency that ensures the user is authenticated via Supabase."""
     if not authorization or not authorization.startswith("Bearer "):
-        print(f"[Auth] 401 — header present: {authorization is not None}, starts with Bearer: {bool(authorization and authorization.startswith('Bearer '))}")
         raise HTTPException(status_code=401, detail="Authentication required")
     token = authorization.split(" ", 1)[1]
     
