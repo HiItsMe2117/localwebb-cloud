@@ -9,20 +9,90 @@ stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-# Model mappings for Stripe prices
-# You should create these in your Stripe Dashboard first
+# Price-to-role mappings for Stripe subscriptions
 PRICE_ID_BASIC = os.getenv("STRIPE_PRICE_ID_BASIC") # e.g. $49/mo
 PRICE_ID_PRO = os.getenv("STRIPE_PRICE_ID_PRO")     # e.g. $149/mo
 TOKEN_METER_ID = os.getenv("STRIPE_TOKEN_METER_ID") # For metered overages
 
+VALID_TIERS = {"basic", "pro"}
+PRICE_TO_ROLE = {
+    PRICE_ID_BASIC: "basic",
+    PRICE_ID_PRO: "pro",
+}
+
+@router.get("/account")
+async def get_account(user = Depends(require_user)):
+    """Return account profile, subscription info, and usage summary."""
+    try:
+        # Profile + subscription info
+        profile_res = supabase.table("profiles").select(
+            "username, role, subscription_status, current_period_end, stripe_customer_id, created_at"
+        ).eq("id", user.id).single().execute()
+        profile = profile_res.data or {}
+
+        # Usage stats for current billing period
+        usage_data = {"total_tokens": 0, "total_requests": 0, "by_endpoint": {}}
+        try:
+            usage_res = supabase.table("usage_logs").select(
+                "endpoint, total_tokens"
+            ).eq("user_id", user.id).execute()
+            rows = usage_res.data or []
+            usage_data["total_requests"] = len(rows)
+            for row in rows:
+                tokens = row.get("total_tokens", 0) or 0
+                usage_data["total_tokens"] += tokens
+                ep = row.get("endpoint", "unknown")
+                if ep not in usage_data["by_endpoint"]:
+                    usage_data["by_endpoint"][ep] = {"tokens": 0, "requests": 0}
+                usage_data["by_endpoint"][ep]["tokens"] += tokens
+                usage_data["by_endpoint"][ep]["requests"] += 1
+        except Exception:
+            pass  # Usage logs may not exist yet
+
+        # Billing totals from Stripe
+        billing = {"total_spent": 0, "invoices": []}
+        customer_id = profile.get("stripe_customer_id")
+        if customer_id:
+            try:
+                invoices = stripe.Invoice.list(customer=customer_id, limit=12)
+                for inv in invoices.data:
+                    amount = (inv.amount_paid or 0) / 100
+                    billing["total_spent"] += amount
+                    billing["invoices"].append({
+                        "date": inv.created,
+                        "amount": amount,
+                        "status": inv.status,
+                        "pdf": inv.invoice_pdf,
+                    })
+            except Exception:
+                pass
+
+        return {
+            "email": user.email,
+            "username": profile.get("username"),
+            "role": profile.get("role", "standard"),
+            "subscription_status": profile.get("subscription_status", "inactive"),
+            "current_period_end": profile.get("current_period_end"),
+            "member_since": profile.get("created_at"),
+            "usage": usage_data,
+            "billing": billing,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/create-checkout-session")
 async def create_checkout_session(tier: str, user = Depends(require_user)):
     """Create a Stripe Checkout session for a subscription."""
+    if tier not in VALID_TIERS:
+        raise HTTPException(status_code=400, detail=f"Invalid tier: {tier}. Must be one of: {', '.join(VALID_TIERS)}")
+
     try:
         # Get or create Stripe Customer
         profile_res = supabase.table("profiles").select("stripe_customer_id").eq("id", user.id).single().execute()
         profile = profile_res.data
-        
+
         customer_id = profile.get("stripe_customer_id")
         if not customer_id:
             customer = stripe.Customer.create(
@@ -43,6 +113,8 @@ async def create_checkout_session(tier: str, user = Depends(require_user)):
             cancel_url=f"{FRONTEND_URL}/?checkout=canceled",
         )
         return {"url": session.url}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -60,6 +132,8 @@ async def create_portal_session(user = Depends(require_user)):
             return_url=f"{FRONTEND_URL}/",
         )
         return {"url": session.url}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -80,13 +154,19 @@ async def stripe_webhook(request: Request):
         customer_id = subscription.customer
         status = subscription.status
         period_end = subscription.current_period_end
-        
+
+        # Determine role from the subscription's price
+        role = "standard"
+        if status == "active" and subscription.get("items", {}).get("data"):
+            price_id = subscription["items"]["data"][0]["price"]["id"]
+            role = PRICE_TO_ROLE.get(price_id, "basic")
+
         # Update profile in Supabase
         supabase.table("profiles").update({
             "subscription_status": status,
             "stripe_subscription_id": subscription.id,
             "current_period_end": period_end,
-            "role": "pro" if status == "active" else "standard" # Simple logic: active = pro
+            "role": role,
         }).eq("stripe_customer_id", customer_id).execute()
 
     return {"status": "success"}
@@ -96,15 +176,26 @@ def report_usage_to_stripe(user_id: str, token_count: int):
     try:
         profile_res = supabase.table("profiles").select("stripe_subscription_id").eq("id", user_id).single().execute()
         sub_id = profile_res.data.get("stripe_subscription_id")
-        if not sub_id: return
+        if not sub_id:
+            return
 
-        # This assumes you have a metered price on the subscription
-        # In a real app, you'd aggregate these and send in batches
+        # Retrieve the subscription to find the metered item
+        subscription = stripe.Subscription.retrieve(sub_id)
+        metered_item_id = None
+        for item in subscription["items"]["data"]:
+            if item["price"]["id"] == TOKEN_METER_ID:
+                metered_item_id = item["id"]
+                break
+
+        if not metered_item_id:
+            print(f"No metered item found on subscription {sub_id}")
+            return
+
         stripe.SubscriptionItem.create_usage_record(
-            sub_id, # You actually need the ID of the specific item in the sub
+            metered_item_id,
             quantity=token_count,
-            timestamp='now',
-            action='increment'
+            timestamp="now",
+            action="increment",
         )
     except Exception as e:
         print(f"Stripe usage reporting failed: {e}")

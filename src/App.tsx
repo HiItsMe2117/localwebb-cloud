@@ -34,18 +34,17 @@ import CaseDetail from './components/CaseDetail';
 import LoginModal from './components/LoginModal';
 import PasswordResetModal from './components/PasswordResetModal';
 import UpgradeModal from './components/UpgradeModal';
-import AccountSettingsModal from './components/AccountSettingsModal';
+import AccountPanel from './components/AccountPanel';
 import { useAuth } from './contexts/AuthContext';
 import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source, WebSource } from './types';
 import TheoryInvestigation from './components/TheoryInvestigation';
 
-type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases';
+type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases' | 'account';
 
 function AppContent() {
   const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, user, refreshSession } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [showAccountSettings, setShowAccountSettings] = useState(false);
   const readOnly = !hasAIPrivileges;
 
   const [activeView, setActiveView] = useState<View>('chat');
@@ -1654,6 +1653,10 @@ function AppContent() {
           <DataPanel />
         )}
 
+        {activeView === 'account' && (
+          <AccountPanel onUpgrade={() => setShowUpgradeModal(true)} />
+        )}
+
         {/* Evidence Panel (bottom sheet, works across views) */}
         <EvidencePanel
           selectedNode={selectedNode}
@@ -1685,15 +1688,15 @@ function AppContent() {
           })}
           <button
             onClick={() => {
-              if (user) setShowAccountSettings(true);
+              if (user) setActiveView('account');
               else setShowLoginModal(true);
             }}
             className="flex flex-col items-center justify-center gap-0.5 w-12 h-full transition-colors"
           >
             {user ? (
               <>
-                <SettingsIcon size={20} className="text-[rgba(235,235,245,0.6)]" />
-                <span className="text-[10px] font-medium text-[rgba(235,235,245,0.6)]">Account</span>
+                <SettingsIcon size={20} className={activeView === 'account' ? 'text-[#007AFF]' : 'text-[rgba(235,235,245,0.3)]'} />
+                <span className={`text-[10px] font-medium ${activeView === 'account' ? 'text-[#007AFF]' : 'text-[rgba(235,235,245,0.3)]'}`}>Account</span>
               </>
             ) : (
               <>
@@ -1723,12 +1726,6 @@ function AppContent() {
         />
       )}
 
-      {showAccountSettings && (
-        <AccountSettingsModal
-          onClose={() => setShowAccountSettings(false)}
-          onUpgrade={() => setShowUpgradeModal(true)}
-        />
-      )}
     </div>
   );
 }
