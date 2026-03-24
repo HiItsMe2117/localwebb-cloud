@@ -3242,6 +3242,50 @@ async def set_reindex_control(request: Request, _=Depends(require_admin)):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+@app.get("/api/bulk-extract-progress")
+async def get_bulk_extract_progress(user = Depends(require_admin)):
+    """Return live bulk extraction progress from GCS."""
+    try:
+        if not bucket:
+            return {"active": False}
+        blob = bucket.blob("bulk_extract_live_progress.json")
+        if not blob.exists():
+            return {"active": False}
+        data = json.loads(blob.download_as_text())
+        try:
+            ctrl_blob = bucket.blob("bulk_extract_control.json")
+            if ctrl_blob.exists():
+                ctrl = json.loads(ctrl_blob.download_as_text())
+                data["control_command"] = ctrl.get("command", "run")
+        except Exception:
+            pass
+        return data
+    except Exception:
+        return {"active": False}
+
+@app.post("/api/bulk-extract-control")
+async def set_bulk_extract_control(request: Request, _=Depends(require_admin)):
+    """Set pause/resume command for the bulk extraction job."""
+    try:
+        if not bucket:
+            return JSONResponse(status_code=503, content={"error": "GCS bucket not initialized"})
+        body = await request.json()
+        command = body.get("command")
+        if command not in ("pause", "resume"):
+            return JSONResponse(status_code=400, content={"error": "command must be 'pause' or 'resume'"})
+        blob = bucket.blob("bulk_extract_control.json")
+        data = {
+            "command": "pause" if command == "pause" else "run",
+            "requested_at": datetime.now(timezone.utc).isoformat(),
+            "requested_by": "ui",
+        }
+        if command == "pause":
+            data["reason"] = "user_requested"
+        blob.upload_from_string(json.dumps(data), content_type="application/json")
+        return {"ok": True, "command": command}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @app.get("/api/datasets")
 async def get_datasets(user = Depends(require_admin)):
     """Return per-dataset pipeline stats from pipeline_status.json in GCS."""

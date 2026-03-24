@@ -277,6 +277,22 @@ interface ReindexProgress {
   files_this_run?: number;
 }
 
+interface BulkExtractProgress {
+  active: boolean;
+  paused?: boolean;
+  pause_reason?: string | null;
+  rate_limit_count?: number;
+  control_command?: string;
+  files_completed?: number;
+  files_failed?: number;
+  total_files?: number;
+  entities_added?: number;
+  triples_added?: number;
+  started_at?: string;
+  last_updated?: string;
+  files_this_run?: number;
+}
+
 function ReindexProgressCard({ progress, onRefresh, onPause, onResume }: {
   progress: ReindexProgress;
   onRefresh: () => void;
@@ -433,6 +449,137 @@ function ReindexProgressCard({ progress, onRefresh, onPause, onResume }: {
         <p className="text-[10px] text-[rgba(235,235,245,0.25)] text-right">
           Updated {lastUpdatedText}
         </p>
+      )}
+    </div>
+  );
+}
+
+function BulkExtractVMCard({ progress, onRefresh, onPause, onResume }: {
+  progress: BulkExtractProgress;
+  onRefresh: () => void;
+  onPause: () => void;
+  onResume: () => void;
+}) {
+  const {
+    files_completed = 0,
+    files_failed = 0,
+    total_files = 0,
+    entities_added = 0,
+    triples_added = 0,
+    started_at,
+    last_updated,
+    files_this_run = 0,
+    paused = false,
+    pause_reason,
+    rate_limit_count = 0,
+  } = progress;
+
+  const pct = total_files > 0 ? Math.min((files_completed / total_files) * 100, 100) : 0;
+
+  let filesPerMin = 0;
+  let etaText = '—';
+  const rateBase = files_this_run > 0 ? files_this_run : files_completed;
+  if (started_at && rateBase > 0) {
+    const elapsedMs = Date.now() - new Date(started_at).getTime();
+    const elapsedMin = elapsedMs / 60000;
+    if (elapsedMin > 0) {
+      filesPerMin = Math.round(rateBase / elapsedMin);
+      const remaining = total_files - files_completed;
+      if (filesPerMin > 0) {
+        const etaMin = remaining / filesPerMin;
+        if (etaMin < 60) etaText = `~${Math.round(etaMin)}m`;
+        else if (etaMin < 1440) etaText = `~${(etaMin / 60).toFixed(1)}h`;
+        else etaText = `~${(etaMin / 1440).toFixed(1)}d`;
+      }
+    }
+  }
+
+  let lastUpdatedText = '';
+  if (last_updated) {
+    const ago = Math.round((Date.now() - new Date(last_updated).getTime()) / 1000);
+    if (ago < 60) lastUpdatedText = `${ago}s ago`;
+    else if (ago < 3600) lastUpdatedText = `${Math.round(ago / 60)}m ago`;
+    else lastUpdatedText = `${(ago / 3600).toFixed(1)}h ago`;
+  }
+
+  const accentColor = paused ? '#FF9F0A' : '#0A84FF';
+
+  return (
+    <div className="bg-[#1C1C1E] border rounded-2xl p-4 mb-4 relative overflow-hidden" style={{ borderColor: accentColor }}>
+      <div className="absolute inset-x-0 top-0 h-px" style={{ backgroundColor: accentColor }} />
+
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2.5">
+          <span className="relative flex h-2.5 w-2.5">
+            {!paused && <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: accentColor }} />}
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5" style={{ backgroundColor: accentColor }} />
+          </span>
+          <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
+            <Network size={14} style={{ color: accentColor }} />
+            {paused ? 'Graph Extraction Paused' : 'Building Knowledge Graph'}
+          </h3>
+        </div>
+        <div className="flex items-center gap-2">
+          {!paused ? (
+            <button onClick={onPause} className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-[#FF9F0A]/20 text-[#FF9F0A] hover:bg-[#FF9F0A]/30 transition-colors">
+              <Pause size={10} /> Pause
+            </button>
+          ) : (
+            <button onClick={onResume} className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-[#30D158]/20 text-[#30D158] hover:bg-[#30D158]/30 transition-colors">
+              <Play size={10} /> Resume
+            </button>
+          )}
+          <button onClick={onRefresh} className="text-[11px] text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)] transition-colors">
+            <RefreshCw size={12} />
+          </button>
+        </div>
+      </div>
+
+      {paused && pause_reason && pause_reason.includes('rate_limit') && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-[#FF453A]/10 border border-[#FF453A]/30">
+          <p className="text-[11px] text-[#FF453A] font-medium">Auto-paused: Gemini rate limit exceeded ({rate_limit_count} hits)</p>
+        </div>
+      )}
+
+      <div className="mb-3">
+        <div className="flex justify-between items-center mb-1.5">
+          <span className="text-[13px] font-mono text-[rgba(235,235,245,0.6)]">
+            {files_completed.toLocaleString()} / {total_files.toLocaleString()}
+          </span>
+          <span className="text-[13px] font-mono" style={{ color: accentColor }}>{pct.toFixed(1)}%</span>
+        </div>
+        <div className="h-2.5 w-full bg-[#3A3A3C] rounded-full overflow-hidden">
+          <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: accentColor }} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 mb-2">
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-white">{entities_added.toLocaleString()}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Entities</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-white">{triples_added.toLocaleString()}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Relationships</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold" style={{ color: accentColor }}>{etaText}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">ETA</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[15px] font-bold text-[rgba(235,235,245,0.6)]">{filesPerMin}</p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Files/min</p>
+        </div>
+        <div className="text-center">
+          <p className={`text-[15px] font-bold ${files_failed > 0 ? 'text-[#FF453A]' : 'text-[rgba(235,235,245,0.6)]'}`}>
+            {files_failed.toLocaleString()}
+          </p>
+          <p className="text-[10px] text-[rgba(235,235,245,0.4)]">Failed</p>
+        </div>
+      </div>
+
+      {lastUpdatedText && (
+        <p className="text-[10px] text-[rgba(235,235,245,0.25)] text-right">Updated {lastUpdatedText}</p>
       )}
     </div>
   );
@@ -812,8 +959,10 @@ export default function DataPanel() {
   const [error, setError] = useState<string | null>(null);
   const [scrapeProgress, setScrapeProgress] = useState<ScrapeProgress | null>(null);
   const [reindexProgress, setReindexProgress] = useState<ReindexProgress | null>(null);
+  const [extractProgress, setExtractProgress] = useState<BulkExtractProgress | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reindexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const extractPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Bulk extraction state — restore from localStorage if available
   const [bulkExtract, setBulkExtract] = useState<BulkExtractState>(() => {
@@ -957,6 +1106,35 @@ export default function DataPanel() {
     }
   }, [fetchReindexProgress]);
 
+  const fetchExtractProgress = useCallback(async () => {
+    try {
+      const { data } = await axios.get<BulkExtractProgress>('/api/bulk-extract-progress');
+      setExtractProgress((data.active || data.paused) ? data : null);
+      if (!data.active && !data.paused && extractPollRef.current) {
+        clearInterval(extractPollRef.current);
+        extractPollRef.current = null;
+      }
+    } catch {}
+  }, []);
+
+  const pauseExtract = useCallback(async () => {
+    try {
+      await axios.post('/api/bulk-extract-control', { command: 'pause' });
+      fetchExtractProgress();
+    } catch (err) {
+      console.error('Failed to pause extraction:', err);
+    }
+  }, [fetchExtractProgress]);
+
+  const resumeExtract = useCallback(async () => {
+    try {
+      await axios.post('/api/bulk-extract-control', { command: 'resume' });
+      fetchExtractProgress();
+    } catch (err) {
+      console.error('Failed to resume extraction:', err);
+    }
+  }, [fetchExtractProgress]);
+
   const fetchStatus = async () => {
     setLoading(true);
     setError(null);
@@ -975,13 +1153,16 @@ export default function DataPanel() {
     fetchStatus();
     fetchScrapeProgress();
     fetchReindexProgress();
+    fetchExtractProgress();
     pollRef.current = setInterval(fetchScrapeProgress, 30000);
     reindexPollRef.current = setInterval(fetchReindexProgress, 30000);
+    extractPollRef.current = setInterval(fetchExtractProgress, 30000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (reindexPollRef.current) clearInterval(reindexPollRef.current);
+      if (extractPollRef.current) clearInterval(extractPollRef.current);
     };
-  }, [fetchScrapeProgress, fetchReindexProgress, authLoading, isAdmin]);
+  }, [fetchScrapeProgress, fetchReindexProgress, fetchExtractProgress, authLoading, isAdmin]);
 
   const datasetNums = Object.keys(DATASET_INFO).sort((a, b) => parseInt(a) - parseInt(b));
 
@@ -990,7 +1171,7 @@ export default function DataPanel() {
       <header className="shrink-0 px-5 pt-4 pb-2 bg-black flex items-center justify-between">
         <h1 className="text-[28px] font-bold tracking-tight text-white">Data</h1>
         <button
-          onClick={() => { fetchStatus(); fetchScrapeProgress(); fetchReindexProgress(); }}
+          onClick={() => { fetchStatus(); fetchScrapeProgress(); fetchReindexProgress(); fetchExtractProgress(); }}
           disabled={loading}
           className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)]"
         >
@@ -1008,6 +1189,10 @@ export default function DataPanel() {
 
           {reindexProgress && (
             <ReindexProgressCard progress={reindexProgress} onRefresh={fetchReindexProgress} onPause={pauseReindex} onResume={resumeReindex} />
+          )}
+
+          {extractProgress && (
+            <BulkExtractVMCard progress={extractProgress} onRefresh={fetchExtractProgress} onPause={pauseExtract} onResume={resumeExtract} />
           )}
 
           <BulkExtractCard

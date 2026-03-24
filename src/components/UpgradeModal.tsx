@@ -14,6 +14,7 @@ interface Feature {
 const TIERS: {
   id: string;
   name: string;
+  price: string;
   icon: typeof Zap;
   color: string;
   features: Feature[];
@@ -21,6 +22,7 @@ const TIERS: {
   {
     id: 'basic',
     name: 'Basic',
+    price: '$49/mo',
     icon: Zap,
     color: '#007AFF',
     features: [
@@ -33,6 +35,7 @@ const TIERS: {
   {
     id: 'pro',
     name: 'Pro',
+    price: '$100/mo',
     icon: Crown,
     color: '#FFD60A',
     features: [
@@ -128,6 +131,7 @@ export default function UpgradeModal({ onClose }: UpgradeModalProps) {
                   <div className="flex items-center gap-2">
                     <Icon size={16} style={{ color: tier.color }} />
                     <span className="text-[15px] font-bold text-white">{tier.name}</span>
+                    <span className="text-[12px] text-[rgba(235,235,245,0.4)] font-medium">{tier.price}</span>
                   </div>
                   {isLoading ? (
                     <Loader2 size={16} className="text-[#007AFF] animate-spin" />
