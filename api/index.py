@@ -289,21 +289,21 @@ class SupabaseStore:
 
             # Fetch all edges, then filter to only those between visible nodes
             edges_data = self._fetch_all("edges")
-            edges_data = [e for e in edges_data if e["source"] in node_ids and e["target"] in node_ids]
+            edges_data = [e for e in edges_data if e.get("source") in node_ids and e.get("target") in node_ids]
 
             # Format nodes for ReactFlow
             nodes = []
             for n in nodes_data:
-                node_data = n.get("metadata", {})
-                position = n.get("position", {"x": 0, "y": 0})
+                node_data = n.get("metadata") or {}
+                position = n.get("position") or {"x": 0, "y": 0}
                 nodes.append({
                     "id": n["id"],
                     "type": "entityNode",
                     "data": {
-                        "label": n.get("label", n["id"]),
-                        "entityType": n.get("type", "UNKNOWN"),
-                        "description": n.get("description", ""),
-                        "aliases": n.get("aliases", []),
+                        "label": n.get("label") or n["id"],
+                        "entityType": n.get("type") or "UNKNOWN",
+                        "description": n.get("description") or "",
+                        "aliases": n.get("aliases") or [],
                         "degree": node_data.get("degree", 0),
                         "communityId": node_data.get("communityId"),
                         "communityColor": node_data.get("communityColor"),
@@ -318,15 +318,15 @@ class SupabaseStore:
                     "id": e["id"],
                     "source": e["source"],
                     "target": e["target"],
-                    "label": e.get("label", e["predicate"]),
+                    "label": e.get("label") or e.get("predicate") or "",
                     "animated": e.get("confidence") == "INFERRED",
                     "style": {"strokeDasharray": "5 5"} if e.get("confidence") == "INFERRED" else {},
                     "data": {
-                        "predicate": e["predicate"],
-                        "evidence_text": e.get("evidence_text", ""),
-                        "source_filename": e.get("source_filename", ""),
-                        "source_page": e.get("source_page", 0),
-                        "confidence": e.get("confidence", "STATED"),
+                        "predicate": e.get("predicate") or "",
+                        "evidence_text": e.get("evidence_text") or "",
+                        "source_filename": e.get("source_filename") or "",
+                        "source_page": e.get("source_page") or 0,
+                        "confidence": e.get("confidence") or "STATED",
                         "date_mentioned": e.get("date_mentioned"),
                     }
                 })
@@ -334,6 +334,7 @@ class SupabaseStore:
             return {"nodes": nodes, "edges": edges}
         except Exception as e:
             print(f"CRITICAL: Error loading graph from Supabase: {e}")
+            import traceback; traceback.print_exc()
             return {"nodes": [], "edges": []}
 
     def save(self, data):
@@ -1481,6 +1482,8 @@ async def get_case(case_id: str, user = Depends(optional_user)):
             "case": case_res.data[0],
             "evidence": evidence_res.data or [],
         }
+    except HTTPException:
+        raise
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -1965,6 +1968,8 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
             })
 
         return {"nodes": nodes, "edges": edges, "groups": groups}
+    except HTTPException:
+        raise
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

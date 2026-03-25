@@ -385,8 +385,16 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       allEdgesRef.current = loadedEdges;
       setEdges(loadedEdges);
       setGroups(res.data.groups || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load case graph:', err);
+      const status = err?.response?.status;
+      if (status === 403) {
+        toast.error('Permission denied — try refreshing the page');
+      } else if (status === 401) {
+        toast.error('Session expired — please log in again');
+      } else {
+        toast.error('Failed to load network map');
+      }
     } finally {
       setIsLoading(false);
     }
