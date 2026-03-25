@@ -3348,13 +3348,13 @@ async def extract_urls(user = Depends(require_admin)):
         url_pattern = re.compile(r'https?://[^\s<>"\')\]},;]+')
 
         # Fetch chunks that likely contain URLs (much faster than scanning all)
-        all_urls: dict[str, list] = {}  # url -> [{filename, page}]
+        all_urls = {}  # url -> [{filename, page}]
         offset = 0
         page_size = 1000
         while True:
             res = supabase.table("document_chunks")\
                 .select("text, filename, page")\
-                .or_("text.ilike.%http://%,text.ilike.%https://%")\
+                .or_("text.ilike.*http://*,text.ilike.*https://*")\
                 .range(offset, offset + page_size - 1)\
                 .execute()
             for row in res.data or []:
