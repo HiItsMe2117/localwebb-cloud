@@ -165,8 +165,8 @@ function AppContent() {
           data: { ...n.data, degree: degree.get(n.id) || 0 },
         }));
 
-        const uniquePositions = new Set(enriched.map((n) => `${Math.round(n.position.x)},${Math.round(n.position.y)}`));
-        const hasLayout = uniquePositions.size > Math.min(enriched.length * 0.5, 3);
+        const atOrigin = enriched.filter((n) => Math.abs(n.position.x) < 1 && Math.abs(n.position.y) < 1).length;
+        const hasLayout = atOrigin < enriched.length * 0.3;
 
         if (hasLayout) {
           setNodes(enriched);
