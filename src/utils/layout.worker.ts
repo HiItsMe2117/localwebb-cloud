@@ -51,9 +51,9 @@ self.onmessage = (e: MessageEvent) => {
   };
 
   const collisionRadius = (d: SimNode) => {
-    if (d.degree >= 50) return 80; // Increased
-    if (d.degree >= 5) return 50;  // Increased
-    return 30;                    // Increased
+    if (d.degree >= 50) return 120;
+    if (d.degree >= 5) return 80;
+    return 50;
   };
 
   const simulation = forceSimulation<SimNode>(simNodes)
@@ -61,14 +61,14 @@ self.onmessage = (e: MessageEvent) => {
       'link',
       forceLink<SimNode, SimulationLinkDatum<SimNode>>(simLinks)
         .id((d) => d.id)
-        .distance(150) // Doubled from 65
+        .distance(250)
         .strength(0.8)
     )
     .force(
       'charge',
       forceManyBody<SimNode>()
-        .strength(-800) // Quadrupled magnetism from -250
-        .distanceMax(1200) // Increased range
+        .strength(-2000) // Strong repulsion to spread nodes apart
+        .distanceMax(2000)
     )
     .force(
       'center',
