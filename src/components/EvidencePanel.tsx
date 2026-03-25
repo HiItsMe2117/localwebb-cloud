@@ -1,4 +1,4 @@
-import { X, FileText, Link2, Quote, AlertTriangle, CheckCircle2, ChevronRight, Share2, MessageSquare, Info } from 'lucide-react';
+import { X, FileText, Link2, Quote, AlertTriangle, CheckCircle2, ChevronRight, Share2, MessageSquare, Info, Crosshair } from 'lucide-react';
 import type { Node, Edge } from 'reactflow';
 import { useState, useEffect } from 'react';
 import EntityChat from './EntityChat';
@@ -11,9 +11,11 @@ interface EvidencePanelProps {
   allNodes: Node[];
   onClose: () => void;
   onNodeClick: (node: Node) => void;
+  onFocusNode?: (nodeId: string) => void;
+  focusNodeId?: string | null;
 }
 
-export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, allNodes, onClose, onNodeClick }: EvidencePanelProps) {
+export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, allNodes, onClose, onNodeClick, onFocusNode, focusNodeId }: EvidencePanelProps) {
   const [activeTab, setActiveTab] = useState<'info' | 'chat'>('info');
   const isOpen = !!selectedNode || !!selectedEdge;
   const nodeMap = Object.fromEntries(allNodes.map(n => [n.id, n]));
@@ -39,6 +41,20 @@ export default function EvidencePanel({ selectedNode, selectedEdge, allEdges, al
               {nd.entityType || nd.type || 'UNKNOWN'}
             </span>
           </div>
+          {onFocusNode && (
+            <button
+              onClick={() => onFocusNode(selectedNode.id)}
+              className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border ${
+                focusNodeId === selectedNode.id
+                  ? 'bg-[#007AFF] text-white border-[#007AFF]'
+                  : 'bg-[#1C1C1E] text-[rgba(235,235,245,0.6)] border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] hover:text-white'
+              }`}
+              title="Focus on this entity's network"
+            >
+              <Crosshair size={14} />
+              Focus
+            </button>
+          )}
         </div>
 
         {nd.description && (

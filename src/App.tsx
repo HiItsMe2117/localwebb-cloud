@@ -23,6 +23,8 @@ import {
   CircleOff,
   Lock,
   SlidersHorizontal,
+  Crosshair,
+  X,
 } from 'lucide-react';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -67,6 +69,10 @@ function AppContent() {
   const [syncProgress, setSyncProgress] = useState(0);
   const [syncStatus, setSyncStatus] = useState('');
   const [focusTarget, setFocusTarget] = useState('');
+
+  // Ego network focus state
+  const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
+  const [focusDepth, setFocusDepth] = useState(1);
 
   // Targeted keyword search state
   const [targetedResults, setTargetedResults] = useState<{chunks: {id: string; text: string; filename: string; page: number; score: number}[]; stats: {total_mentions: number; unique_files: number; page: number; page_size: number; total_pages: number}} | null>(null);
@@ -312,6 +318,43 @@ function AppContent() {
     }
   }, [activeView, nodes.length, isSyncing]);
 
+  // --- Ego network focus ---
+  const egoNodeIds = useMemo(() => {
+    if (!focusNodeId) return null;
+    // BFS from focusNodeId up to focusDepth hops
+    const adj = new Map<string, string[]>();
+    for (const e of edges) {
+      if (!adj.has(e.source)) adj.set(e.source, []);
+      if (!adj.has(e.target)) adj.set(e.target, []);
+      adj.get(e.source)!.push(e.target);
+      adj.get(e.target)!.push(e.source);
+    }
+    const visited = new Set<string>([focusNodeId]);
+    let frontier = [focusNodeId];
+    for (let d = 0; d < focusDepth; d++) {
+      const next: string[] = [];
+      for (const nid of frontier) {
+        for (const neighbor of adj.get(nid) || []) {
+          if (!visited.has(neighbor)) {
+            visited.add(neighbor);
+            next.push(neighbor);
+          }
+        }
+      }
+      frontier = next;
+    }
+    return visited;
+  }, [focusNodeId, focusDepth, edges]);
+
+  const handleFocusNode = useCallback((nodeId: string) => {
+    setFocusNodeId(nodeId);
+    setFocusDepth(1);
+  }, []);
+
+  const exitFocus = useCallback(() => {
+    setFocusNodeId(null);
+  }, []);
+
   // --- Filtering pipeline ---
   // 1. Compute degreeMap from ALL edges (stable hub status regardless of filters)
   const degreeMap = useMemo(() => computeDegreeMap(edges), [edges]);
@@ -358,6 +401,13 @@ function AppContent() {
       }
     }
 
+    // Apply ego network focus filter
+    if (egoNodeIds) {
+      for (const id of Array.from(visibleIds)) {
+        if (!egoNodeIds.has(id)) visibleIds.delete(id);
+      }
+    }
+
     // Remove edges where either endpoint was filtered out
     const fEdges = yearFilteredEdges.filter(
       (e) => visibleIds.has(e.source) && visibleIds.has(e.target)
@@ -367,7 +417,7 @@ function AppContent() {
     const fNodes = nodes.filter((n) => visibleIds.has(n.id));
 
     return { filteredNodes: fNodes, filteredEdges: fEdges };
-  }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, showOutliers, deferredMinDegree, activeTypes]);
+  }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, showOutliers, deferredMinDegree, activeTypes, egoNodeIds]);
 
   // --- Graph search ---
   const graphSearchResults = useMemo(() => {
@@ -1229,6 +1279,42 @@ function AppContent() {
               )}
             </header>
             <div className="flex-1 relative">
+              {/* Ego focus bar */}
+              {focusNodeId && (
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-[#1C1C1E]/95 backdrop-blur-md border border-[#007AFF]/40 rounded-full px-4 py-2 shadow-lg shadow-black/40">
+                  <Crosshair size={14} className="text-[#007AFF] shrink-0" />
+                  <span className="text-[13px] font-semibold text-white max-w-[160px] truncate">
+                    {nodes.find(n => n.id === focusNodeId)?.data?.label || 'Entity'}
+                  </span>
+                  <div className="w-px h-4 bg-[rgba(84,84,88,0.65)]" />
+                  <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Depth</span>
+                  <button
+                    onClick={() => setFocusDepth(d => Math.max(1, d - 1))}
+                    className="w-6 h-6 rounded-full bg-[#2C2C2E] flex items-center justify-center text-[rgba(235,235,245,0.6)] hover:bg-[#3A3A3C] transition-colors"
+                    disabled={focusDepth <= 1}
+                  >
+                    <Minus size={12} />
+                  </button>
+                  <span className="text-[13px] font-mono text-[#007AFF] w-4 text-center">{focusDepth}</span>
+                  <button
+                    onClick={() => setFocusDepth(d => Math.min(5, d + 1))}
+                    className="w-6 h-6 rounded-full bg-[#2C2C2E] flex items-center justify-center text-[rgba(235,235,245,0.6)] hover:bg-[#3A3A3C] transition-colors"
+                    disabled={focusDepth >= 5}
+                  >
+                    <Plus size={12} />
+                  </button>
+                  <div className="w-px h-4 bg-[rgba(84,84,88,0.65)]" />
+                  <span className="text-[11px] text-[rgba(235,235,245,0.4)]">{filteredNodes.length} nodes</span>
+                  <button
+                    onClick={exitFocus}
+                    className="w-6 h-6 rounded-full bg-[#FF453A]/20 flex items-center justify-center text-[#FF453A] hover:bg-[#FF453A]/30 transition-colors"
+                    title="Exit focus mode"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+
               {/* Loading overlay */}
               {(isExtractingInsights || isLayouting) && (
                 <SyncOverlay />
@@ -1683,6 +1769,8 @@ function AppContent() {
           allNodes={nodes}
           onClose={closePanel}
           onNodeClick={handleEvidenceNodeClick}
+          onFocusNode={handleFocusNode}
+          focusNodeId={focusNodeId}
         />
       </main>
 
