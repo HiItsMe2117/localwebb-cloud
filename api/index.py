@@ -3338,6 +3338,56 @@ async def get_datasets(user = Depends(require_admin)):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.get("/api/urls")
+async def extract_urls(user = Depends(require_admin)):
+    """Extract URLs found in document text stored in document_chunks."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        import re
+        url_pattern = re.compile(r'https?://[^\s<>"\')\]},;]+')
+
+        # Fetch chunks that likely contain URLs (much faster than scanning all)
+        all_urls: dict[str, list] = {}  # url -> [{filename, page}]
+        offset = 0
+        page_size = 1000
+        while True:
+            res = supabase.table("document_chunks")\
+                .select("text, filename, page")\
+                .or_("text.ilike.%http://%,text.ilike.%https://%")\
+                .range(offset, offset + page_size - 1)\
+                .execute()
+            for row in res.data or []:
+                found = url_pattern.findall(row.get("text") or "")
+                for raw_url in found:
+                    # Clean trailing punctuation
+                    url = raw_url.rstrip(".,;:!?)")
+                    if len(url) < 12:
+                        continue
+                    if url not in all_urls:
+                        all_urls[url] = []
+                    # Track up to 3 sources per URL
+                    if len(all_urls[url]) < 3:
+                        all_urls[url].append({
+                            "filename": row.get("filename", ""),
+                            "page": row.get("page"),
+                        })
+            if len(res.data or []) < page_size:
+                break
+            offset += page_size
+
+        # Sort by number of sources (most-referenced first)
+        results = [
+            {"url": url, "count": len(sources), "sources": sources}
+            for url, sources in all_urls.items()
+        ]
+        results.sort(key=lambda x: x["count"], reverse=True)
+
+        return {"urls": results, "total": len(results)}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.get("/api/infrastructure-health")
 async def infrastructure_health(user = Depends(require_admin)):
     """Probe GCS, Pinecone, Supabase, and API server health in parallel."""
