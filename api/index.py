@@ -3394,15 +3394,80 @@ async def extract_urls(user = Depends(require_admin)):
                             "page": row.get("page"),
                         })
 
-        results = [
-            {"url": url, "count": len(sources), "sources": sources}
-            for url, sources in all_urls.items()
+        # Junk detection heuristics
+        JUNK_DOMAINS = {
+            "protect2.fireeye.com", "protect2.fireeye.corn", "protect2.fireeye.coin",
+            "photos.app.goo.gl", "goo.gl",
+            "outlook.office365.us", "outlook.office365.com",
+            "zoom.us", "us02web.zoom.us", "zoomgov.com",
+            "webex.com", "usao.webex.com", "help.webex.com",
+            "e2.gov.cwtsatotravel.com", "e2.gov.ewtsatotravel.com",
+            "app.certify.me",
+            "mail.google.com", "drive.google.com", "docs.google.com",
+            "google.com", "www.google.com",
+            "symanteccloud.com", "xerox.com", "office.com",
+        }
+        JUNK_PARTIALS = [
+            "dojnet.doj.gov", "bop.tcp.doj.gov", "bop.tep.doj.gov",
+            "bopicp.doj.gov", "bopacp.doj.gov",
+            "sentinel.fbinet", "sentinelfbinet", "sentinelibi", "sentmel.",
+            "sentinal", "senlineli", "sentinsl",
+            "dlpe.nss.pae.com", "d1pe.nss.pae.com",
+            "usanet.usa.do", "portal.doj.gov",
         ]
-        results.sort(key=lambda x: x["count"], reverse=True)
+        # OCR artifacts: common misreads of .com/ .org/ .gov/
+        OCR_TLDS = re.compile(
+            r'\.(corn|coml|comi|comj|comt|comx|cotni|cotn|comk|cotre|corni|cornt)'
+            r'|\.govijm|\.govisit|\.govicovid|\.goviusao|\.govifoia'
+            r'|\.orginews|\.orgiortkle'
+            r'|\.co\.ukjnews|\.co\.ukinews|\.co\.uldnews',
+            re.IGNORECASE
+        )
+        INTERNAL_PATTERNS = re.compile(
+            r'fbinet\.fbi|\.fbinet|domsrv|domsfv|foxhaven|crmln\d|\.atmil',
+            re.IGNORECASE
+        )
 
+        def is_junk(url):
+            from urllib.parse import urlparse
+            try:
+                host = urlparse(url).hostname or ""
+            except Exception:
+                return True
+            # Very short or broken hostnames
+            if len(host) < 4 or "." not in host:
+                return True
+            # Known junk domains
+            if host in JUNK_DOMAINS or host.lstrip("www.") in JUNK_DOMAINS:
+                return True
+            # Partial domain matches (internal systems)
+            for p in JUNK_PARTIALS:
+                if p in host or p in url:
+                    return True
+            # OCR-mangled TLDs
+            if OCR_TLDS.search(url):
+                return True
+            # Internal/classified gov systems
+            if INTERNAL_PATTERNS.search(url):
+                return True
+            return False
+
+        results = []
+        for url, sources in all_urls.items():
+            results.append({
+                "url": url,
+                "count": len(sources),
+                "sources": sources,
+                "junk": is_junk(url),
+            })
+        results.sort(key=lambda x: (-int(not x["junk"]), -x["count"]))
+
+        junk_count = sum(1 for r in results if r["junk"])
         return {
             "urls": results,
             "total": len(results),
+            "junk_count": junk_count,
+            "clean_count": len(results) - junk_count,
             "chunks_scanned": chunks_scanned,
             "complete": not timed_out,
             "elapsed_s": round(time.time() - t0, 1),

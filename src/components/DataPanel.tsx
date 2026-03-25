@@ -60,7 +60,7 @@ interface PipelineStatus {
   last_updated: string | null;
 }
 
-function UrlRow({ item }: { item: { url: string; count: number; sources: { filename: string; page: number | null }[] } }) {
+function UrlRow({ item }: { item: { url: string; count: number; junk?: boolean; sources: { filename: string; page: number | null }[] } }) {
   const [copied, setCopied] = useState(false);
   const domain = (() => {
     try { return new URL(item.url).hostname.replace('www.', ''); } catch { return ''; }
@@ -1035,11 +1035,14 @@ export default function DataPanel() {
   const bulkAbortRef = useRef(false);
 
   // Extracted URLs state
-  const [urls, setUrls] = useState<{ url: string; count: number; sources: { filename: string; page: number | null }[] }[]>([]);
+  const [urls, setUrls] = useState<{ url: string; count: number; junk?: boolean; sources: { filename: string; page: number | null }[] }[]>([]);
   const [urlsLoading, setUrlsLoading] = useState(false);
   const [urlsLoaded, setUrlsLoaded] = useState(false);
   const [urlsTotal, setUrlsTotal] = useState(0);
+  const [urlsJunkCount, setUrlsJunkCount] = useState(0);
+  const [urlsCleanCount, setUrlsCleanCount] = useState(0);
   const [urlsExpanded, setUrlsExpanded] = useState(false);
+  const [urlsTab, setUrlsTab] = useState<'clean' | 'junk'>('clean');
 
   const fetchUrls = useCallback(async () => {
     setUrlsLoading(true);
@@ -1047,7 +1050,10 @@ export default function DataPanel() {
       const res = await axios.get('/api/urls');
       setUrls(res.data.urls || []);
       setUrlsTotal(res.data.total || 0);
+      setUrlsJunkCount(res.data.junk_count || 0);
+      setUrlsCleanCount(res.data.clean_count || 0);
       setUrlsLoaded(true);
+      setUrlsExpanded(false);
     } catch (err) {
       console.error('Failed to fetch URLs:', err);
     } finally {
@@ -1310,23 +1316,64 @@ export default function DataPanel() {
               <p className="text-[12px] text-[rgba(235,235,245,0.3)]">No URLs found in documents.</p>
             )}
 
-            {urlsLoaded && urls.length > 0 && (
-              <div>
-                <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
-                  {(urlsExpanded ? urls : urls.slice(0, 20)).map((item, i) => (
-                    <UrlRow key={i} item={item} />
-                  ))}
+            {urlsLoaded && urls.length > 0 && (() => {
+              const filtered = urls.filter(u => urlsTab === 'clean' ? !u.junk : u.junk);
+              const tabCount = urlsTab === 'clean' ? urlsCleanCount : urlsJunkCount;
+              return (
+                <div>
+                  {/* Tabs */}
+                  <div className="flex gap-1 mb-3">
+                    <button
+                      onClick={() => { setUrlsTab('clean'); setUrlsExpanded(false); }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all ${
+                        urlsTab === 'clean'
+                          ? 'bg-[#5AC8FA]/20 text-[#5AC8FA] border border-[#5AC8FA]/30'
+                          : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.4)] border border-transparent hover:text-[rgba(235,235,245,0.6)]'
+                      }`}
+                    >
+                      Relevant
+                      <span className="text-[10px] opacity-70">{urlsCleanCount.toLocaleString()}</span>
+                    </button>
+                    <button
+                      onClick={() => { setUrlsTab('junk'); setUrlsExpanded(false); }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all ${
+                        urlsTab === 'junk'
+                          ? 'bg-[#FF9F0A]/20 text-[#FF9F0A] border border-[#FF9F0A]/30'
+                          : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.4)] border border-transparent hover:text-[rgba(235,235,245,0.6)]'
+                      }`}
+                    >
+                      Possible Junk
+                      <span className="text-[10px] opacity-70">{urlsJunkCount.toLocaleString()}</span>
+                    </button>
+                  </div>
+
+                  {urlsTab === 'junk' && (
+                    <p className="text-[11px] text-[#FF9F0A]/60 mb-2">
+                      OCR artifacts, internal systems, email wrappers — review in case something important is hiding here.
+                    </p>
+                  )}
+
+                  <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
+                    {(urlsExpanded ? filtered : filtered.slice(0, 20)).map((item, i) => (
+                      <UrlRow key={i} item={item} />
+                    ))}
+                  </div>
+                  {filtered.length > 20 && (
+                    <button
+                      onClick={() => setUrlsExpanded(!urlsExpanded)}
+                      className="mt-2 text-[12px] text-[#5AC8FA] hover:underline"
+                    >
+                      {urlsExpanded ? 'Show less' : `Show all ${tabCount.toLocaleString()} URLs`}
+                    </button>
+                  )}
+                  {filtered.length === 0 && (
+                    <p className="text-[12px] text-[rgba(235,235,245,0.3)]">
+                      {urlsTab === 'junk' ? 'No junk URLs detected.' : 'No relevant URLs found.'}
+                    </p>
+                  )}
                 </div>
-                {urls.length > 20 && (
-                  <button
-                    onClick={() => setUrlsExpanded(!urlsExpanded)}
-                    className="mt-2 text-[12px] text-[#5AC8FA] hover:underline"
-                  >
-                    {urlsExpanded ? 'Show less' : `Show all ${urls.length.toLocaleString()} URLs`}
-                  </button>
-                )}
-              </div>
-            )}
+              );
+            })()}
           </div>
 
           {status?.totals && (
