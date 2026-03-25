@@ -165,15 +165,33 @@ function AppContent() {
           data: { ...n.data, degree: degree.get(n.id) || 0 },
         }));
 
-        const atOrigin = enriched.filter((n) => Math.abs(n.position.x) < 1 && Math.abs(n.position.y) < 1).length;
-        const hasLayout = atOrigin < enriched.length * 0.3;
+        // Pre-filter to visible nodes for layout check (avoid running d3 on 8k+ nodes)
+        const visibleNodes = enriched.filter((n) => (degree.get(n.id) || 0) >= deg);
+        const visibleIds = new Set(visibleNodes.map((n) => n.id));
+        const visibleEdges = rawEdges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
+
+        const atOrigin = visibleNodes.filter((n) => Math.abs(n.position.x) < 1 && Math.abs(n.position.y) < 1).length;
+        const hasLayout = visibleNodes.length === 0 || atOrigin < visibleNodes.length * 0.3;
 
         if (hasLayout) {
           setNodes(enriched);
           setEdges(rawEdges);
         } else {
-          console.log("No layout detected, running auto-layout...");
-          await applyForceLayout(enriched, rawEdges);
+          console.log(`No layout detected for ${visibleNodes.length} visible nodes, running auto-layout...`);
+          // Layout only visible nodes, then merge positions back into full set
+          setIsLayouting(true);
+          try {
+            const { nodes: laid } = await getLayoutedElements(visibleNodes, visibleEdges);
+            const posMap = new Map(laid.map((n) => [n.id, n.position]));
+            const merged = enriched.map((n) => posMap.has(n.id) ? { ...n, position: posMap.get(n.id)! } : n);
+            setNodes(merged);
+            setEdges(rawEdges);
+            // Persist only the newly laid-out positions
+            const updates = laid.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y }));
+            axios.post('/api/graph/positions', updates).catch(() => {});
+          } finally {
+            setIsLayouting(false);
+          }
         }
       } else {
         setNodes([]);
