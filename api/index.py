@@ -3340,50 +3340,73 @@ async def get_datasets(user = Depends(require_admin)):
 
 @app.get("/api/urls")
 async def extract_urls(user = Depends(require_admin)):
-    """Extract URLs found in document text stored in document_chunks."""
+    """Extract URLs found in document text stored in document_chunks.
+
+    Uses cursor-based pagination keyed on id to avoid full-table scans.
+    Returns partial results after 45s to stay within Vercel limits.
+    """
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
         import re
         url_pattern = re.compile(r'https?://[^\s<>"\')\]},;]+')
 
-        # Fetch chunks that likely contain URLs (much faster than scanning all)
         all_urls = {}  # url -> [{filename, page}]
-        offset = 0
-        page_size = 1000
+        cursor = ""  # last seen id for keyset pagination
+        page_size = 500
+        chunks_scanned = 0
+        t0 = time.time()
+        timed_out = False
+
         while True:
-            res = supabase.table("document_chunks")\
-                .select("text, filename, page")\
-                .or_("text.ilike.*http://*,text.ilike.*https://*")\
-                .range(offset, offset + page_size - 1)\
-                .execute()
-            for row in res.data or []:
-                found = url_pattern.findall(row.get("text") or "")
+            # Time cap: return what we have after 45s
+            if time.time() - t0 > 45:
+                timed_out = True
+                break
+
+            query = supabase.table("document_chunks")\
+                .select("id, text, filename, page")\
+                .order("id")\
+                .limit(page_size)
+            if cursor:
+                query = query.gt("id", cursor)
+            res = query.execute()
+            rows = res.data or []
+            if not rows:
+                break
+            cursor = rows[-1]["id"]
+            chunks_scanned += len(rows)
+
+            for row in rows:
+                text = row.get("text") or ""
+                if "http" not in text:
+                    continue
+                found = url_pattern.findall(text)
                 for raw_url in found:
-                    # Clean trailing punctuation
                     url = raw_url.rstrip(".,;:!?)")
                     if len(url) < 12:
                         continue
                     if url not in all_urls:
                         all_urls[url] = []
-                    # Track up to 3 sources per URL
                     if len(all_urls[url]) < 3:
                         all_urls[url].append({
                             "filename": row.get("filename", ""),
                             "page": row.get("page"),
                         })
-            if len(res.data or []) < page_size:
-                break
-            offset += page_size
 
-        # Sort by number of sources (most-referenced first)
         results = [
             {"url": url, "count": len(sources), "sources": sources}
             for url, sources in all_urls.items()
         ]
         results.sort(key=lambda x: x["count"], reverse=True)
 
-        return {"urls": results, "total": len(results)}
+        return {
+            "urls": results,
+            "total": len(results),
+            "chunks_scanned": chunks_scanned,
+            "complete": not timed_out,
+            "elapsed_s": round(time.time() - t0, 1),
+        }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
