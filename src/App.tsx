@@ -66,6 +66,7 @@ function AppContent() {
   const [minDegree, setMinDegree] = useState(200);
   const [showOutliers, setShowOutliers] = useState(true);
   const [showEdgeLabels, setShowEdgeLabels] = useState(true);
+  const [showAllEdges, setShowAllEdges] = useState(false);
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());  // empty = show all
   const [isLayouting, setIsLayouting] = useState(false);
   const [syncProgress, setSyncProgress] = useState(0);
@@ -424,9 +425,10 @@ function AppContent() {
 
   // 4. Only show edges connected to the active node (persists after closing panel)
   const displayEdges = useMemo(() => {
+    if (showAllEdges) return filteredEdges;
     if (!activeNodeId) return [];
     return filteredEdges.filter(e => e.source === activeNodeId || e.target === activeNodeId);
-  }, [filteredEdges, activeNodeId]);
+  }, [filteredEdges, activeNodeId, showAllEdges]);
 
   // --- Graph search ---
   const graphSearchResults = useMemo(() => {
@@ -1259,6 +1261,16 @@ function AppContent() {
                   >
                     <Type size={14} />
                     {showEdgeLabels ? 'Labels On' : 'Labels Off'}
+                  </button>
+                  <button
+                    onClick={() => setShowAllEdges(!showAllEdges)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium transition-all border border-[rgba(84,84,88,0.65)] ${
+                      showAllEdges ? 'bg-[#007AFF] text-white border-[#007AFF]' : 'bg-[#1C1C1E] text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E]'
+                    }`}
+                    title={showAllEdges ? "Hide All Edges" : "Show All Edges"}
+                  >
+                    <Network size={14} />
+                    {showAllEdges ? 'All Edges' : 'Edges Off'}
                   </button>
                   {/* Entity type filter pills */}
                   {(() => {
