@@ -98,6 +98,7 @@ function AppContent() {
   // Evidence panel state
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -421,12 +422,11 @@ function AppContent() {
     return { filteredNodes: fNodes, filteredEdges: fEdges };
   }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, showOutliers, deferredMinDegree, activeTypes, egoNodeIds]);
 
-  // 4. Only show edges connected to the selected node (hide all when nothing selected)
+  // 4. Only show edges connected to the active node (persists after closing panel)
   const displayEdges = useMemo(() => {
-    if (!selectedNode) return [];
-    const id = selectedNode.id;
-    return filteredEdges.filter(e => e.source === id || e.target === id);
-  }, [filteredEdges, selectedNode]);
+    if (!activeNodeId) return [];
+    return filteredEdges.filter(e => e.source === activeNodeId || e.target === activeNodeId);
+  }, [filteredEdges, activeNodeId]);
 
   // --- Graph search ---
   const graphSearchResults = useMemo(() => {
@@ -462,11 +462,13 @@ function AppContent() {
   const handleNodeClick = useCallback((node: Node) => {
     setSelectedEdge(null);
     setSelectedNode(node);
+    setActiveNodeId(node.id);
   }, []);
 
   const handleEvidenceNodeClick = useCallback((node: Node) => {
     setSelectedNode(node);
     setSelectedEdge(null);
+    setActiveNodeId(node.id);
     // Center the map on this node
     setCenter(node.position.x, node.position.y, { zoom: 1.2, duration: 800 });
   }, [setCenter]);
@@ -479,6 +481,13 @@ function AppContent() {
   const closePanel = useCallback(() => {
     setSelectedNode(null);
     setSelectedEdge(null);
+    // activeNodeId intentionally NOT cleared — edges stay visible
+  }, []);
+
+  const handlePaneClick = useCallback(() => {
+    setSelectedNode(null);
+    setSelectedEdge(null);
+    setActiveNodeId(null);
   }, []);
 
   const selectSearchResult = useCallback((node: Node) => {
@@ -1358,6 +1367,7 @@ function AppContent() {
                 onNodeDragStop={onNodeDragStop}
                 onNodeClick={handleNodeClick}
                 onEdgeClick={handleEdgeClick}
+                onPaneClick={handlePaneClick}
                 yearFilter={yearFilter}
                 onYearFilterChange={setYearFilter}
                 onLayout={onLayout}

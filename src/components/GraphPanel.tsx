@@ -11,6 +11,7 @@ interface GraphPanelProps {
   onNodeDragStop: (event: any, node: Node) => void;
   onNodeClick: (node: Node) => void;
   onEdgeClick: (edge: Edge) => void;
+  onPaneClick?: () => void;
   communities: Community[];
   open: boolean;
   onClose: () => void;
@@ -24,7 +25,7 @@ interface GraphPanelProps {
 
 function GraphPanel({
   nodes, edges, onNodesChange, onEdgesChange, onNodeDragStop,
-  onNodeClick, onEdgeClick, communities: _communities, minDegree: _minDegree, onMinDegreeChange: _onMinDegreeChange,
+  onNodeClick, onEdgeClick, onPaneClick, communities: _communities, minDegree: _minDegree, onMinDegreeChange: _onMinDegreeChange,
   showEdgeLabels
 }: GraphPanelProps) {
 
@@ -40,6 +41,7 @@ function GraphPanel({
           onNodeDragStop={onNodeDragStop}
           onNodeClick={onNodeClick}
           onEdgeClick={onEdgeClick}
+          onPaneClick={onPaneClick}
           height="100%"
           showEdgeLabels={showEdgeLabels}
         />
