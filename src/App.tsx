@@ -5,6 +5,7 @@ import InputBar from './components/InputBar';
 import GraphPanel from './components/GraphPanel';
 import EvidencePanel from './components/EvidencePanel';
 import DataPanel from './components/DataPanel';
+import UrlsPanel from './components/UrlsPanel';
 import {
   Upload,
   RefreshCw,
@@ -15,6 +16,7 @@ import {
   FileText,
   Loader2,
   HardDrive,
+  Globe,
   Plus,
   Minus,
   Type,
@@ -41,7 +43,7 @@ import { useAuth } from './contexts/AuthContext';
 import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source, WebSource } from './types';
 import TheoryInvestigation from './components/TheoryInvestigation';
 
-type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases' | 'account';
+type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases' | 'account' | 'urls';
 
 function AppContent() {
   const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, user, refreshSession } = useAuth();
@@ -418,6 +420,13 @@ function AppContent() {
 
     return { filteredNodes: fNodes, filteredEdges: fEdges };
   }, [nodes, edges, yearFilteredEdges, deferredYearFilter, degreeMap, showOutliers, deferredMinDegree, activeTypes, egoNodeIds]);
+
+  // 4. Only show edges connected to the selected node (hide all when nothing selected)
+  const displayEdges = useMemo(() => {
+    if (!selectedNode) return [];
+    const id = selectedNode.id;
+    return filteredEdges.filter(e => e.source === id || e.target === id);
+  }, [filteredEdges, selectedNode]);
 
   // --- Graph search ---
   const graphSearchResults = useMemo(() => {
@@ -1029,6 +1038,7 @@ function AppContent() {
     { id: 'chat', label: 'Chat', icon: MessageSquare },
     { id: 'cases', label: 'Cases', icon: Shield },
     { id: 'graph', label: 'Graph', icon: Network },
+    { id: 'urls', label: 'URLs', icon: Globe },
     ...(isAdmin ? [{ id: 'docs' as View, label: 'Docs', icon: Database }] : []),
     ...(isAdmin ? [{ id: 'data' as View, label: 'Data', icon: HardDrive }] : []),
   ];
@@ -1333,7 +1343,7 @@ function AppContent() {
                 open={true}
                 onClose={() => {}}
                 nodes={filteredNodes}
-                edges={filteredEdges}
+                edges={displayEdges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onNodeDragStop={onNodeDragStop}
@@ -1751,6 +1761,10 @@ function AppContent() {
               readOnly={readOnly}
             />
           )
+        )}
+
+        {activeView === 'urls' && (
+          <UrlsPanel />
         )}
 
         {activeView === 'data' && (
