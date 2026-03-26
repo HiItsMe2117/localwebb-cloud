@@ -1199,25 +1199,34 @@ function AppContent() {
                   </div>
                   <div className="flex items-center gap-1 bg-[#1C1C1E] px-2 py-1.5 rounded-full border border-[rgba(84,84,88,0.65)]">
                     <button
-                      onClick={() => setMinDegree(Math.max(0, minDegree - 1))}
+                      onClick={() => setMinDegree(Math.max(0, minDegree - 10))}
                       className="p-1 hover:bg-[#2C2C2E] rounded-full transition-colors text-[rgba(235,235,245,0.6)]"
-                      title="Decrease connections threshold"
+                      title="Decrease connections threshold by 10"
                     >
                       <Minus size={14} />
                     </button>
                     <input
                       type="text"
-                      value={minDegree === 0 ? 'All' : `${minDegree}+`}
-                      onChange={(e) => {
+                      defaultValue={minDegree === 0 ? 'All' : `${minDegree}+`}
+                      key={minDegree}
+                      onFocus={(e) => {
+                        e.target.value = minDegree === 0 ? '' : String(minDegree);
+                        e.target.select();
+                      }}
+                      onBlur={(e) => {
                         const raw = e.target.value.replace(/[^0-9]/g, '');
-                        setMinDegree(raw === '' ? 0 : parseInt(raw, 10));
+                        const val = raw === '' ? 0 : parseInt(raw, 10);
+                        setMinDegree(val);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                       }}
                       className="text-[13px] font-mono text-[rgba(235,235,245,0.6)] min-w-[40px] w-[48px] text-center bg-transparent outline-none border-none"
                     />
                     <button
-                      onClick={() => setMinDegree(minDegree + 1)}
+                      onClick={() => setMinDegree(minDegree + 10)}
                       className="p-1 hover:bg-[#2C2C2E] rounded-full transition-colors text-[rgba(235,235,245,0.6)]"
-                      title="Increase connections threshold"
+                      title="Increase connections threshold by 10"
                     >
                       <Plus size={14} />
                     </button>
