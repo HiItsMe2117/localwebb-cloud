@@ -61,7 +61,7 @@ function AppContent() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [yearFilter, setYearFilter] = useState(2026);
-  const [minDegree, setMinDegree] = useState(50);
+  const [minDegree, setMinDegree] = useState(200);
   const [showOutliers, setShowOutliers] = useState(true);
   const [showEdgeLabels, setShowEdgeLabels] = useState(true);
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());  // empty = show all
