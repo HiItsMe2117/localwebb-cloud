@@ -3338,9 +3338,44 @@ async def get_datasets(user = Depends(require_admin)):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/urls")
-async def extract_urls(user = Depends(require_admin)):
-    """Extract URLs found in document text stored in document_chunks.
+@app.get("/api/urls/saved")
+async def get_saved_urls(user = Depends(require_user)):
+    """Return pre-extracted URLs from the database."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        res = supabase.table("extracted_urls")\
+            .select("url, domain, mention_count, is_junk, sources, extracted_at")\
+            .order("is_junk")\
+            .order("mention_count", desc=True)\
+            .execute()
+        rows = res.data or []
+
+        urls = [{
+            "url": r["url"],
+            "domain": r["domain"],
+            "count": r["mention_count"],
+            "junk": r["is_junk"],
+            "sources": r["sources"] or [],
+        } for r in rows]
+
+        junk_count = sum(1 for u in urls if u["junk"])
+        extracted_at = rows[0]["extracted_at"] if rows else None
+
+        return {
+            "urls": urls,
+            "total": len(urls),
+            "junk_count": junk_count,
+            "clean_count": len(urls) - junk_count,
+            "extracted_at": extracted_at,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/urls/extract")
+async def extract_and_save_urls(user = Depends(require_admin)):
+    """Extract URLs from document_chunks and persist to extracted_urls table.
 
     Uses cursor-based pagination keyed on id to avoid full-table scans.
     Returns partial results after 45s to stay within Vercel limits.
@@ -3349,6 +3384,7 @@ async def extract_urls(user = Depends(require_admin)):
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
     try:
         import re
+        from urllib.parse import urlparse
         url_pattern = re.compile(r'https?://[^\s<>"\')\]},;]+')
 
         all_urls = {}  # url -> [{filename, page}]
@@ -3359,7 +3395,6 @@ async def extract_urls(user = Depends(require_admin)):
         timed_out = False
 
         while True:
-            # Time cap: return what we have after 45s
             if time.time() - t0 > 45:
                 timed_out = True
                 break
@@ -3415,7 +3450,6 @@ async def extract_urls(user = Depends(require_admin)):
             "dlpe.nss.pae.com", "d1pe.nss.pae.com",
             "usanet.usa.do", "portal.doj.gov",
         ]
-        # OCR artifacts: common misreads of .com/ .org/ .gov/
         OCR_TLDS = re.compile(
             r'\.(corn|coml|comi|comj|comt|comx|cotni|cotn|comk|cotre|corni|cornt)'
             r'|\.govijm|\.govisit|\.govicovid|\.goviusao|\.govifoia'
@@ -3429,42 +3463,57 @@ async def extract_urls(user = Depends(require_admin)):
         )
 
         def is_junk(url):
-            from urllib.parse import urlparse
             try:
                 host = urlparse(url).hostname or ""
             except Exception:
                 return True
-            # Very short or broken hostnames
             if len(host) < 4 or "." not in host:
                 return True
-            # Known junk domains
             if host in JUNK_DOMAINS or host.lstrip("www.") in JUNK_DOMAINS:
                 return True
-            # Partial domain matches (internal systems)
             for p in JUNK_PARTIALS:
                 if p in host or p in url:
                     return True
-            # OCR-mangled TLDs
             if OCR_TLDS.search(url):
                 return True
-            # Internal/classified gov systems
             if INTERNAL_PATTERNS.search(url):
                 return True
             return False
 
+        # Build results with pre-computed domain
         results = []
         for url, sources in all_urls.items():
+            try:
+                domain = urlparse(url).hostname or ""
+                if domain.startswith("www."):
+                    domain = domain[4:]
+            except Exception:
+                domain = ""
             results.append({
                 "url": url,
-                "count": len(sources),
+                "domain": domain,
+                "mention_count": len(sources),
                 "sources": sources,
-                "junk": is_junk(url),
+                "is_junk": is_junk(url),
             })
-        results.sort(key=lambda x: (-int(not x["junk"]), -x["count"]))
+        results.sort(key=lambda x: (-int(not x["is_junk"]), -x["mention_count"]))
 
-        junk_count = sum(1 for r in results if r["junk"])
+        # Persist: clear old data, insert new in batches
+        supabase.table("extracted_urls").delete().neq("id", 0).execute()
+        batch_size = 200
+        for i in range(0, len(results), batch_size):
+            batch = results[i:i + batch_size]
+            supabase.table("extracted_urls").insert(batch).execute()
+
+        junk_count = sum(1 for r in results if r["is_junk"])
         return {
-            "urls": results,
+            "urls": [{
+                "url": r["url"],
+                "domain": r["domain"],
+                "count": r["mention_count"],
+                "junk": r["is_junk"],
+                "sources": r["sources"],
+            } for r in results],
             "total": len(results),
             "junk_count": junk_count,
             "clean_count": len(results) - junk_count,
