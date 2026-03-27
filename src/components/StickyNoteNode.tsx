@@ -46,7 +46,7 @@ function StickyNoteNode({ id, data, selected }: NodeProps) {
   const [expandedMedia, setExpandedMedia] = useState<string | null>(null);
   const [linkInput, setLinkInput] = useState('');
   const [showLinkInput, setShowLinkInput] = useState(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 

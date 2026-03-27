@@ -186,31 +186,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   }, [groups]);
 
   // Apply selection styling, uniform sizing, and per-node scale to nodes
-  const displayNodes = useMemo(() =>
-    nodes.map(n => {
-      if (n.type === 'stickyNote') {
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            caseId,
-            onUpdate: updateStickyNote,
-            onDelete: deleteStickyNote,
-            onMediaUpload: uploadStickyMedia,
-            onMediaDelete: deleteStickyMedia,
-          },
-          selected: selectedNodeIds.has(n.id),
-        };
-      }
-      return {
-        ...n,
-        data: { ...n.data, degree: 10, scale: nodeScales[n.id] ?? 1 },
-        selected: selectedNodeIds.has(n.id),
-      };
-    }),
-    [nodes, selectedNodeIds, nodeScales, caseId, updateStickyNote, deleteStickyNote, uploadStickyMedia, deleteStickyMedia]
-  );
-
   // Copy selected node details
   const copySelectedNodes = useCallback(async () => {
     const selected = nodes.filter(n => selectedNodeIds.has(n.id));
@@ -570,6 +545,31 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       console.error('Failed to delete media:', err);
     }
   }, [caseId, loadGraph]);
+
+  const displayNodes = useMemo(() =>
+    nodes.map(n => {
+      if (n.type === 'stickyNote') {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            caseId,
+            onUpdate: updateStickyNote,
+            onDelete: deleteStickyNote,
+            onMediaUpload: uploadStickyMedia,
+            onMediaDelete: deleteStickyMedia,
+          },
+          selected: selectedNodeIds.has(n.id),
+        };
+      }
+      return {
+        ...n,
+        data: { ...n.data, degree: 10, scale: nodeScales[n.id] ?? 1 },
+        selected: selectedNodeIds.has(n.id),
+      };
+    }),
+    [nodes, selectedNodeIds, nodeScales, caseId, updateStickyNote, deleteStickyNote, uploadStickyMedia, deleteStickyMedia]
+  );
 
   // Check for saved viewport on mount
   useEffect(() => {
