@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, Calendar, AlertTriangle, Globe, Database } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, Calendar, AlertTriangle, Globe, Database, StickyNote } from 'lucide-react';
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide } from 'd3-force';
 import NexusCanvas from './NexusCanvas';
 import EdgeEvidencePanel from './EdgeEvidencePanel';
@@ -187,12 +187,28 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
   // Apply selection styling, uniform sizing, and per-node scale to nodes
   const displayNodes = useMemo(() =>
-    nodes.map(n => ({
-      ...n,
-      data: { ...n.data, degree: 10, scale: nodeScales[n.id] ?? 1 },
-      selected: selectedNodeIds.has(n.id),
-    })),
-    [nodes, selectedNodeIds, nodeScales]
+    nodes.map(n => {
+      if (n.type === 'stickyNote') {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            caseId,
+            onUpdate: updateStickyNote,
+            onDelete: deleteStickyNote,
+            onMediaUpload: uploadStickyMedia,
+            onMediaDelete: deleteStickyMedia,
+          },
+          selected: selectedNodeIds.has(n.id),
+        };
+      }
+      return {
+        ...n,
+        data: { ...n.data, degree: 10, scale: nodeScales[n.id] ?? 1 },
+        selected: selectedNodeIds.has(n.id),
+      };
+    }),
+    [nodes, selectedNodeIds, nodeScales, caseId, updateStickyNote, deleteStickyNote, uploadStickyMedia, deleteStickyMedia]
   );
 
   // Copy selected node details
@@ -490,6 +506,71 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId, newEntityLabel, newEntityType, loadGraph]);
 
+  // --- Sticky Notes ---
+  const [isCreatingSticky, setIsCreatingSticky] = useState(false);
+
+  const createStickyNote = useCallback(async () => {
+    setIsCreatingSticky(true);
+    try {
+      const { x, y, zoom } = getViewport();
+      const centerX = (-x + window.innerWidth / 2) / zoom;
+      const centerY = (-y + window.innerHeight / 2) / zoom;
+      await axios.post(`/api/cases/${caseId}/graph/sticky-notes`, {
+        position_x: centerX,
+        position_y: centerY,
+      });
+      await loadGraph();
+    } catch (err) {
+      console.error('Failed to create sticky note:', err);
+      toast.error('Failed to create note');
+    } finally {
+      setIsCreatingSticky(false);
+    }
+  }, [caseId, loadGraph, getViewport]);
+
+  const updateStickyNote = useCallback(async (noteId: string, updates: Record<string, any>) => {
+    try {
+      await axios.patch(`/api/cases/${caseId}/graph/sticky-notes/${noteId}`, updates);
+    } catch (err) {
+      console.error('Failed to update sticky note:', err);
+    }
+  }, [caseId]);
+
+  const deleteStickyNote = useCallback(async (noteId: string) => {
+    try {
+      await axios.delete(`/api/cases/${caseId}/graph/sticky-notes/${noteId}`);
+      await loadGraph();
+    } catch (err) {
+      console.error('Failed to delete sticky note:', err);
+      toast.error('Failed to delete note');
+    }
+  }, [caseId, loadGraph]);
+
+  const uploadStickyMedia = useCallback(async (noteId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      await axios.post(
+        `/api/cases/${caseId}/graph/sticky-notes/${noteId}/media`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+      await loadGraph();
+    } catch (err) {
+      console.error('Failed to upload media:', err);
+      toast.error('Failed to upload file');
+    }
+  }, [caseId, loadGraph]);
+
+  const deleteStickyMedia = useCallback(async (noteId: string, mediaId: string) => {
+    try {
+      await axios.delete(`/api/cases/${caseId}/graph/sticky-notes/${noteId}/media/${mediaId}`);
+      await loadGraph();
+    } catch (err) {
+      console.error('Failed to delete media:', err);
+    }
+  }, [caseId, loadGraph]);
+
   // Check for saved viewport on mount
   useEffect(() => {
     try {
@@ -708,7 +789,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const handleRemove = useCallback(async (node: Node) => {
     setContextNode(null);
     try {
-      if (node.data?.isCustom) {
+      if (node.data?.isStickyNote) {
+        await axios.delete(`/api/cases/${caseId}/graph/sticky-notes/${node.id}`);
+      } else if (node.data?.isCustom) {
         await axios.delete(`/api/cases/${caseId}/graph/custom-nodes/${node.id}`);
       } else {
         await axios.delete(`/api/cases/${caseId}/graph/entities/${node.id}`);
@@ -716,7 +799,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       await loadGraph();
     } catch (err) {
       console.error('Failed to remove entity:', err);
-      toast.error('Failed to remove entity');
+      toast.error('Failed to remove');
     }
   }, [caseId, loadGraph]);
 
@@ -1211,6 +1294,14 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             >
               <Plus size={16} />
             </button>
+            <button
+              onClick={createStickyNote}
+              disabled={isCreatingSticky}
+              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.4)] hover:border-[#FBBF24]"
+              title="Add sticky note"
+            >
+              {isCreatingSticky ? <Loader2 size={16} className="animate-spin" /> : <StickyNote size={16} />}
+            </button>
           </div>
 
           {showCreateForm && (
@@ -1320,17 +1411,21 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             }
           >
             <div className="px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)]">
-              <p className="text-[13px] font-semibold text-white truncate">{contextNode.data?.label}</p>
-              <div className="flex items-center gap-1.5">
-                <p className="text-[10px] uppercase tracking-wider font-bold" style={{ color: TYPE_COLORS[(contextNode.data?.entityType || '').toUpperCase()] || '#9ca3af' }}>
-                  {(contextNode.data?.entityType || 'unknown').toUpperCase()}
-                </p>
-                {contextNode.data?.isCustom && (
-                  <span className="text-[8px] font-bold uppercase tracking-wider text-[rgba(235,235,245,0.3)]">CUSTOM</span>
-                )}
-              </div>
+              <p className="text-[13px] font-semibold text-white truncate">
+                {contextNode.data?.isStickyNote ? 'Sticky Note' : contextNode.data?.label}
+              </p>
+              {!contextNode.data?.isStickyNote && (
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[10px] uppercase tracking-wider font-bold" style={{ color: TYPE_COLORS[(contextNode.data?.entityType || '').toUpperCase()] || '#9ca3af' }}>
+                    {(contextNode.data?.entityType || 'unknown').toUpperCase()}
+                  </p>
+                  {contextNode.data?.isCustom && (
+                    <span className="text-[8px] font-bold uppercase tracking-wider text-[rgba(235,235,245,0.3)]">CUSTOM</span>
+                  )}
+                </div>
+              )}
             </div>
-            {!contextNode.data?.isCustom && (
+            {!contextNode.data?.isStickyNote && !contextNode.data?.isCustom && (
               <button
                 onClick={() => handleExpand(contextNode)}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
@@ -1339,20 +1434,24 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                 <span className="text-[13px] text-white">Expand neighbors</span>
               </button>
             )}
-            <button
-              onClick={() => chatAboutEntity(contextNode)}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
-            >
-              <MessageCircle size={14} className="text-[#AF52DE]" />
-              <span className="text-[13px] text-white">Chat about entity</span>
-            </button>
-            <button
-              onClick={() => openDescription(contextNode)}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
-            >
-              <FileText size={14} className="text-[#30D158]" />
-              <span className="text-[13px] text-white">Description</span>
-            </button>
+            {!contextNode.data?.isStickyNote && (
+              <>
+                <button
+                  onClick={() => chatAboutEntity(contextNode)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
+                >
+                  <MessageCircle size={14} className="text-[#AF52DE]" />
+                  <span className="text-[13px] text-white">Chat about entity</span>
+                </button>
+                <button
+                  onClick={() => openDescription(contextNode)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#2C2C2E] transition-colors"
+                >
+                  <FileText size={14} className="text-[#30D158]" />
+                  <span className="text-[13px] text-white">Description</span>
+                </button>
+              </>
+            )}
 
             {/* Detach from group option */}
             {nodeGroupMap.has(contextNode.id) && (

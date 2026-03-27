@@ -682,6 +682,20 @@ class UpdateGroupRequest(BaseModel):
     color: Optional[str] = None
     node_ids: Optional[List[str]] = None
 
+class CreateStickyNoteRequest(BaseModel):
+    content: str = ""
+    color: str = "#FBBF24"
+    position_x: float = 0
+    position_y: float = 0
+    width: float = 280
+    height: float = 200
+
+class UpdateStickyNoteRequest(BaseModel):
+    content: Optional[str] = None
+    color: Optional[str] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
+
 class TheoryInvestigateRequest(BaseModel):
     theory: str
     case_ids: List[str] = []
@@ -1874,7 +1888,11 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
         custom_res = supabase.table("case_graph_custom_nodes").select("*").eq("case_id", case_id).execute()
         custom_rows = custom_res.data or []
 
-        if not pinned_rows and not custom_rows:
+        # Also fetch sticky notes
+        sticky_res = supabase.table("case_graph_sticky_notes").select("*").eq("case_id", case_id).execute()
+        sticky_rows = sticky_res.data or []
+
+        if not pinned_rows and not custom_rows and not sticky_rows:
             return {"nodes": [], "edges": []}
 
         node_ids = [r["node_id"] for r in pinned_rows]
@@ -1924,6 +1942,35 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
                 "position": {"x": cn.get("position_x") or 0, "y": cn.get("position_y") or 0},
             })
 
+        # Append sticky notes as stickyNote-type nodes
+        sticky_media_by_note = defaultdict(list)
+        sticky_ids = [s["id"] for s in sticky_rows]
+        if sticky_ids:
+            media_res = supabase.table("case_graph_sticky_media").select("*").in_("sticky_note_id", sticky_ids).execute()
+            for m in (media_res.data or []):
+                sticky_media_by_note[m["sticky_note_id"]].append({
+                    "id": m["id"],
+                    "filename": m["filename"],
+                    "media_type": m["media_type"],
+                    "mime_type": m["mime_type"],
+                })
+
+        for sn in sticky_rows:
+            nodes.append({
+                "id": sn["id"],
+                "type": "stickyNote",
+                "data": {
+                    "content": sn.get("content", ""),
+                    "color": sn.get("color", "#FBBF24"),
+                    "noteWidth": sn.get("width", 280),
+                    "noteHeight": sn.get("height", 200),
+                    "media": sticky_media_by_note.get(sn["id"], []),
+                    "isStickyNote": True,
+                },
+                "position": {"x": sn.get("position_x") or 0, "y": sn.get("position_y") or 0},
+                "style": {"width": sn.get("width", 280), "height": sn.get("height", 200)},
+            })
+
         edges = []
 
         # Fetch case-local edges
@@ -1947,8 +1994,8 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
                 },
             })
 
-        # Fetch global KG edges between pinned entities (+ custom node IDs)
-        all_node_ids = node_ids + [cn["id"] for cn in custom_rows]
+        # Fetch global KG edges between pinned entities (+ custom node IDs + sticky note IDs)
+        all_node_ids = node_ids + [cn["id"] for cn in custom_rows] + [sn["id"] for sn in sticky_rows]
         if len(all_node_ids) >= 2:
             global_edges_res = supabase.table("edges").select(
                 "id, source, target, label, predicate, evidence_text, source_filename, source_page, confidence, date_mentioned"
@@ -2053,10 +2100,16 @@ async def save_case_graph_positions(case_id: str, request: SavePositionsRequest,
             }).eq("case_id", case_id).eq("node_id", pos["node_id"]).execute()
             # If no row updated, try custom nodes table
             if not result.data:
-                supabase.table("case_graph_custom_nodes").update({
+                result2 = supabase.table("case_graph_custom_nodes").update({
                     "position_x": pos["x"],
                     "position_y": pos["y"],
                 }).eq("id", pos["node_id"]).eq("case_id", case_id).execute()
+                # If still no row, try sticky notes table
+                if not result2.data:
+                    supabase.table("case_graph_sticky_notes").update({
+                        "position_x": pos["x"],
+                        "position_y": pos["y"],
+                    }).eq("id", pos["node_id"]).eq("case_id", case_id).execute()
         return {"saved": len(request.positions)}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -2406,6 +2459,137 @@ async def delete_case_graph_group(case_id: str, group_id: str, user = Depends(re
 
         supabase.table("case_graph_groups").delete().eq("id", group_id).eq("case_id", case_id).execute()
         return {"deleted": group_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+## --- Sticky Notes ---
+
+@app.post("/api/cases/{case_id}/graph/sticky-notes")
+async def create_sticky_note(case_id: str, request: CreateStickyNoteRequest, user = Depends(require_user)):
+    """Create a sticky note on the case graph."""
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+        record = {
+            "case_id": case_id,
+            "content": request.content,
+            "color": request.color,
+            "position_x": request.position_x,
+            "position_y": request.position_y,
+            "width": request.width,
+            "height": request.height,
+        }
+        result = supabase.table("case_graph_sticky_notes").insert(record).execute()
+        return {"id": result.data[0]["id"]}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.patch("/api/cases/{case_id}/graph/sticky-notes/{note_id}")
+async def update_sticky_note(case_id: str, note_id: str, request: UpdateStickyNoteRequest, user = Depends(require_user)):
+    """Update a sticky note's content, color, or dimensions."""
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+        updates = {k: v for k, v in request.dict().items() if v is not None}
+        if not updates:
+            return {"updated": note_id}
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+        supabase.table("case_graph_sticky_notes").update(updates).eq("id", note_id).eq("case_id", case_id).execute()
+        return {"updated": note_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.delete("/api/cases/{case_id}/graph/sticky-notes/{note_id}")
+async def delete_sticky_note(case_id: str, note_id: str, user = Depends(require_user)):
+    """Delete a sticky note and its media."""
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+        # Delete media files from GCS
+        media_res = supabase.table("case_graph_sticky_media").select("gcs_path").eq("sticky_note_id", note_id).execute()
+        for m in (media_res.data or []):
+            try:
+                blob = bucket.blob(m["gcs_path"])
+                blob.delete()
+            except Exception:
+                pass
+        # Delete any case edges referencing this note
+        supabase.table("case_graph_edges").delete().eq("case_id", case_id).eq("source_node_id", note_id).execute()
+        supabase.table("case_graph_edges").delete().eq("case_id", case_id).eq("target_node_id", note_id).execute()
+        # Cascade handles sticky_media rows
+        supabase.table("case_graph_sticky_notes").delete().eq("id", note_id).eq("case_id", case_id).execute()
+        return {"deleted": note_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/api/cases/{case_id}/graph/sticky-notes/{note_id}/media")
+async def upload_sticky_media(case_id: str, note_id: str, file: UploadFile = File(...), user = Depends(require_user)):
+    """Upload a photo or video to a sticky note."""
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+        safe_filename = os.path.basename(file.filename or "upload")
+        ext = os.path.splitext(safe_filename)[1].lower()
+
+        image_exts = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        video_exts = {'.mp4', '.webm', '.mov'}
+        if ext in image_exts:
+            media_type = 'image'
+        elif ext in video_exts:
+            media_type = 'video'
+        else:
+            return JSONResponse(status_code=400, content={"error": f"Unsupported file type: {ext}"})
+
+        content = await file.read()
+        if len(content) > 50 * 1024 * 1024:  # 50MB limit
+            return JSONResponse(status_code=400, content={"error": "File too large (50MB max)"})
+
+        unique_name = f"{uuid.uuid4().hex}_{safe_filename}"
+        gcs_path = f"sticky-media/{case_id}/{note_id}/{unique_name}"
+        blob = bucket.blob(gcs_path)
+        blob.upload_from_string(content, content_type=file.content_type)
+
+        record = {
+            "sticky_note_id": note_id,
+            "case_id": case_id,
+            "filename": safe_filename,
+            "gcs_path": gcs_path,
+            "media_type": media_type,
+            "mime_type": file.content_type or "application/octet-stream",
+            "size_bytes": len(content),
+        }
+        result = supabase.table("case_graph_sticky_media").insert(record).execute()
+
+        signed_url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
+        return {"id": result.data[0]["id"], "url": signed_url, "media_type": media_type, "filename": safe_filename}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.delete("/api/cases/{case_id}/graph/sticky-notes/{note_id}/media/{media_id}")
+async def delete_sticky_media(case_id: str, note_id: str, media_id: str, user = Depends(require_user)):
+    """Delete a media attachment from a sticky note."""
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+        media_res = supabase.table("case_graph_sticky_media").select("gcs_path").eq("id", media_id).execute()
+        if media_res.data:
+            try:
+                blob = bucket.blob(media_res.data[0]["gcs_path"])
+                blob.delete()
+            except Exception:
+                pass
+        supabase.table("case_graph_sticky_media").delete().eq("id", media_id).execute()
+        return {"deleted": media_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/api/cases/{case_id}/graph/sticky-notes/{note_id}/media/{media_id}/url")
+async def get_sticky_media_url(case_id: str, note_id: str, media_id: str, user = Depends(optional_user)):
+    """Get a signed URL for a sticky note media file."""
+    try:
+        await verify_case_ownership(case_id, user, write=False)
+        media_res = supabase.table("case_graph_sticky_media").select("gcs_path").eq("id", media_id).execute()
+        if not media_res.data:
+            return JSONResponse(status_code=404, content={"error": "Media not found"})
+        blob = bucket.blob(media_res.data[0]["gcs_path"])
+        signed_url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")
+        return {"url": signed_url}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

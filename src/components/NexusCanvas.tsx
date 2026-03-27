@@ -14,6 +14,7 @@ import ReactFlow, {
 import type { Connection, Edge, Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import EntityNode from './EntityNode';
+import StickyNoteNode from './StickyNoteNode';
 import DraggableLabelEdge from './DraggableLabelEdge';
 
 // Group ellipse overlay rendered inside the ReactFlow viewport
@@ -217,7 +218,7 @@ interface NexusProps {
 }
 
 function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onMoveEnd, onGroupClick, onGroupDrag, onGroupDragEnd, groups = [], panOnDrag = true, skipInitialFitView = false, height, showEdgeLabels = true, showMiniMap = true, onEdgeLabelDrag, onEdgeLabelDragEnd }: NexusProps) {
-  const nodeTypes = useMemo(() => ({ entityNode: EntityNode }), []);
+  const nodeTypes = useMemo(() => ({ entityNode: EntityNode, stickyNote: StickyNoteNode }), []);
   const edgeTypes = useMemo(() => ({ draggable: DraggableLabelEdge }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
@@ -316,6 +317,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
   }, [edges, zoom, showEdgeLabels]);
 
   const miniMapNodeColor = useCallback((node: Node) => {
+    if (node.type === 'stickyNote') return node.data?.color || '#FBBF24';
     const entityType = (node.data?.entityType || node.data?.type || '').toUpperCase();
     return TYPE_COLORS[entityType] || '#9ca3af';
   }, []);
