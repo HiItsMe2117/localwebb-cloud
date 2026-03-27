@@ -29,6 +29,8 @@ function StickyNoteNode({ id, data, selected }: NodeProps) {
   const {
     content = '',
     color = '#FBBF24',
+    noteWidth = 280,
+    noteHeight = 200,
     media = [],
     caseId,
     onUpdate,
@@ -36,6 +38,10 @@ function StickyNoteNode({ id, data, selected }: NodeProps) {
     onMediaUpload,
     onMediaDelete,
   } = data;
+
+  const [localWidth, setLocalWidth] = useState(noteWidth);
+  const [localHeight, setLocalHeight] = useState(noteHeight);
+  const isCompact = localWidth < 200 || localHeight < 150;
 
   const [editing, setEditing] = useState(false);
   const [localContent, setLocalContent] = useState(content);
@@ -50,10 +56,12 @@ function StickyNoteNode({ id, data, selected }: NodeProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync content from props
+  // Sync from props
   useEffect(() => {
     if (!editing) setLocalContent(content);
   }, [content, editing]);
+  useEffect(() => { setLocalWidth(noteWidth); }, [noteWidth]);
+  useEffect(() => { setLocalHeight(noteHeight); }, [noteHeight]);
 
   // Fetch signed URLs for media on mount
   useEffect(() => {
@@ -170,16 +178,18 @@ function StickyNoteNode({ id, data, selected }: NodeProps) {
       style={{
         width: '100%',
         height: '100%',
-        minWidth: 180,
-        minHeight: 120,
+        minWidth: 80,
+        minHeight: 60,
       }}
     >
       {/* Resize handle */}
       <NodeResizeControl
-        minWidth={180}
-        minHeight={120}
+        minWidth={80}
+        minHeight={60}
         style={{ background: 'transparent', border: 'none' }}
         onResizeEnd={(_: any, params: any) => {
+          setLocalWidth(params.width);
+          setLocalHeight(params.height);
           onUpdate?.(id, { width: params.width, height: params.height });
         }}
       >
@@ -272,36 +282,48 @@ function StickyNoteNode({ id, data, selected }: NodeProps) {
           )}
         </div>
 
-        {/* Media thumbnails */}
+        {/* Media thumbnails — collapse to badge when note is small */}
         {media.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-3 pb-2 nodrag">
-            {media.map((m: MediaItem) => (
-              <div key={m.id} className="relative group/media">
-                {m.media_type === 'image' ? (
-                  <img
-                    src={mediaUrls[m.id] || ''}
-                    alt={m.filename}
-                    className="w-16 h-16 object-cover rounded-lg cursor-pointer border border-[rgba(84,84,88,0.4)] hover:border-[rgba(84,84,88,0.8)] transition-colors"
-                    onClick={(e) => { e.stopPropagation(); setExpandedMedia(expandedMedia === m.id ? null : m.id); }}
-                    loading="lazy"
-                  />
-                ) : (
-                  <div
-                    className="w-16 h-16 rounded-lg bg-[#2C2C2E] flex items-center justify-center cursor-pointer border border-[rgba(84,84,88,0.4)] hover:border-[rgba(84,84,88,0.8)] transition-colors"
-                    onClick={(e) => { e.stopPropagation(); setExpandedMedia(expandedMedia === m.id ? null : m.id); }}
+          isCompact ? (
+            <div className="flex items-center justify-center pb-1.5 nodrag">
+              <button
+                className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.4)] cursor-pointer hover:border-[rgba(84,84,88,0.8)] transition-colors"
+                onClick={(e) => { e.stopPropagation(); setExpandedMedia(media[0].id); }}
+              >
+                <Image size={10} className="text-[rgba(235,235,245,0.5)]" />
+                <span className="text-[9px] text-[rgba(235,235,245,0.5)]">{media.length}</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-1.5 px-3 pb-2 nodrag">
+              {media.map((m: MediaItem) => (
+                <div key={m.id} className="relative group/media">
+                  {m.media_type === 'image' ? (
+                    <img
+                      src={mediaUrls[m.id] || ''}
+                      alt={m.filename}
+                      className="w-16 h-16 object-cover rounded-lg cursor-pointer border border-[rgba(84,84,88,0.4)] hover:border-[rgba(84,84,88,0.8)] transition-colors"
+                      onClick={(e) => { e.stopPropagation(); setExpandedMedia(expandedMedia === m.id ? null : m.id); }}
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div
+                      className="w-16 h-16 rounded-lg bg-[#2C2C2E] flex items-center justify-center cursor-pointer border border-[rgba(84,84,88,0.4)] hover:border-[rgba(84,84,88,0.8)] transition-colors"
+                      onClick={(e) => { e.stopPropagation(); setExpandedMedia(expandedMedia === m.id ? null : m.id); }}
+                    >
+                      <Film size={20} className="text-[rgba(235,235,245,0.4)]" />
+                    </div>
+                  )}
+                  <button
+                    className="absolute -top-1 -right-1 w-4 h-4 bg-[#FF453A] rounded-full items-center justify-center hidden group-hover/media:flex"
+                    onClick={(e) => { e.stopPropagation(); handleDeleteMedia(m.id); }}
                   >
-                    <Film size={20} className="text-[rgba(235,235,245,0.4)]" />
-                  </div>
-                )}
-                <button
-                  className="absolute -top-1 -right-1 w-4 h-4 bg-[#FF453A] rounded-full items-center justify-center hidden group-hover/media:flex"
-                  onClick={(e) => { e.stopPropagation(); handleDeleteMedia(m.id); }}
-                >
-                  <X size={10} className="text-white" />
-                </button>
-              </div>
-            ))}
-          </div>
+                    <X size={10} className="text-white" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )
         )}
 
         {/* Expanded media view */}
@@ -332,8 +354,8 @@ function StickyNoteNode({ id, data, selected }: NodeProps) {
           </div>
         )}
 
-        {/* Bottom toolbar */}
-        <div
+        {/* Bottom toolbar — hidden when compact */}
+        {!isCompact && <div
           className="flex items-center justify-between px-2 py-1.5 border-t border-[rgba(84,84,88,0.2)] nodrag"
           style={{ flexShrink: 0 }}
         >
@@ -418,7 +440,7 @@ function StickyNoteNode({ id, data, selected }: NodeProps) {
           >
             <Trash2 size={13} className="text-[#FF453A]" />
           </button>
-        </div>
+        </div>}
       </div>
 
       {/* Hidden file input */}
