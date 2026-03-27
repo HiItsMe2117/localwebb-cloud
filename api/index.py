@@ -683,8 +683,7 @@ class UpdateGroupRequest(BaseModel):
     node_ids: Optional[List[str]] = None
 
 class AttachDocumentRequest(BaseModel):
-    filename: str
-    page: Optional[int] = None
+    url: str
     note: str = ""
 
 class CreateStickyNoteRequest(BaseModel):
@@ -2503,8 +2502,7 @@ async def attach_entity_document(case_id: str, node_id: str, request: AttachDocu
         record = {
             "case_id": case_id,
             "node_id": node_id,
-            "filename": request.filename,
-            "page": request.page,
+            "url": request.url,
             "note": request.note,
         }
         result = supabase.table("case_entity_documents").insert(record).execute()

@@ -3,7 +3,6 @@ import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
 import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, Calendar, AlertTriangle, Globe, Database, StickyNote, Paperclip, ExternalLink } from 'lucide-react';
-import { getFileUrl } from '../utils/files';
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide } from 'd3-force';
 import NexusCanvas from './NexusCanvas';
 import EdgeEvidencePanel from './EdgeEvidencePanel';
@@ -548,12 +547,11 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   }, [caseId, loadGraph]);
 
   // --- Entity Documents ---
-  interface EntityDoc { id: string; filename: string; page: number | null; note: string; created_at: string; }
+  interface EntityDoc { id: string; url: string; note: string; created_at: string; }
   const [entityDocs, setEntityDocs] = useState<EntityDoc[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [showAttachForm, setShowAttachForm] = useState(false);
-  const [attachFilename, setAttachFilename] = useState('');
-  const [attachPage, setAttachPage] = useState('');
+  const [attachUrl, setAttachUrl] = useState('');
   const [attachNote, setAttachNote] = useState('');
   const [attachSaving, setAttachSaving] = useState(false);
 
@@ -570,16 +568,14 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   }, [caseId]);
 
   const attachDocument = useCallback(async (nodeId: string) => {
-    if (!attachFilename.trim()) return;
+    if (!attachUrl.trim()) return;
     setAttachSaving(true);
     try {
       await axios.post(`/api/cases/${caseId}/graph/entities/${nodeId}/documents`, {
-        filename: attachFilename.trim(),
-        page: attachPage ? parseInt(attachPage) : null,
+        url: attachUrl.trim(),
         note: attachNote.trim(),
       });
-      setAttachFilename('');
-      setAttachPage('');
+      setAttachUrl('');
       setAttachNote('');
       setShowAttachForm(false);
       await fetchEntityDocs(nodeId);
@@ -588,7 +584,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     } finally {
       setAttachSaving(false);
     }
-  }, [caseId, attachFilename, attachPage, attachNote, fetchEntityDocs]);
+  }, [caseId, attachUrl, attachNote, fetchEntityDocs]);
 
   const detachDocument = useCallback(async (nodeId: string, docId: string) => {
     try {
@@ -1555,32 +1551,37 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                   </div>
                 ) : entityDocs.length > 0 ? (
                   <div className="px-2 pb-2 flex flex-col gap-1 max-h-[150px] overflow-y-auto">
-                    {entityDocs.map(doc => (
-                      <div key={doc.id} className="flex items-start gap-1.5 px-1.5 py-1.5 rounded-lg bg-[rgba(255,255,255,0.03)] group/doc">
-                        <FileText size={12} className="text-[#30D158] shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                          <a
-                            href={getFileUrl(doc.filename, doc.page || undefined)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[11px] text-[#5AC8FA] hover:underline truncate block"
-                            onClick={e => e.stopPropagation()}
+                    {entityDocs.map(doc => {
+                      let displayUrl = doc.url;
+                      try { displayUrl = new URL(doc.url).hostname.replace('www.', '') + new URL(doc.url).pathname.split('/').pop()!; } catch {}
+                      if (displayUrl.length > 40) displayUrl = displayUrl.slice(0, 37) + '...';
+                      return (
+                        <div key={doc.id} className="flex items-start gap-1.5 px-1.5 py-1.5 rounded-lg bg-[rgba(255,255,255,0.03)] group/doc">
+                          <FileText size={12} className="text-[#30D158] shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <a
+                              href={doc.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] text-[#5AC8FA] hover:underline truncate block"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {displayUrl}
+                              <ExternalLink size={9} className="inline ml-1 opacity-50" />
+                            </a>
+                            {doc.note && (
+                              <p className="text-[10px] text-[rgba(235,235,245,0.4)] mt-0.5 leading-tight">{doc.note}</p>
+                            )}
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); detachDocument(contextNode.id, doc.id); }}
+                            className="p-0.5 rounded hover:bg-[rgba(255,59,48,0.15)] opacity-0 group-hover/doc:opacity-100 transition-opacity shrink-0"
                           >
-                            {doc.filename}{doc.page ? ` (p.${doc.page})` : ''}
-                            <ExternalLink size={9} className="inline ml-1 opacity-50" />
-                          </a>
-                          {doc.note && (
-                            <p className="text-[10px] text-[rgba(235,235,245,0.4)] mt-0.5 leading-tight">{doc.note}</p>
-                          )}
+                            <X size={10} className="text-[#FF453A]" />
+                          </button>
                         </div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); detachDocument(contextNode.id, doc.id); }}
-                          className="p-0.5 rounded hover:bg-[rgba(255,59,48,0.15)] opacity-0 group-hover/doc:opacity-100 transition-opacity shrink-0"
-                        >
-                          <X size={10} className="text-[#FF453A]" />
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : !showAttachForm ? (
                   <p className="px-3 pb-2 text-[10px] text-[rgba(235,235,245,0.2)] italic">No documents attached</p>
@@ -1591,30 +1592,23 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                   <div className="px-3 pb-2 flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
                     <input
                       type="text"
-                      value={attachFilename}
-                      onChange={e => setAttachFilename(e.target.value)}
-                      placeholder="Filename (e.g. email_042.pdf)"
+                      value={attachUrl}
+                      onChange={e => setAttachUrl(e.target.value)}
+                      placeholder="Paste document URL"
                       className="w-full px-2 py-1.5 text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.8)] rounded-lg border border-[rgba(84,84,88,0.4)] outline-none focus:border-[#007AFF] placeholder-[rgba(235,235,245,0.2)]"
+                      onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') attachDocument(contextNode.id); }}
                     />
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        value={attachPage}
-                        onChange={e => setAttachPage(e.target.value.replace(/\D/g, ''))}
-                        placeholder="Page #"
-                        className="w-[60px] px-2 py-1.5 text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.8)] rounded-lg border border-[rgba(84,84,88,0.4)] outline-none focus:border-[#007AFF] placeholder-[rgba(235,235,245,0.2)]"
-                      />
-                      <input
-                        type="text"
-                        value={attachNote}
-                        onChange={e => setAttachNote(e.target.value)}
-                        placeholder="Note (optional)"
-                        className="flex-1 px-2 py-1.5 text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.8)] rounded-lg border border-[rgba(84,84,88,0.4)] outline-none focus:border-[#007AFF] placeholder-[rgba(235,235,245,0.2)]"
-                      />
-                    </div>
+                    <input
+                      type="text"
+                      value={attachNote}
+                      onChange={e => setAttachNote(e.target.value)}
+                      placeholder="Note (optional)"
+                      className="w-full px-2 py-1.5 text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.8)] rounded-lg border border-[rgba(84,84,88,0.4)] outline-none focus:border-[#007AFF] placeholder-[rgba(235,235,245,0.2)]"
+                      onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') attachDocument(contextNode.id); }}
+                    />
                     <button
                       onClick={() => attachDocument(contextNode.id)}
-                      disabled={!attachFilename.trim() || attachSaving}
+                      disabled={!attachUrl.trim() || attachSaving}
                       className="w-full py-1.5 text-[11px] font-medium rounded-lg bg-[#007AFF] text-white disabled:opacity-30 hover:bg-[#0071E3] transition-colors flex items-center justify-center gap-1"
                     >
                       {attachSaving ? <Loader2 size={11} className="animate-spin" /> : <Paperclip size={11} />}
