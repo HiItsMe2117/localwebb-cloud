@@ -253,9 +253,10 @@ function AppContent() {
 
 
 
+  // Load cases first (fast), then graph (heavy) on mount
   useEffect(() => {
-    loadGraph();
-  }, [setNodes, setEdges]);
+    loadCases().then(() => loadGraph());
+  }, []);
 
   const onNodeDragStop = async (_: any, node: Node) => {
     try {
@@ -1043,11 +1044,9 @@ function AppContent() {
     }
   };
 
-  // Load cases when switching to cases tab
+  // Refresh cases when switching to cases tab
   useEffect(() => {
-    if (activeView === 'cases') {
-      loadCases();
-    }
+    if (activeView === 'cases') loadCases();
   }, [activeView]);
 
   const tabs: { id: View; label: string; icon: typeof MessageSquare }[] = [
