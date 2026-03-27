@@ -1888,9 +1888,13 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
         custom_res = supabase.table("case_graph_custom_nodes").select("*").eq("case_id", case_id).execute()
         custom_rows = custom_res.data or []
 
-        # Also fetch sticky notes
-        sticky_res = supabase.table("case_graph_sticky_notes").select("*").eq("case_id", case_id).execute()
-        sticky_rows = sticky_res.data or []
+        # Also fetch sticky notes (graceful if table doesn't exist yet)
+        sticky_rows = []
+        try:
+            sticky_res = supabase.table("case_graph_sticky_notes").select("*").eq("case_id", case_id).execute()
+            sticky_rows = sticky_res.data or []
+        except Exception:
+            pass
 
         if not pinned_rows and not custom_rows and not sticky_rows:
             return {"nodes": [], "edges": []}
