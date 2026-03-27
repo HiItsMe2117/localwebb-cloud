@@ -682,6 +682,11 @@ class UpdateGroupRequest(BaseModel):
     color: Optional[str] = None
     node_ids: Optional[List[str]] = None
 
+class AttachDocumentRequest(BaseModel):
+    filename: str
+    page: Optional[int] = None
+    note: str = ""
+
 class CreateStickyNoteRequest(BaseModel):
     content: str = ""
     color: str = "#FBBF24"
@@ -1906,6 +1911,15 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
         desc_res = supabase.table("case_entity_descriptions").select("node_id, description").eq("case_id", case_id).execute()
         case_descriptions = {r["node_id"]: r["description"] for r in (desc_res.data or [])}
 
+        # Fetch document counts per entity (graceful if table doesn't exist yet)
+        doc_counts: dict = {}
+        try:
+            doc_res = supabase.table("case_entity_documents").select("node_id").eq("case_id", case_id).execute()
+            for r in (doc_res.data or []):
+                doc_counts[r["node_id"]] = doc_counts.get(r["node_id"], 0) + 1
+        except Exception:
+            pass
+
         # Fetch global node data
         nodes = []
         if node_ids:
@@ -1925,6 +1939,7 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
                         "degree": meta.get("degree", 0),
                         "communityId": meta.get("communityId"),
                         "communityColor": meta.get("communityColor"),
+                        "documentCount": doc_counts.get(n["id"], 0),
                     },
                     "position": {"x": pos.get("x") or 0, "y": pos.get("y") or 0},
                 })
@@ -1942,6 +1957,7 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
                     "aliases": [],
                     "degree": 0,
                     "isCustom": True,
+                    "documentCount": doc_counts.get(cn["id"], 0),
                 },
                 "position": {"x": cn.get("position_x") or 0, "y": cn.get("position_y") or 0},
             })
@@ -2463,6 +2479,46 @@ async def delete_case_graph_group(case_id: str, group_id: str, user = Depends(re
 
         supabase.table("case_graph_groups").delete().eq("id", group_id).eq("case_id", case_id).execute()
         return {"deleted": group_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+## --- Entity Documents ---
+
+@app.get("/api/cases/{case_id}/graph/entities/{node_id}/documents")
+async def list_entity_documents(case_id: str, node_id: str, user = Depends(require_user)):
+    """List documents attached to an entity in a case."""
+    try:
+        await verify_case_ownership(case_id, user, write=False)
+        result = supabase.table("case_entity_documents").select("*").eq("case_id", case_id).eq("node_id", node_id).order("created_at", desc=False).execute()
+        return {"documents": result.data or []}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/api/cases/{case_id}/graph/entities/{node_id}/documents")
+async def attach_entity_document(case_id: str, node_id: str, request: AttachDocumentRequest, user = Depends(require_user)):
+    """Attach a source document to an entity."""
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+        record = {
+            "case_id": case_id,
+            "node_id": node_id,
+            "filename": request.filename,
+            "page": request.page,
+            "note": request.note,
+        }
+        result = supabase.table("case_entity_documents").insert(record).execute()
+        return {"id": result.data[0]["id"]}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.delete("/api/cases/{case_id}/graph/entities/{node_id}/documents/{doc_id}")
+async def detach_entity_document(case_id: str, node_id: str, doc_id: str, user = Depends(require_user)):
+    """Remove a document attachment from an entity."""
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+        supabase.table("case_entity_documents").delete().eq("id", doc_id).eq("case_id", case_id).execute()
+        return {"deleted": doc_id}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, Calendar, AlertTriangle, Globe, Database, StickyNote } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, Calendar, AlertTriangle, Globe, Database, StickyNote, Paperclip, ExternalLink } from 'lucide-react';
+import { getFileUrl } from '../utils/files';
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide } from 'd3-force';
 import NexusCanvas from './NexusCanvas';
 import EdgeEvidencePanel from './EdgeEvidencePanel';
@@ -546,6 +547,58 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId, loadGraph]);
 
+  // --- Entity Documents ---
+  interface EntityDoc { id: string; filename: string; page: number | null; note: string; created_at: string; }
+  const [entityDocs, setEntityDocs] = useState<EntityDoc[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [showAttachForm, setShowAttachForm] = useState(false);
+  const [attachFilename, setAttachFilename] = useState('');
+  const [attachPage, setAttachPage] = useState('');
+  const [attachNote, setAttachNote] = useState('');
+  const [attachSaving, setAttachSaving] = useState(false);
+
+  const fetchEntityDocs = useCallback(async (nodeId: string) => {
+    setDocsLoading(true);
+    try {
+      const res = await axios.get(`/api/cases/${caseId}/graph/entities/${nodeId}/documents`);
+      setEntityDocs(res.data.documents || []);
+    } catch {
+      setEntityDocs([]);
+    } finally {
+      setDocsLoading(false);
+    }
+  }, [caseId]);
+
+  const attachDocument = useCallback(async (nodeId: string) => {
+    if (!attachFilename.trim()) return;
+    setAttachSaving(true);
+    try {
+      await axios.post(`/api/cases/${caseId}/graph/entities/${nodeId}/documents`, {
+        filename: attachFilename.trim(),
+        page: attachPage ? parseInt(attachPage) : null,
+        note: attachNote.trim(),
+      });
+      setAttachFilename('');
+      setAttachPage('');
+      setAttachNote('');
+      setShowAttachForm(false);
+      await fetchEntityDocs(nodeId);
+    } catch {
+      toast.error('Failed to attach document');
+    } finally {
+      setAttachSaving(false);
+    }
+  }, [caseId, attachFilename, attachPage, attachNote, fetchEntityDocs]);
+
+  const detachDocument = useCallback(async (nodeId: string, docId: string) => {
+    try {
+      await axios.delete(`/api/cases/${caseId}/graph/entities/${nodeId}/documents/${docId}`);
+      setEntityDocs(prev => prev.filter(d => d.id !== docId));
+    } catch {
+      toast.error('Failed to remove document');
+    }
+  }, [caseId]);
+
   const displayNodes = useMemo(() =>
     nodes.map(n => {
       if (n.type === 'stickyNote') {
@@ -739,7 +792,14 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       setContextNode(null);
     } else {
       // Plain click: show context menu for this node
-      setContextNode(prev => prev?.id === node.id ? null : node);
+      setContextNode(prev => {
+        const newNode = prev?.id === node.id ? null : node;
+        if (newNode && !newNode.data?.isStickyNote) {
+          fetchEntityDocs(newNode.id);
+          setShowAttachForm(false);
+        }
+        return newNode;
+      });
       setSelectedNodeIds(new Set());
       setCopied(false);
       setExpandNode(null);
@@ -1471,8 +1531,103 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               </button>
             )}
 
+            {/* Documents section */}
+            {!contextNode.data?.isStickyNote && (
+              <div className="border-t border-[rgba(84,84,88,0.35)]">
+                <div className="px-3 py-2 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Paperclip size={12} className="text-[rgba(235,235,245,0.4)]" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-[rgba(235,235,245,0.4)]">Documents</span>
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowAttachForm(!showAttachForm); }}
+                    className="p-0.5 rounded hover:bg-[#2C2C2E] transition-colors"
+                    title="Attach document"
+                  >
+                    <Plus size={12} className="text-[#007AFF]" />
+                  </button>
+                </div>
+
+                {/* Attached documents list */}
+                {docsLoading ? (
+                  <div className="px-3 pb-2">
+                    <Loader2 size={12} className="animate-spin text-[rgba(235,235,245,0.3)]" />
+                  </div>
+                ) : entityDocs.length > 0 ? (
+                  <div className="px-2 pb-2 flex flex-col gap-1 max-h-[150px] overflow-y-auto">
+                    {entityDocs.map(doc => (
+                      <div key={doc.id} className="flex items-start gap-1.5 px-1.5 py-1.5 rounded-lg bg-[rgba(255,255,255,0.03)] group/doc">
+                        <FileText size={12} className="text-[#30D158] shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <a
+                            href={getFileUrl(doc.filename, doc.page || undefined)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] text-[#5AC8FA] hover:underline truncate block"
+                            onClick={e => e.stopPropagation()}
+                          >
+                            {doc.filename}{doc.page ? ` (p.${doc.page})` : ''}
+                            <ExternalLink size={9} className="inline ml-1 opacity-50" />
+                          </a>
+                          {doc.note && (
+                            <p className="text-[10px] text-[rgba(235,235,245,0.4)] mt-0.5 leading-tight">{doc.note}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); detachDocument(contextNode.id, doc.id); }}
+                          className="p-0.5 rounded hover:bg-[rgba(255,59,48,0.15)] opacity-0 group-hover/doc:opacity-100 transition-opacity shrink-0"
+                        >
+                          <X size={10} className="text-[#FF453A]" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : !showAttachForm ? (
+                  <p className="px-3 pb-2 text-[10px] text-[rgba(235,235,245,0.2)] italic">No documents attached</p>
+                ) : null}
+
+                {/* Attach form */}
+                {showAttachForm && (
+                  <div className="px-3 pb-2 flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      value={attachFilename}
+                      onChange={e => setAttachFilename(e.target.value)}
+                      placeholder="Filename (e.g. email_042.pdf)"
+                      className="w-full px-2 py-1.5 text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.8)] rounded-lg border border-[rgba(84,84,88,0.4)] outline-none focus:border-[#007AFF] placeholder-[rgba(235,235,245,0.2)]"
+                    />
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={attachPage}
+                        onChange={e => setAttachPage(e.target.value.replace(/\D/g, ''))}
+                        placeholder="Page #"
+                        className="w-[60px] px-2 py-1.5 text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.8)] rounded-lg border border-[rgba(84,84,88,0.4)] outline-none focus:border-[#007AFF] placeholder-[rgba(235,235,245,0.2)]"
+                      />
+                      <input
+                        type="text"
+                        value={attachNote}
+                        onChange={e => setAttachNote(e.target.value)}
+                        placeholder="Note (optional)"
+                        className="flex-1 px-2 py-1.5 text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.8)] rounded-lg border border-[rgba(84,84,88,0.4)] outline-none focus:border-[#007AFF] placeholder-[rgba(235,235,245,0.2)]"
+                      />
+                    </div>
+                    <button
+                      onClick={() => attachDocument(contextNode.id)}
+                      disabled={!attachFilename.trim() || attachSaving}
+                      className="w-full py-1.5 text-[11px] font-medium rounded-lg bg-[#007AFF] text-white disabled:opacity-30 hover:bg-[#0071E3] transition-colors flex items-center justify-center gap-1"
+                    >
+                      {attachSaving ? <Loader2 size={11} className="animate-spin" /> : <Paperclip size={11} />}
+                      Attach
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             <button
-              onClick={() => handleRemove(contextNode)}              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#FF453A]/10 transition-colors"
+              onClick={() => handleRemove(contextNode)}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[#FF453A]/10 transition-colors"
             >
               <Trash2 size={14} className="text-[#FF453A]" />
               <span className="text-[13px] text-[#FF453A]">Remove from map</span>
