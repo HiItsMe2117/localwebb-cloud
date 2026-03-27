@@ -232,6 +232,27 @@ except ImportError:
     except ImportError:
         print("Warning: Billing router could not be loaded")
 
+# --- SMS Notifications ---
+try:
+    from api.notify import send_sms
+except ImportError:
+    from notify import send_sms
+
+@app.post("/api/ping")
+async def site_visit():
+    """Notify on every site visit."""
+    send_sms("Someone just visited your site!")
+    return {"ok": True}
+
+@app.post("/api/notify/signup")
+async def signup_notification(request: Request):
+    """Notify when a new account is created."""
+    body = await request.json()
+    email = body.get("email", "unknown")
+    username = body.get("username", "unknown")
+    send_sms(f"New account created! {username} ({email})")
+    return {"ok": True}
+
 
 # New SupabaseStore class
 class SupabaseStore:

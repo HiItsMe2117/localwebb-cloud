@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Loader2, Lock, Eye, EyeOff, UserPlus, Mail } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import axios from 'axios';
 
 interface LoginModalProps {
   onClose: () => void;
@@ -40,6 +41,8 @@ export default function LoginModal({ onClose }: LoginModalProps) {
           }
         });
         if (signUpError) throw signUpError;
+        // Notify about new signup
+        axios.post('/api/notify/signup', { email: email.trim(), username: username.trim() }).catch(() => {});
         // After sign up, depending on Supabase settings, they might be logged in or need to confirm email.
         // Assuming auto-login for this flow:
         await refreshSession();

@@ -14,3 +14,4 @@ tqdm
 supabase
 PyJWT
 stripe
+twilio

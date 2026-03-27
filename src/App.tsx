@@ -215,6 +215,11 @@ function AppContent() {
   };
 
   // Handle Stripe checkout return
+  // Notify on site visit (fire once on load)
+  useEffect(() => {
+    axios.post('/api/ping').catch(() => {});
+  }, []);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const checkout = params.get('checkout');

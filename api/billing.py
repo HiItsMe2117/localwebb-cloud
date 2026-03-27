@@ -2,6 +2,7 @@ import os
 import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from .index import require_user, supabase
+from .notify import send_sms
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -266,6 +267,13 @@ async def stripe_webhook(request: Request):
             "current_period_end": period_end,
             "role": role,
         }).eq("stripe_customer_id", customer_id).execute()
+
+        # Notify on new subscription
+        if event.type == "customer.subscription.created" and status == "active":
+            # Look up who subscribed
+            profile = supabase.table("profiles").select("username").eq("stripe_customer_id", customer_id).execute()
+            username = profile.data[0]["username"] if profile.data else "Unknown"
+            send_sms(f"New subscriber! {username} just upgraded to {role.upper()}.")
 
     return {"status": "success"}
 
