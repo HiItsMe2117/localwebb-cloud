@@ -555,6 +555,17 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const [attachNote, setAttachNote] = useState('');
   const [attachSaving, setAttachSaving] = useState(false);
 
+  // Convert GCS signed URLs to permanent DOJ source links
+  const normalizeDocUrl = useCallback((url: string) => {
+    const gcsMatch = url.match(/storage\.googleapis\.com\/[^/]+\/uploads\/dataset-(\d+)\/([^?]+)/);
+    if (gcsMatch) {
+      const dataset = gcsMatch[1];
+      const filename = gcsMatch[2];
+      return `https://www.justice.gov/epstein/files/DataSet%20${dataset}/${encodeURIComponent(decodeURIComponent(filename))}`;
+    }
+    return url;
+  }, []);
+
   const fetchEntityDocs = useCallback(async (nodeId: string) => {
     setDocsLoading(true);
     try {
@@ -1593,8 +1604,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                     <input
                       type="text"
                       value={attachUrl}
-                      onChange={e => setAttachUrl(e.target.value)}
-                      placeholder="Paste document URL"
+                      onChange={e => setAttachUrl(normalizeDocUrl(e.target.value))}
+                      placeholder="Paste document URL (GCS links auto-convert to DOJ)"
                       className="w-full px-2 py-1.5 text-[11px] bg-[#2C2C2E] text-[rgba(235,235,245,0.8)] rounded-lg border border-[rgba(84,84,88,0.4)] outline-none focus:border-[#007AFF] placeholder-[rgba(235,235,245,0.2)]"
                       onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') attachDocument(contextNode.id); }}
                     />
