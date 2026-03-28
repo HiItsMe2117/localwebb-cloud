@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { toast } from 'sonner';
+import axios from 'axios';
 import { Shield, Database, Globe, MessageSquare, Loader2, ArrowUp } from 'lucide-react';
 import type { ChatMessage, Source, WebSource } from '../types';
 import InvestigationSteps from './InvestigationSteps';
@@ -64,7 +65,7 @@ export default function EntityChat({ entityId, entityName }: EntityChatProps) {
     try {
       const res = await fetch('/api/investigate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(axios.defaults.headers.common['Authorization'] ? { Authorization: axios.defaults.headers.common['Authorization'] as string } : {}) },
         body: JSON.stringify({
           query: text,
           entity_id: entityId,

@@ -131,10 +131,9 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
-      const authToken = localStorage.getItem('auth_token');
       const res = await fetch(`/api/cases/${caseId}/investigate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+        headers: { 'Content-Type': 'application/json', ...(axios.defaults.headers.common['Authorization'] ? { Authorization: axios.defaults.headers.common['Authorization'] as string } : {}) },
         signal: controller.signal,
       });
 
