@@ -1094,11 +1094,11 @@ function AppContent() {
                   disabled={isSyncing}
                   className="flex items-center gap-2 bg-[#1C1C1E] px-3 py-1.5 rounded-full text-[13px] font-medium border border-[rgba(84,84,88,0.65)]"
                 >
-                  <div className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-[#FF9F0A] animate-pulse' : 'bg-[#30D158]'}`} />
+                  <div className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-[#FF9F0A] animate-pulse' : graphLoading ? 'bg-[#007AFF] animate-pulse' : 'bg-[#30D158]'}`} />
                   <span className="text-[rgba(235,235,245,0.6)]">
-                    {isSyncing ? 'Syncing...' : `${nodes.length} entities`}
+                    {isSyncing ? 'Syncing...' : graphLoading ? 'Loading...' : `${nodes.length} entities`}
                   </span>
-                  <RefreshCw size={12} className={`text-[rgba(235,235,245,0.3)] ${isSyncing ? 'animate-spin' : ''}`} />
+                  <RefreshCw size={12} className={`text-[rgba(235,235,245,0.3)] ${isSyncing || graphLoading ? 'animate-spin' : ''}`} />
                 </button>
               </div>
             </header>
