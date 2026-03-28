@@ -472,7 +472,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
               }`}
               title={caseData.is_public ? 'Make Private' : 'Make Public'}
             >
-              {caseData.is_public ? <Globe size={16} /> : <Lock size={16} />}
+              <Globe size={16} />
             </button>
 
             <button
