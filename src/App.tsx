@@ -69,6 +69,7 @@ function AppContent() {
   const [showAllEdges, setShowAllEdges] = useState(false);
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());  // empty = show all
   const [isLayouting, setIsLayouting] = useState(false);
+  const [graphLoading, setGraphLoading] = useState(true);
   const [syncProgress, setSyncProgress] = useState(0);
   const [syncStatus, setSyncStatus] = useState('');
   const [focusTarget, setFocusTarget] = useState('');
@@ -156,6 +157,7 @@ function AppContent() {
   }, [setNodes, setEdges]);
 
   const loadGraph = async (degreeFilter?: number) => {
+    setGraphLoading(true);
     try {
       const deg = degreeFilter ?? deferredMinDegree;
       console.log(`Fetching graph data from /api/graph?min_degree=${deg}...`);
@@ -211,6 +213,7 @@ function AppContent() {
       console.error("Failed to load graph:", err);
     } finally {
       hasAttemptedInitialLoad.current = true;
+      setGraphLoading(false);
     }
   };
 
@@ -1364,8 +1367,17 @@ function AppContent() {
                 <SyncOverlay />
               )}
 
+              {/* Graph loading indicator */}
+              {graphLoading && !isExtractingInsights && !isLayouting && (
+                <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+                  <Loader2 size={36} className="text-[#007AFF] animate-spin mb-4" />
+                  <p className="text-[15px] font-medium text-white">Loading entities...</p>
+                  <p className="text-[12px] text-[rgba(235,235,245,0.35)] mt-1.5">Building the knowledge graph</p>
+                </div>
+              )}
+
               {/* Empty state */}
-              {!isExtractingInsights && !isLayouting && nodes.length === 0 && (
+              {!isExtractingInsights && !isLayouting && !graphLoading && nodes.length === 0 && (
                 <div className="absolute inset-0 z-40 flex flex-col items-center justify-center">
                   <Network size={48} className="text-[rgba(235,235,245,0.2)] mb-4" />
                   <p className="text-[15px] font-medium text-[rgba(235,235,245,0.6)]">No entities found</p>
