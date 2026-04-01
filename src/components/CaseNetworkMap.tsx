@@ -397,43 +397,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     }
   }, [caseId, researchQuery, isResearching, researchMessages]);
 
-  // Add a suggested entity from research to the graph
-  const addResearchEntity = useCallback(async (
-    entity: { name: string; type: string; description: string; suggested_group: string | null },
-    key: string,
-    targetGroupId?: string
-  ) => {
-    setAddingEntityIdx(key);
-    try {
-      const res = await axios.post(`/api/cases/${caseId}/graph/custom-nodes`, {
-        label: entity.name,
-        type: entity.type,
-      });
-      const newNodeId = res.data.id;
-
-      if (newNodeId && entity.description) {
-        await axios.patch(`/api/cases/${caseId}/graph/entities/${newNodeId}/description`, {
-          description: entity.description,
-        });
-      }
-
-      if (targetGroupId && newNodeId) {
-        const group = groups.find(g => g.id === targetGroupId);
-        if (group) {
-          await updateGroup(targetGroupId, { node_ids: [...group.node_ids, newNodeId] });
-        }
-      }
-
-      await loadGraph();
-      toast.success(`Added ${entity.name}`);
-    } catch (err) {
-      console.error('Failed to add research entity:', err);
-      toast.error('Failed to add entity');
-    } finally {
-      setAddingEntityIdx(null);
-    }
-  }, [caseId, groups, updateGroup, loadGraph]);
-
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
     const filtered = changes.filter((c: any) => c.type !== 'select');
@@ -1134,6 +1097,43 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       console.error('Failed to delete group:', err);
     }
   }, [caseId]);
+
+  // Add a suggested entity from research to the graph
+  const addResearchEntity = useCallback(async (
+    entity: { name: string; type: string; description: string; suggested_group: string | null },
+    key: string,
+    targetGroupId?: string
+  ) => {
+    setAddingEntityIdx(key);
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/graph/custom-nodes`, {
+        label: entity.name,
+        type: entity.type,
+      });
+      const newNodeId = res.data.id;
+
+      if (newNodeId && entity.description) {
+        await axios.patch(`/api/cases/${caseId}/graph/entities/${newNodeId}/description`, {
+          description: entity.description,
+        });
+      }
+
+      if (targetGroupId && newNodeId) {
+        const group = groups.find(g => g.id === targetGroupId);
+        if (group) {
+          await updateGroup(targetGroupId, { node_ids: [...group.node_ids, newNodeId] });
+        }
+      }
+
+      await loadGraph();
+      toast.success(`Added ${entity.name}`);
+    } catch (err) {
+      console.error('Failed to add research entity:', err);
+      toast.error('Failed to add entity');
+    } finally {
+      setAddingEntityIdx(null);
+    }
+  }, [caseId, groups, updateGroup, loadGraph]);
 
   // Rotate a set of nodes by `degrees` around their centroid
   const rotateNodes = useCallback(async (nodeIds: string[], degrees: number) => {
