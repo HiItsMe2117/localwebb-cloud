@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical, Globe, Network } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical, Globe, Network, Calendar } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
+import CaseTimeline from './CaseTimeline';
 import type { Case, CaseEvidence, InvestigationStep } from '../types';
 import { CASE_CATEGORIES } from '../types';
 import axios from 'axios';
@@ -76,7 +77,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
   const [noteText, setNoteText] = useState('');
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [isConsolidating, setIsConsolidating] = useState(false);
-  const [detailTab, setDetailTab] = useState<'evidence' | 'network'>('evidence');
+  const [detailTab, setDetailTab] = useState<'evidence' | 'timeline' | 'network'>('evidence');
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
@@ -513,6 +514,20 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
           )}
         </button>
         <button
+          onClick={() => setDetailTab('timeline')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[13px] font-semibold transition-colors relative ${
+            detailTab === 'timeline'
+              ? 'text-[#007AFF]'
+              : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'
+          }`}
+        >
+          <Calendar size={14} />
+          Timeline
+          {detailTab === 'timeline' && (
+            <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-[#007AFF] rounded-full" />
+          )}
+        </button>
+        <button
           onClick={() => setDetailTab('network')}
           className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[13px] font-semibold transition-colors relative ${
             detailTab === 'network'
@@ -521,7 +536,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
           }`}
         >
           <Share2 size={14} />
-          Network Map
+          Network
           {detailTab === 'network' && (
             <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-[#007AFF] rounded-full" />
           )}
@@ -531,6 +546,8 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
       {/* Tab content */}
       {detailTab === 'network' ? (
         <CaseNetworkMap caseId={caseId} caseEntities={caseData.entities || []} readOnly={readOnly} />
+      ) : detailTab === 'timeline' ? (
+        <CaseTimeline caseId={caseId} readOnly={readOnly} />
       ) : (
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 pb-32">
           {/* Case summary */}

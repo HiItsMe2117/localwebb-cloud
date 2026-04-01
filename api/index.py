@@ -2255,6 +2255,35 @@ class SemanticLayoutRequest(BaseModel):
     node_ids: List[str]
     node_labels: List[str]
 
+class CreateTimelineEventRequest(BaseModel):
+    title: str
+    event_date: Optional[str] = None
+    description: str = ""
+    category: str = "general"
+    position_x: float = 0
+    position_y: float = 0
+
+class UpdateTimelineEventRequest(BaseModel):
+    title: Optional[str] = None
+    event_date: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+
+class SaveTimelinePositionsRequest(BaseModel):
+    positions: List[Dict[str, Any]]
+
+class CreateTimelineEdgeRequest(BaseModel):
+    source_event_id: str
+    target_event_id: str
+    label: str = ""
+
+class ImportGraphEventsRequest(BaseModel):
+    node_ids: List[str]
+
+class TimelineResearchRequest(BaseModel):
+    query: str
+    messages: List[Dict[str, str]] = []
+
 
 @app.post("/api/cases/{case_id}/graph/edges/{edge_id}/find-evidence")
 async def find_edge_evidence(case_id: str, edge_id: str, request: FindEvidenceRequest, user = Depends(require_paid)):
@@ -4096,6 +4125,329 @@ async def detect_communities():
     except Exception as e:
         print(f"Community detection failed: {e}")
         return graph_store.load()
+
+
+# ── Timeline endpoints ────────────────────────────────────────────────────────
+
+@app.get("/api/cases/{case_id}/timeline")
+async def get_case_timeline(case_id: str, user = Depends(optional_user)):
+    """Load all timeline events and edges for a case."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=False)
+
+        events_res = supabase.table("case_timeline_events").select("*").eq("case_id", case_id).order("created_at").execute()
+        edges_res = supabase.table("case_timeline_edges").select("*").eq("case_id", case_id).execute()
+
+        nodes = []
+        for ev in (events_res.data or []):
+            nodes.append({
+                "id": ev["id"],
+                "type": "eventNode",
+                "position": {"x": ev.get("position_x", 0), "y": ev.get("position_y", 0)},
+                "data": {
+                    "title": ev["title"],
+                    "event_date": ev.get("event_date"),
+                    "description": ev.get("description", ""),
+                    "category": ev.get("category", "general"),
+                    "sourceGraphNodeId": ev.get("source_graph_node_id"),
+                },
+            })
+
+        edges = []
+        for ed in (edges_res.data or []):
+            edges.append({
+                "id": ed["id"],
+                "source": ed["source_event_id"],
+                "target": ed["target_event_id"],
+                "type": "draggable",
+                "data": {
+                    "label": ed.get("label", ""),
+                    "labelPosition": ed.get("label_position", 0.5),
+                    "isCaseLocal": True,
+                },
+            })
+
+        return {"nodes": nodes, "edges": edges}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/events")
+async def create_timeline_event(case_id: str, request: CreateTimelineEventRequest, user = Depends(require_user)):
+    """Create a new timeline event."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        record = {
+            "case_id": case_id,
+            "title": request.title,
+            "event_date": request.event_date,
+            "description": request.description,
+            "category": request.category,
+            "position_x": request.position_x,
+            "position_y": request.position_y,
+        }
+        result = supabase.table("case_timeline_events").insert(record).execute()
+        ev = result.data[0] if result.data else None
+        return {"id": ev["id"] if ev else None, "event": ev}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/{case_id}/timeline/events/{event_id}")
+async def update_timeline_event(case_id: str, event_id: str, request: UpdateTimelineEventRequest, user = Depends(require_user)):
+    """Update a timeline event's fields."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        updates = {}
+        if request.title is not None:
+            updates["title"] = request.title
+        if request.event_date is not None:
+            updates["event_date"] = request.event_date
+        if request.description is not None:
+            updates["description"] = request.description
+        if request.category is not None:
+            updates["category"] = request.category
+        if not updates:
+            return {"id": event_id}
+
+        result = supabase.table("case_timeline_events").update(updates).eq("id", event_id).eq("case_id", case_id).execute()
+        if not result.data:
+            return JSONResponse(status_code=404, content={"error": "Event not found."})
+        return {"id": event_id, **updates}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/cases/{case_id}/timeline/events/{event_id}")
+async def delete_timeline_event(case_id: str, event_id: str, user = Depends(require_user)):
+    """Delete a timeline event (edges cascade)."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        supabase.table("case_timeline_events").delete().eq("id", event_id).eq("case_id", case_id).execute()
+        return {"deleted": event_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/positions")
+async def save_timeline_positions(case_id: str, request: SaveTimelinePositionsRequest, user = Depends(require_user)):
+    """Save dragged event positions."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        for pos in request.positions:
+            supabase.table("case_timeline_events").update({
+                "position_x": pos["x"],
+                "position_y": pos["y"],
+            }).eq("id", pos["event_id"]).eq("case_id", case_id).execute()
+        return {"saved": len(request.positions)}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/edges")
+async def create_timeline_edge(case_id: str, request: CreateTimelineEdgeRequest, user = Depends(require_user)):
+    """Create an edge between two timeline events."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        record = {
+            "case_id": case_id,
+            "source_event_id": request.source_event_id,
+            "target_event_id": request.target_event_id,
+            "label": request.label,
+        }
+        result = supabase.table("case_timeline_edges").upsert(
+            record, on_conflict="case_id,source_event_id,target_event_id"
+        ).execute()
+        return {"id": result.data[0]["id"] if result.data else None}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/cases/{case_id}/timeline/edges/{edge_id}")
+async def delete_timeline_edge(case_id: str, edge_id: str, user = Depends(require_user)):
+    """Delete a timeline edge."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        supabase.table("case_timeline_edges").delete().eq("id", edge_id).eq("case_id", case_id).execute()
+        return {"deleted": edge_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/import-graph-events")
+async def import_graph_events(case_id: str, request: ImportGraphEventsRequest, user = Depends(require_user)):
+    """Import EVENT-typed nodes from the knowledge graph into the timeline."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        # Check which graph nodes are already imported
+        existing = supabase.table("case_timeline_events").select("source_graph_node_id").eq("case_id", case_id).not_.is_("source_graph_node_id", "null").execute()
+        already_imported = set(r["source_graph_node_id"] for r in (existing.data or []))
+
+        new_ids = [nid for nid in request.node_ids if nid not in already_imported]
+        if not new_ids:
+            return {"imported": 0, "skipped": len(request.node_ids)}
+
+        # Fetch node details from the nodes table
+        nodes_res = supabase.table("nodes").select("id, label, type, description").in_("id", new_ids).execute()
+        node_map = {n["id"]: n for n in (nodes_res.data or [])}
+
+        # Sort by label for a rough left-to-right layout
+        sorted_ids = sorted(new_ids, key=lambda nid: node_map.get(nid, {}).get("label", ""))
+        imported = []
+        for i, nid in enumerate(sorted_ids):
+            node = node_map.get(nid)
+            if not node:
+                continue
+            record = {
+                "case_id": case_id,
+                "title": node.get("label", "Unknown Event"),
+                "description": node.get("description", ""),
+                "category": "legal" if "court" in (node.get("label", "") or "").lower() else "general",
+                "position_x": i * 280,
+                "position_y": 0,
+                "source_graph_node_id": nid,
+            }
+            result = supabase.table("case_timeline_events").insert(record).execute()
+            if result.data:
+                imported.append(result.data[0])
+
+        return {"imported": len(imported), "skipped": len(request.node_ids) - len(new_ids)}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/research")
+async def timeline_research(case_id: str, request: TimelineResearchRequest, user = Depends(require_paid)):
+    """AI-powered research for the timeline — uses Google Search to find events, people, dates."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        # Load case context
+        case_res = supabase.table("cases").select("title, summary, category").eq("id", case_id).execute()
+        case_data = case_res.data[0] if case_res.data else {}
+
+        # Load existing timeline events for context
+        events_res = supabase.table("case_timeline_events").select("title, event_date, category").eq("case_id", case_id).execute()
+        existing_events = events_res.data or []
+        events_context = ""
+        if existing_events:
+            event_lines = [f"- {e['title']}" + (f" ({e.get('event_date', '')})" if e.get('event_date') else "") for e in existing_events]
+            events_context = f"\n\nEXISTING TIMELINE EVENTS:\n" + "\n".join(event_lines[:30])
+
+        system_prompt = f"""You are a seasoned investigative researcher helping build a timeline of events for a case investigation. Your job is to research the user's question using web search and return findings as structured events that can be added to an investigation timeline.
+
+CASE: {case_data.get('title', 'Untitled')}
+CATEGORY: {case_data.get('category', 'Unknown')}
+SUMMARY: {case_data.get('summary', 'No summary.')}{events_context}
+
+IMPORTANT: After your narrative response, you MUST include a structured section at the very end formatted EXACTLY like this:
+
+---EVENTS---
+[
+  {{"title": "Event title", "date": "YYYY-MM-DD or YYYY-MM or YYYY or null", "description": "Brief description", "category": "legal|financial|meeting|travel|crime|media|general"}}
+]
+---END---
+
+Guidelines:
+- Search the web thoroughly to find accurate dates, names, and details
+- Include 2-8 events per response depending on the question
+- Use precise dates when available, partial dates (YYYY-MM or YYYY) when exact date unknown, null if no date can be determined
+- Choose the most appropriate category for each event
+- Keep descriptions concise (1-2 sentences)
+- Do NOT include events that are already on the timeline
+- Think like an investigative journalist — follow the money, identify key players, find the pivotal moments"""
+
+        contents = [system_prompt]
+        for msg in request.messages:
+            contents.append(f"{'Researcher' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}")
+        contents.append(f"Researcher: {request.query}")
+
+        config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())]
+        )
+
+        res = generate(
+            client,
+            model="gemini-2.0-flash",
+            contents="\n\n".join(contents),
+            config=config,
+        )
+
+        log_usage(user, "/api/cases/timeline/research", "gemini-2.0-flash", res.usage_metadata)
+
+        # Extract web sources
+        web_sources = []
+        if res.candidates and res.candidates[0].grounding_metadata:
+            gm = res.candidates[0].grounding_metadata
+            if gm.grounding_chunks:
+                import urllib.parse
+                for gc in gm.grounding_chunks:
+                    if gc.web:
+                        uri = gc.web.uri or ""
+                        if uri:
+                            domain = urllib.parse.urlparse(uri).netloc.removeprefix('www.')
+                            web_sources.append({
+                                "title": gc.web.title or "",
+                                "uri": uri,
+                                "domain": domain,
+                            })
+
+        # Parse structured events from response
+        full_text = res.text or ""
+        events = []
+        narrative = full_text
+
+        if "---EVENTS---" in full_text and "---END---" in full_text:
+            parts = full_text.split("---EVENTS---")
+            narrative = parts[0].strip()
+            events_json = parts[1].split("---END---")[0].strip()
+            try:
+                events = json.loads(events_json)
+            except json.JSONDecodeError:
+                # Try to fix common issues
+                try:
+                    # Sometimes the model wraps in markdown code blocks
+                    cleaned = events_json.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                    events = json.loads(cleaned)
+                except json.JSONDecodeError:
+                    pass
+
+        return {
+            "narrative": narrative,
+            "events": events,
+            "web_sources": web_sources,
+        }
+    except Exception as e:
+        print(f"Timeline research failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.post("/api/graph/deduplicate")

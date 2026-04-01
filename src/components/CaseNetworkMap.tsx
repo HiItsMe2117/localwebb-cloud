@@ -2,11 +2,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, Calendar, AlertTriangle, Globe, Database, StickyNote, Paperclip, ExternalLink } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, AlertTriangle, Globe, Database, StickyNote, Paperclip, ExternalLink } from 'lucide-react';
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide } from 'd3-force';
 import NexusCanvas from './NexusCanvas';
 import EdgeEvidencePanel from './EdgeEvidencePanel';
-import Timeline from './Timeline';
 import axios from 'axios';
 import useIsMobile from '../hooks/useIsMobile';
 import type { WebSource } from '../types';
@@ -134,11 +133,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
 
   // Evidence panel state (Phase 1)
   const [evidenceEdge, setEvidenceEdge] = useState<Edge | null>(null);
-
-  // Timeline state (Phase 3)
-  const [showTimeline, setShowTimeline] = useState(false);
-  const [timelineYear, setTimelineYear] = useState(2026);
-  const allEdgesRef = useRef<Edge[]>([]);
 
   // Viewport persistence
   const viewportKey = `case-map-viewport-${caseId}`;
@@ -372,9 +366,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     try {
       const res = await axios.get(`/api/cases/${caseId}/graph`);
       setNodes(res.data.nodes || []);
-      const loadedEdges = res.data.edges || [];
-      allEdgesRef.current = loadedEdges;
-      setEdges(loadedEdges);
+      setEdges(res.data.edges || []);
       setGroups(res.data.groups || []);
     } catch (err: any) {
       console.error('Failed to load case graph:', err);
@@ -951,23 +943,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     setEvidenceEdge(null);
     await loadGraph();
   }, [loadGraph]);
-
-  // Timeline edge filtering
-  useEffect(() => {
-    if (!showTimeline || timelineYear >= 2026) {
-      if (allEdgesRef.current.length > 0) {
-        setEdges(allEdgesRef.current);
-      }
-      return;
-    }
-    const filtered = allEdgesRef.current.filter(e => {
-      const date = e.data?.date_mentioned;
-      if (!date || typeof date !== 'string') return true; // Keep edges without dates
-      const year = parseInt(date.slice(0, 4), 10);
-      return isNaN(year) || year <= timelineYear;
-    });
-    setEdges(filtered);
-  }, [showTimeline, timelineYear, setEdges]);
 
   // Semantic layout toggle
   const toggleSemanticLayout = useCallback(async () => {
@@ -2063,14 +2038,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           />
         )}
 
-        {/* Timeline slider */}
-        {showTimeline && (
-          <Timeline
-            allEdges={allEdgesRef.current}
-            currentYear={timelineYear}
-            onYearChange={setTimelineYear}
-          />
-        )}
+
 
         {/* Description panel */}
         {descriptionNode && (
@@ -2309,17 +2277,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           >
             <MapIcon size={11} />
             {!isMobile && 'Map'}
-          </button>
-          <button
-            onClick={() => setShowTimeline(v => !v)}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
-              showTimeline
-                ? 'bg-[#007AFF] text-white'
-                : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)]'
-            }`}
-          >
-            <Calendar size={11} />
-            {!isMobile && 'Timeline'}
           </button>
           {!isMobile && (
             <button

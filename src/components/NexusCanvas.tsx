@@ -215,10 +215,12 @@ interface NexusProps {
   showMiniMap?: boolean;
   onEdgeLabelDrag?: (edgeId: string, labelPosition: number) => void;
   onEdgeLabelDragEnd?: (edgeId: string) => void;
+  customNodeTypes?: Record<string, any>;
 }
 
-function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onMoveEnd, onGroupClick, onGroupDrag, onGroupDragEnd, groups = [], panOnDrag = true, skipInitialFitView = false, height, showEdgeLabels = true, showMiniMap = true, onEdgeLabelDrag, onEdgeLabelDragEnd }: NexusProps) {
-  const nodeTypes = useMemo(() => ({ entityNode: EntityNode, stickyNote: StickyNoteNode }), []);
+function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragStart, onNodeDragStop, onNodeClick, onEdgeClick, onEdgeUpdate, onPaneClick, onMoveEnd, onGroupClick, onGroupDrag, onGroupDragEnd, groups = [], panOnDrag = true, skipInitialFitView = false, height, showEdgeLabels = true, showMiniMap = true, onEdgeLabelDrag, onEdgeLabelDragEnd, customNodeTypes }: NexusProps) {
+  const defaultNodeTypes = useMemo(() => ({ entityNode: EntityNode, stickyNote: StickyNoteNode }), []);
+  const nodeTypes = customNodeTypes || defaultNodeTypes;
   const edgeTypes = useMemo(() => ({ draggable: DraggableLabelEdge }), []);
   const zoom = useStore((s: ReactFlowState) => s.transform[2]);
   const { fitView } = useReactFlow();
