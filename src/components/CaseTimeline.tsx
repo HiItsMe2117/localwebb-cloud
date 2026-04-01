@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
-import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Calendar, Search, Send, ExternalLink, Sparkles } from 'lucide-react';
+import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import EventNode, { EVENT_CATEGORIES } from './EventNode';
 import axios from 'axios';
