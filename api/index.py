@@ -2284,6 +2284,10 @@ class TimelineResearchRequest(BaseModel):
     query: str
     messages: List[Dict[str, str]] = []
 
+class GraphResearchRequest(BaseModel):
+    query: str
+    messages: List[Dict[str, str]] = []
+
 
 @app.post("/api/cases/{case_id}/graph/edges/{edge_id}/find-evidence")
 async def find_edge_evidence(case_id: str, edge_id: str, request: FindEvidenceRequest, user = Depends(require_paid)):
@@ -4446,6 +4450,144 @@ Guidelines:
         }
     except Exception as e:
         print(f"Timeline research failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/graph/research")
+async def graph_research(case_id: str, request: GraphResearchRequest, user = Depends(require_paid)):
+    """AI-powered research for the network graph — suggests entities to add based on web search."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        # Load case context
+        case_res = supabase.table("cases").select("title, summary, category").eq("id", case_id).execute()
+        case_data = case_res.data[0] if case_res.data else {}
+
+        # Load existing graph nodes (pinned global + custom)
+        pinned = supabase.table("case_graph_entities").select("node_id").eq("case_id", case_id).execute()
+        node_ids = [r["node_id"] for r in (pinned.data or [])]
+
+        custom_res = supabase.table("case_graph_custom_nodes").select("id, label, type").eq("case_id", case_id).execute()
+        custom_nodes = custom_res.data or []
+
+        entity_lines = []
+        nodes_by_id = {}
+        if node_ids:
+            nodes_res = supabase.table("nodes").select("id, label, type").in_("id", node_ids).execute()
+            for n in (nodes_res.data or []):
+                nodes_by_id[n["id"]] = n
+                entity_lines.append(f"- {n.get('label', n['id'])} ({n.get('type', '?')})")
+        for cn in custom_nodes:
+            nodes_by_id[cn["id"]] = cn
+            entity_lines.append(f"- {cn.get('label', 'Untitled')} ({cn.get('type', '?')})")
+
+        # Load groups with member labels
+        groups_res = supabase.table("case_graph_groups").select("label, node_ids").eq("case_id", case_id).execute()
+        group_lines = []
+        for g in (groups_res.data or []):
+            members = [nodes_by_id.get(nid, {}).get("label", nid) for nid in (g.get("node_ids") or [])]
+            group_label = g.get("label") or "Unnamed group"
+            group_lines.append(f"- {group_label}: {', '.join(members)}")
+
+        entities_context = ""
+        if entity_lines:
+            entities_context = f"\n\nEXISTING ENTITIES ON THE GRAPH ({len(entity_lines)}):\n" + "\n".join(entity_lines[:50])
+
+        groups_context = ""
+        if group_lines:
+            groups_context = f"\n\nGRAPH GROUPS (thematic clusters in the investigation):\n" + "\n".join(group_lines)
+
+        system_prompt = f"""You are an expert criminal investigator and intelligence analyst working on a research platform dedicated to organizing and mapping information from criminal case files — including court documents, witness depositions, financial records, flight logs, and public reporting. Investigators use this platform to build network graphs that visualize relationships between people, organizations, locations, and financial entities involved in criminal cases.
+
+Your role is to help expand the investigator's network graph by researching their query using web search and suggesting NEW entities that are relevant to their case. The investigator has already begun mapping key figures and has organized them into thematic groups. Your suggestions should help them uncover the full picture — intermediaries who facilitated activity, co-conspirators, victims, witnesses, legal representatives, financial vehicles used to move money, properties and locations tied to key events, government agencies and regulatory bodies involved, and any other entities that connect to the existing network.
+
+CASE: {case_data.get('title', 'Untitled')}
+CATEGORY: {case_data.get('category', 'Unknown')}
+SUMMARY: {case_data.get('summary', 'No summary.')}{entities_context}{groups_context}
+
+IMPORTANT: After your narrative response, you MUST include a structured section at the very end formatted EXACTLY like this:
+
+---ENTITIES---
+[
+  {{"name": "Entity name", "type": "PERSON|ORGANIZATION|LOCATION|EVENT|DOCUMENT|FINANCIAL_ENTITY", "description": "Brief description of who/what this is and their relevance to the case", "suggested_group": "Exact group label or null"}}
+]
+---END---
+
+Guidelines:
+- Search the web thoroughly for accurate, sourced information — prioritize court records, DOJ filings, investigative journalism, and public records over speculation
+- Suggest 2-8 entities per response depending on the query
+- Use the correct entity type: PERSON for individuals, ORGANIZATION for companies/agencies/nonprofits/law firms, LOCATION for properties/addresses/jurisdictions, FINANCIAL_ENTITY for funds/accounts/trusts/shell companies, EVENT for significant incidents/arrests/hearings, DOCUMENT for key legal filings/reports
+- Do NOT suggest entities that are already on the graph
+- For suggested_group: if an entity clearly fits one of the existing groups based on the group's label and members, use that group's exact label; otherwise use null
+- Prioritize entities that bridge gaps in the existing network — people or organizations that connect existing groups to each other, or fill in missing links within a group
+- When suggesting financial entities, include the jurisdiction or structure type when known (e.g. "Delaware LLC", "Virgin Islands trust")
+- Keep descriptions concise (1-2 sentences) focusing on the entity's specific role or relevance to the case"""
+
+        contents = [system_prompt]
+        for msg in request.messages:
+            contents.append(f"{'Researcher' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}")
+        contents.append(f"Researcher: {request.query}")
+
+        config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())]
+        )
+
+        res = generate(
+            client,
+            model="gemini-2.0-flash",
+            contents="\n\n".join(contents),
+            config=config,
+        )
+
+        log_usage(user, "/api/cases/graph/research", "gemini-2.0-flash", res.usage_metadata)
+
+        # Extract web sources from grounding metadata
+        web_sources = []
+        if res.candidates and res.candidates[0].grounding_metadata:
+            gm = res.candidates[0].grounding_metadata
+            if gm.grounding_chunks:
+                import urllib.parse
+                for gc in gm.grounding_chunks:
+                    if gc.web:
+                        uri = gc.web.uri or ""
+                        if uri:
+                            domain = urllib.parse.urlparse(uri).netloc.removeprefix('www.')
+                            web_sources.append({
+                                "title": gc.web.title or "",
+                                "uri": uri,
+                                "domain": domain,
+                            })
+
+        # Parse structured entities from response
+        full_text = res.text or ""
+        entities = []
+        narrative = full_text
+
+        if "---ENTITIES---" in full_text and "---END---" in full_text:
+            parts = full_text.split("---ENTITIES---")
+            narrative = parts[0].strip()
+            entities_json = parts[1].split("---END---")[0].strip()
+            try:
+                entities = json.loads(entities_json)
+            except json.JSONDecodeError:
+                try:
+                    cleaned = entities_json.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                    entities = json.loads(cleaned)
+                except json.JSONDecodeError:
+                    pass
+
+        return {
+            "narrative": narrative,
+            "entities": entities,
+            "web_sources": web_sources,
+        }
+    except Exception as e:
+        print(f"Graph research failed: {e}")
         import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 

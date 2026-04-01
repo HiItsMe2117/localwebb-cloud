@@ -138,8 +138,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const [showResearch, setShowResearch] = useState(false);
   const [researchQuery, setResearchQuery] = useState('');
   const [isResearching, setIsResearching] = useState(false);
-  const [researchMessages, setResearchMessages] = useState<{ role: 'user' | 'assistant'; content: string; events?: { title: string; date: string | null; description: string; category: string }[]; webSources?: WebSource[] }[]>([]);
+  const [researchMessages, setResearchMessages] = useState<{ role: 'user' | 'assistant'; content: string; entities?: { name: string; type: string; description: string; suggested_group: string | null }[]; webSources?: WebSource[] }[]>([]);
   const researchEndRef = useRef<HTMLDivElement>(null);
+  const [addingEntityIdx, setAddingEntityIdx] = useState<string | null>(null);
 
   // Viewport persistence
   const viewportKey = `case-map-viewport-${caseId}`;
@@ -374,7 +375,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
     setTimeout(() => researchEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
 
     try {
-      const res = await axios.post(`/api/cases/${caseId}/timeline/research`, {
+      const res = await axios.post(`/api/cases/${caseId}/graph/research`, {
         query,
         messages: researchMessages.map(m => ({ role: m.role, content: m.content })),
       });
@@ -382,7 +383,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       const assistantMsg = {
         role: 'assistant' as const,
         content: res.data.narrative || res.data.response || 'No results found.',
-        events: res.data.events || [],
+        entities: res.data.entities || [],
         webSources: res.data.web_sources || [],
       };
       setResearchMessages(prev => [...prev, assistantMsg]);
@@ -395,6 +396,43 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       setIsResearching(false);
     }
   }, [caseId, researchQuery, isResearching, researchMessages]);
+
+  // Add a suggested entity from research to the graph
+  const addResearchEntity = useCallback(async (
+    entity: { name: string; type: string; description: string; suggested_group: string | null },
+    key: string,
+    targetGroupId?: string
+  ) => {
+    setAddingEntityIdx(key);
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/graph/custom-nodes`, {
+        label: entity.name,
+        type: entity.type,
+      });
+      const newNodeId = res.data.id;
+
+      if (newNodeId && entity.description) {
+        await axios.patch(`/api/cases/${caseId}/graph/entities/${newNodeId}/description`, {
+          description: entity.description,
+        });
+      }
+
+      if (targetGroupId && newNodeId) {
+        const group = groups.find(g => g.id === targetGroupId);
+        if (group) {
+          await updateGroup(targetGroupId, { node_ids: [...group.node_ids, newNodeId] });
+        }
+      }
+
+      await loadGraph();
+      toast.success(`Added ${entity.name}`);
+    } catch (err) {
+      console.error('Failed to add research entity:', err);
+      toast.error('Failed to add entity');
+    } finally {
+      setAddingEntityIdx(null);
+    }
+  }, [caseId, groups, updateGroup, loadGraph]);
 
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -2267,9 +2305,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             {researchMessages.length === 0 && (
               <div className="text-center py-8">
                 <Sparkles size={24} className="text-[#FF9F0A]/30 mx-auto mb-3" />
-                <p className="text-[13px] text-[rgba(235,235,245,0.4)] mb-1">AI-powered research</p>
+                <p className="text-[13px] text-[rgba(235,235,245,0.4)] mb-1">Entity Research</p>
                 <p className="text-[11px] text-[rgba(235,235,245,0.25)] leading-relaxed px-4">
-                  Ask about people, organizations, deals, or events — uses web search to find information
+                  Search for people, organizations, locations, and connections to add to your network graph
                 </p>
               </div>
             )}
@@ -2307,29 +2345,77 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                       )}
                     </div>
 
-                    {/* Event suggestions */}
-                    {msg.events && msg.events.length > 0 && (
+                    {/* Entity suggestions */}
+                    {msg.entities && msg.entities.length > 0 && (
                       <div className="space-y-1.5">
                         <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider px-1">
-                          Suggested Events
+                          Suggested Entities
                         </span>
-                        {msg.events.map((ev, ei) => (
-                          <div
-                            key={ei}
-                            className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.35)] rounded-xl overflow-hidden"
-                          >
-                            <div style={{ height: 3, backgroundColor: ev.category === 'legal' ? '#AF52DE' : ev.category === 'financial' ? '#FF9F0A' : ev.category === 'crime' ? '#FF453A' : ev.category === 'meeting' ? '#5AC8FA' : ev.category === 'travel' ? '#4ade80' : ev.category === 'media' ? '#60a5fa' : '#8E8E93' }} />
-                            <div className="px-2.5 py-2">
-                              <p className="text-[12px] font-semibold text-white leading-tight">{ev.title}</p>
-                              {ev.date && (
-                                <span className="text-[10px] font-mono text-[rgba(235,235,245,0.5)]">{ev.date}</span>
-                              )}
-                              {ev.description && (
-                                <p className="text-[10px] text-[rgba(235,235,245,0.4)] leading-snug mt-0.5">{ev.description}</p>
-                              )}
+                        {msg.entities.map((ent, ei) => {
+                          const key = `${i}-${ei}`;
+                          const typeColor = TYPE_COLORS[ent.type] || '#8E8E93';
+                          const isAdding = addingEntityIdx === key;
+                          const suggestedGroup = ent.suggested_group
+                            ? groups.find(g => g.label === ent.suggested_group)
+                            : null;
+
+                          return (
+                            <div
+                              key={ei}
+                              className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.35)] rounded-xl overflow-hidden"
+                            >
+                              <div style={{ height: 3, backgroundColor: typeColor }} />
+                              <div className="px-2.5 py-2">
+                                <div className="flex items-center justify-between gap-1">
+                                  <p className="text-[12px] font-semibold text-white leading-tight flex-1">{ent.name}</p>
+                                  <span
+                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
+                                    style={{ backgroundColor: typeColor + '20', color: typeColor }}
+                                  >
+                                    {ent.type.replace('_', ' ')}
+                                  </span>
+                                </div>
+                                {ent.description && (
+                                  <p className="text-[10px] text-[rgba(235,235,245,0.4)] leading-snug mt-0.5">{ent.description}</p>
+                                )}
+                                <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-[rgba(84,84,88,0.2)]">
+                                  {suggestedGroup ? (
+                                    <span className="text-[9px] text-[rgba(235,235,245,0.3)] flex items-center gap-1">
+                                      <Circle size={6} style={{ fill: suggestedGroup.color, color: suggestedGroup.color }} />
+                                      {suggestedGroup.label}
+                                    </span>
+                                  ) : groups.length > 0 ? (
+                                    <select
+                                      className="text-[9px] bg-[#2C2C2E] border border-[rgba(84,84,88,0.35)] rounded px-1 py-0.5 text-[rgba(235,235,245,0.5)] max-w-[120px]"
+                                      defaultValue=""
+                                      id={`group-select-${key}`}
+                                    >
+                                      <option value="">No group</option>
+                                      {groups.map(g => (
+                                        <option key={g.id} value={g.id}>{g.label || 'Unnamed'}</option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <span />
+                                  )}
+                                  <button
+                                    onClick={() => {
+                                      const groupId = suggestedGroup?.id
+                                        || (document.getElementById(`group-select-${key}`) as HTMLSelectElement)?.value
+                                        || undefined;
+                                      addResearchEntity(ent, key, groupId);
+                                    }}
+                                    disabled={isAdding}
+                                    className="flex items-center gap-0.5 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-[#30D158] hover:bg-[#28B74C] text-black transition-colors disabled:opacity-50"
+                                  >
+                                    {isAdding ? <Loader2 size={9} className="animate-spin" /> : <Plus size={9} />}
+                                    Add
+                                  </button>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -2354,7 +2440,7 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
                 value={researchQuery}
                 onChange={e => setResearchQuery(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendResearch(); } }}
-                placeholder="Research a topic..."
+                placeholder="Search for entities to add..."
                 disabled={isResearching}
                 className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[12px] text-white focus:outline-none focus:border-[#FF9F0A] transition-colors placeholder:text-[rgba(235,235,245,0.2)] disabled:opacity-50"
               />
