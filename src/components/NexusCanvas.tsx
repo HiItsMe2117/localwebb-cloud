@@ -86,14 +86,21 @@ function GroupEllipses({ groups, nodes, onGroupClick, onGroupDrag, onGroupDragEn
     };
   }, [handlePointerMove, handlePointerUp]);
 
+  // Stable position map — only changes when nodes actually move, not on selection changes
+  const positionMap = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    for (const n of nodes) map.set(n.id, n.position);
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes.map(n => `${n.id}:${n.position.x}:${n.position.y}`).join()]);
+
   const ellipses = useMemo(() => {
     if (groups.length === 0) return [];
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
     return groups.map(g => {
-      const memberNodes = g.node_ids.map(id => nodeMap.get(id)).filter(Boolean) as Node[];
-      if (memberNodes.length === 0) return null;
-      const xs = memberNodes.map(n => n.position.x);
-      const ys = memberNodes.map(n => n.position.y);
+      const positions = g.node_ids.map(id => positionMap.get(id)).filter(Boolean) as { x: number; y: number }[];
+      if (positions.length === 0) return null;
+      const xs = positions.map(p => p.x);
+      const ys = positions.map(p => p.y);
       const minX = Math.min(...xs);
       const maxX = Math.max(...xs);
       const minY = Math.min(...ys);
@@ -105,7 +112,7 @@ function GroupEllipses({ groups, nodes, onGroupClick, onGroupDrag, onGroupDragEn
       const ry = Math.max((maxY - minY) / 2 + pad, 50);
       return { ...g, cx, cy, rx, ry };
     }).filter(Boolean);
-  }, [groups, nodes]);
+  }, [groups, positionMap]);
 
   if (ellipses.length === 0) return null;
 
