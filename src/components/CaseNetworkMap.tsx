@@ -134,6 +134,13 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   // Evidence panel state (Phase 1)
   const [evidenceEdge, setEvidenceEdge] = useState<Edge | null>(null);
 
+  // Research panel
+  const [showResearch, setShowResearch] = useState(false);
+  const [researchQuery, setResearchQuery] = useState('');
+  const [isResearching, setIsResearching] = useState(false);
+  const [researchMessages, setResearchMessages] = useState<{ role: 'user' | 'assistant'; content: string; events?: { title: string; date: string | null; description: string; category: string }[]; webSources?: WebSource[] }[]>([]);
+  const researchEndRef = useRef<HTMLDivElement>(null);
+
   // Viewport persistence
   const viewportKey = `case-map-viewport-${caseId}`;
   const hasSavedViewport = useRef(false);
@@ -354,6 +361,40 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       setIsCaseChatting(false);
     }
   }, [caseId, caseChatInput, caseChatMessages, isCaseChatting, caseChatMode]);
+
+  // Research panel: AI-powered web search for investigation
+  const sendResearch = useCallback(async () => {
+    const query = researchQuery.trim();
+    if (!query || isResearching) return;
+
+    const userMsg = { role: 'user' as const, content: query };
+    setResearchMessages(prev => [...prev, userMsg]);
+    setResearchQuery('');
+    setIsResearching(true);
+    setTimeout(() => researchEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/timeline/research`, {
+        query,
+        messages: researchMessages.map(m => ({ role: m.role, content: m.content })),
+      });
+
+      const assistantMsg = {
+        role: 'assistant' as const,
+        content: res.data.narrative || res.data.response || 'No results found.',
+        events: res.data.events || [],
+        webSources: res.data.web_sources || [],
+      };
+      setResearchMessages(prev => [...prev, assistantMsg]);
+      setTimeout(() => researchEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    } catch (err) {
+      console.error('Research failed:', err);
+      toast.error('Research failed');
+      setResearchMessages(prev => [...prev, { role: 'assistant', content: 'Research failed. Please try again.' }]);
+    } finally {
+      setIsResearching(false);
+    }
+  }, [caseId, researchQuery, isResearching, researchMessages]);
 
   // Filter out ReactFlow's built-in select changes — we manage selection ourselves
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -1344,6 +1385,15 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             >
               {isCreatingSticky ? <Loader2 size={16} className="animate-spin" /> : <StickyNote size={16} />}
             </button>
+            <button
+              onClick={() => setShowResearch(prev => !prev)}
+              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
+                showResearch ? 'bg-[#FF9F0A] text-black' : 'bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.4)] hover:border-[#FF9F0A]'
+              }`}
+              title="Research"
+            >
+              <Sparkles size={16} />
+            </button>
           </div>
 
           {showCreateForm && (
@@ -1381,7 +1431,9 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
         </div>
       )}
 
-      {/* ReactFlow canvas */}
+      {/* ReactFlow canvas + research panel */}
+      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
       <div ref={lassoRef} className="flex-1 relative">
         <NexusCanvas
           nodes={displayNodes}
@@ -2191,6 +2243,133 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
           )}
         </div>
       )}
+      </div>{/* end inner flex-col (canvas + analysis) */}
+
+      {/* Research side panel */}
+      {showResearch && (
+        <div className="w-80 shrink-0 flex flex-col bg-[#0A0A0A] border-l border-[rgba(84,84,88,0.65)]">
+          {/* Header */}
+          <div className="shrink-0 px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className="text-[#FF9F0A]" />
+              <span className="text-[13px] font-semibold text-white">Research</span>
+            </div>
+            <button
+              onClick={() => setShowResearch(false)}
+              className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
+            >
+              <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+            {researchMessages.length === 0 && (
+              <div className="text-center py-8">
+                <Sparkles size={24} className="text-[#FF9F0A]/30 mx-auto mb-3" />
+                <p className="text-[13px] text-[rgba(235,235,245,0.4)] mb-1">AI-powered research</p>
+                <p className="text-[11px] text-[rgba(235,235,245,0.25)] leading-relaxed px-4">
+                  Ask about people, organizations, deals, or events — uses web search to find information
+                </p>
+              </div>
+            )}
+
+            {researchMessages.map((msg, i) => (
+              <div key={i}>
+                {msg.role === 'user' ? (
+                  <div className="flex justify-end">
+                    <div className="bg-[#FF9F0A] text-black rounded-2xl rounded-br-md px-3 py-2 max-w-[85%]">
+                      <p className="text-[12px] font-medium">{msg.content}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.35)] rounded-2xl rounded-bl-md px-3 py-2.5">
+                      <p className="text-[12px] text-[rgba(235,235,245,0.8)] leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+
+                      {/* Web sources */}
+                      {msg.webSources && msg.webSources.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-[rgba(84,84,88,0.25)] flex flex-wrap gap-1.5">
+                          {msg.webSources.slice(0, 5).map((src, si) => (
+                            <a
+                              key={si}
+                              href={src.uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#2C2C2E] hover:bg-[#3A3A3C] transition-colors"
+                              title={src.title}
+                            >
+                              <ExternalLink size={9} className="text-[#007AFF]" />
+                              <span className="text-[10px] text-[#007AFF] truncate max-w-[120px]">{src.domain}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Event suggestions */}
+                    {msg.events && msg.events.length > 0 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider px-1">
+                          Suggested Events
+                        </span>
+                        {msg.events.map((ev, ei) => (
+                          <div
+                            key={ei}
+                            className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.35)] rounded-xl overflow-hidden"
+                          >
+                            <div style={{ height: 3, backgroundColor: ev.category === 'legal' ? '#AF52DE' : ev.category === 'financial' ? '#FF9F0A' : ev.category === 'crime' ? '#FF453A' : ev.category === 'meeting' ? '#5AC8FA' : ev.category === 'travel' ? '#4ade80' : ev.category === 'media' ? '#60a5fa' : '#8E8E93' }} />
+                            <div className="px-2.5 py-2">
+                              <p className="text-[12px] font-semibold text-white leading-tight">{ev.title}</p>
+                              {ev.date && (
+                                <span className="text-[10px] font-mono text-[rgba(235,235,245,0.5)]">{ev.date}</span>
+                              )}
+                              {ev.description && (
+                                <p className="text-[10px] text-[rgba(235,235,245,0.4)] leading-snug mt-0.5">{ev.description}</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {isResearching && (
+              <div className="flex items-center gap-2 px-1">
+                <Loader2 size={14} className="text-[#FF9F0A] animate-spin" />
+                <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Researching...</span>
+              </div>
+            )}
+            <div ref={researchEndRef} />
+          </div>
+
+          {/* Input */}
+          <div className="shrink-0 px-3 py-2.5 border-t border-[rgba(84,84,88,0.35)]">
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={researchQuery}
+                onChange={e => setResearchQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendResearch(); } }}
+                placeholder="Research a topic..."
+                disabled={isResearching}
+                className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[12px] text-white focus:outline-none focus:border-[#FF9F0A] transition-colors placeholder:text-[rgba(235,235,245,0.2)] disabled:opacity-50"
+              />
+              <button
+                onClick={sendResearch}
+                disabled={!researchQuery.trim() || isResearching}
+                className="w-8 h-8 rounded-xl bg-[#FF9F0A] hover:bg-[#E8900A] disabled:opacity-30 flex items-center justify-center transition-colors shrink-0"
+              >
+                <Send size={12} className="text-black" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>{/* end outer flex row (canvas + research) */}
 
       {/* Footer stats + selection bar */}
       <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex flex-wrap items-center gap-2">
