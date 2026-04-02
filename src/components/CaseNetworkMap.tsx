@@ -2292,12 +2292,23 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               <Sparkles size={14} className="text-[#FF9F0A]" />
               <span className="text-[13px] font-semibold text-white">Research</span>
             </div>
-            <button
-              onClick={() => setShowResearch(false)}
-              className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
-            >
-              <X size={14} className="text-[rgba(235,235,245,0.4)]" />
-            </button>
+            <div className="flex items-center gap-1">
+              {researchMessages.length > 0 && (
+                <button
+                  onClick={() => setResearchMessages([])}
+                  className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
+                  title="Clear conversation"
+                >
+                  <Trash2 size={13} className="text-[rgba(235,235,245,0.4)]" />
+                </button>
+              )}
+              <button
+                onClick={() => setShowResearch(false)}
+                className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
+              >
+                <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
