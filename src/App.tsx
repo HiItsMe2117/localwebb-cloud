@@ -261,6 +261,81 @@ function AppContent() {
     loadCases().then(() => loadGraph());
   }, []);
 
+  // When the min degree slider changes, layout any newly-visible nodes stuck at origin
+  const prevMinDegreeRef = useRef(deferredMinDegree);
+  useEffect(() => {
+    if (prevMinDegreeRef.current === deferredMinDegree) return;
+    const prevDeg = prevMinDegreeRef.current;
+    prevMinDegreeRef.current = deferredMinDegree;
+
+    // Only act when degree is lowered (more nodes becoming visible)
+    if (deferredMinDegree >= prevDeg) return;
+    if (isLayouting || nodes.length === 0) return;
+
+    const degree = computeDegreeMap(edges);
+
+    // Nodes that are now visible but were previously hidden
+    const newlyVisible = nodes.filter(n => {
+      const deg = degree.get(n.id) || 0;
+      return deg >= deferredMinDegree && deg < prevDeg;
+    });
+
+    // Of those, find ones stuck at origin (no layout)
+    const atOrigin = newlyVisible.filter(n =>
+      Math.abs(n.position.x) < 1 && Math.abs(n.position.y) < 1
+    );
+
+    if (atOrigin.length === 0) return;
+
+    // Find positioned nodes to anchor around
+    const positioned = nodes.filter(n => {
+      const deg = degree.get(n.id) || 0;
+      return deg >= deferredMinDegree && (Math.abs(n.position.x) >= 1 || Math.abs(n.position.y) >= 1);
+    });
+
+    if (positioned.length === 0) {
+      // No anchors — full layout needed
+      const visible = nodes.filter(n => (degree.get(n.id) || 0) >= deferredMinDegree);
+      const visibleIds = new Set(visible.map(n => n.id));
+      const visibleEdges = edges.filter(e => visibleIds.has(e.source) && visibleIds.has(e.target));
+      setIsLayouting(true);
+      getLayoutedElements(visible, visibleEdges).then(({ nodes: laid }) => {
+        const posMap = new Map(laid.map(n => [n.id, n.position]));
+        setNodes(prev => prev.map(n => posMap.has(n.id) ? { ...n, position: posMap.get(n.id)! } : n));
+        const updates = laid.map(n => ({ id: n.id, x: n.position.x, y: n.position.y }));
+        axios.post('/api/graph/positions', updates).catch(() => {});
+      }).finally(() => setIsLayouting(false));
+      return;
+    }
+
+    // Compute center of positioned nodes
+    let cx = 0, cy = 0;
+    for (const n of positioned) { cx += n.position.x; cy += n.position.y; }
+    cx /= positioned.length;
+    cy /= positioned.length;
+
+    // Spread unpositioned nodes in expanding spiral around the center
+    const radius = Math.max(300, Math.sqrt(positioned.length) * 80);
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+    const updates: { id: string; x: number; y: number }[] = [];
+
+    setNodes(prev => prev.map((n, _idx) => {
+      if (!atOrigin.find(ao => ao.id === n.id)) return n;
+      const i = atOrigin.indexOf(atOrigin.find(ao => ao.id === n.id)!);
+      const r = radius * Math.sqrt((i + 1) / atOrigin.length);
+      const angle = goldenAngle * i;
+      const x = cx + r * Math.cos(angle);
+      const y = cy + r * Math.sin(angle);
+      updates.push({ id: n.id, x, y });
+      return { ...n, position: { x, y } };
+    }));
+
+    // Persist new positions
+    if (updates.length > 0) {
+      axios.post('/api/graph/positions', updates).catch(() => {});
+    }
+  }, [deferredMinDegree, nodes, edges, isLayouting, setNodes]);
+
   const onNodeDragStop = async (_: any, node: Node) => {
     try {
       await axios.post('/api/graph/positions', [{
