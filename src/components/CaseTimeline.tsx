@@ -1,11 +1,131 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
-import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
+import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow, useViewport } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
-import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles } from 'lucide-react';
+import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import EventNode, { EVENT_CATEGORIES } from './EventNode';
 import axios from 'axios';
+
+// ── Timeline auto-layout ────────────────────────────────────────────────────
+
+const CARD_WIDTH = 220;
+const ROW_HEIGHT = 160;
+const YEAR_GAP = 100;
+const BASE_Y = 0;
+
+interface YearMarker {
+  year: string;
+  x: number;
+  width: number;
+}
+
+function parseEventSortKey(dateStr: string | null | undefined): string {
+  if (!dateStr) return '9999-99-99'; // undated → end
+  // Pad partial dates: "2024" → "2024-00-00", "2024-03" → "2024-03-00"
+  const parts = dateStr.split('-');
+  const y = parts[0] || '9999';
+  const m = parts[1] || '00';
+  const d = parts[2] || '00';
+  return `${y}-${m}-${d}`;
+}
+
+function extractYear(dateStr: string | null | undefined): string {
+  if (!dateStr) return 'Undated';
+  return dateStr.split('-')[0] || 'Undated';
+}
+
+function computeTimelineLayout(eventNodes: Node[]): { positions: Record<string, { x: number; y: number }>; yearMarkers: YearMarker[] } {
+  if (eventNodes.length === 0) return { positions: {}, yearMarkers: [] };
+
+  // Sort by date
+  const sorted = [...eventNodes].sort((a, b) => {
+    const ka = parseEventSortKey(a.data?.event_date);
+    const kb = parseEventSortKey(b.data?.event_date);
+    return ka.localeCompare(kb);
+  });
+
+  // Group by year
+  const yearGroups: Map<string, Node[]> = new Map();
+  for (const node of sorted) {
+    const year = extractYear(node.data?.event_date);
+    if (!yearGroups.has(year)) yearGroups.set(year, []);
+    yearGroups.get(year)!.push(node);
+  }
+
+  const positions: Record<string, { x: number; y: number }> = {};
+  const yearMarkers: YearMarker[] = [];
+  let currentX = 0;
+
+  for (const [year, events] of yearGroups) {
+    const yearStartX = currentX;
+
+    // Within a year, group events that share the same month for vertical stacking
+    const monthGroups: Map<string, Node[]> = new Map();
+    for (const ev of events) {
+      const date = ev.data?.event_date || '';
+      const monthKey = date.length >= 7 ? date.slice(0, 7) : date.slice(0, 4) || 'none';
+      if (!monthGroups.has(monthKey)) monthGroups.set(monthKey, []);
+      monthGroups.get(monthKey)!.push(ev);
+    }
+
+    for (const [, monthEvents] of monthGroups) {
+      for (let i = 0; i < monthEvents.length; i++) {
+        positions[monthEvents[i].id] = {
+          x: currentX,
+          y: BASE_Y + i * ROW_HEIGHT,
+        };
+      }
+      currentX += CARD_WIDTH;
+    }
+
+    yearMarkers.push({
+      year,
+      x: yearStartX,
+      width: currentX - yearStartX - CARD_WIDTH + 200, // approximate group width
+    });
+
+    currentX += YEAR_GAP;
+  }
+
+  return { positions, yearMarkers };
+}
+
+// ── Year marker overlay ─────────────────────────────────────────────────────
+
+function YearMarkers({ markers }: { markers: YearMarker[] }) {
+  const { x: vx, y: vy, zoom } = useViewport();
+
+  if (markers.length === 0) return null;
+
+  return (
+    <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 0 }}>
+      {markers.map(m => (
+        <div key={m.year} style={{ position: 'absolute', left: vx + m.x * zoom, top: vy + (BASE_Y - 70) * zoom }}>
+          <span style={{
+            fontSize: Math.max(11, 16 * zoom),
+            fontWeight: 800,
+            color: 'rgba(235,235,245,0.15)',
+            letterSpacing: '0.05em',
+            whiteSpace: 'nowrap',
+          }}>
+            {m.year}
+          </span>
+          <div style={{
+            position: 'absolute',
+            left: -16 * zoom,
+            top: 24 * zoom,
+            width: 1,
+            height: 600 * zoom,
+            borderLeft: '1px dashed rgba(235,235,245,0.07)',
+          }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Component ───────────────────────────────────────────────────────────────
 
 interface CaseTimelineProps {
   caseId: string;
@@ -40,6 +160,9 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const [isLoadingGraphEvents, setIsLoadingGraphEvents] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
+  // Year markers for auto-layout
+  const [yearMarkers, setYearMarkers] = useState<YearMarker[]>([]);
+
   // Research panel
   const [showResearch, setShowResearch] = useState(false);
   const [researchQuery, setResearchQuery] = useState('');
@@ -70,11 +193,31 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
 
   // ── Load timeline ──────────────────────────────────────────────────────────
 
+  const shouldAutoLayoutAfterLoad = useRef(false);
+
   const loadTimeline = useCallback(async () => {
     try {
       const res = await axios.get(`/api/cases/${caseId}/timeline`);
-      setNodes(res.data.nodes || []);
+      const loadedNodes = res.data.nodes || [];
+      setNodes(loadedNodes);
       setEdges(res.data.edges || []);
+
+      // If flagged, run auto-layout with the freshly loaded nodes
+      if (shouldAutoLayoutAfterLoad.current) {
+        shouldAutoLayoutAfterLoad.current = false;
+        const { positions, yearMarkers: markers } = computeTimelineLayout(loadedNodes);
+        setYearMarkers(markers);
+        setNodes(loadedNodes.map(n => ({
+          ...n,
+          position: positions[n.id] || n.position,
+        })));
+        // Save positions
+        const posList = Object.entries(positions).map(([id, pos]) => ({ event_id: id, x: pos.x, y: pos.y }));
+        if (posList.length > 0) {
+          axios.post(`/api/cases/${caseId}/timeline/positions`, { positions: posList }).catch(() => {});
+        }
+        setTimeout(() => fitView({ padding: 0.3, duration: 500 }), 50);
+      }
     } catch (err: any) {
       console.error('Failed to load timeline:', err);
       const status = err?.response?.status;
@@ -84,7 +227,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [caseId, setNodes, setEdges]);
+  }, [caseId, setNodes, setEdges, fitView]);
 
   useEffect(() => { loadTimeline(); }, [loadTimeline]);
 
@@ -121,6 +264,47 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       } catch {}
     }, 300);
   }, [viewportKey]);
+
+  // ── Auto-layout: sort chronologically with year grouping ────────────────
+
+  const autoLayout = useCallback(async (targetNodes?: Node[]) => {
+    const evts = targetNodes || nodes;
+    if (evts.length === 0) return;
+
+    const { positions, yearMarkers: markers } = computeTimelineLayout(evts);
+    setYearMarkers(markers);
+
+    // Apply positions to nodes
+    const updated = evts.map(n => ({
+      ...n,
+      position: positions[n.id] || n.position,
+    }));
+    setNodes(updated);
+
+    // Save all positions to backend
+    const posList = Object.entries(positions).map(([id, pos]) => ({
+      event_id: id,
+      x: pos.x,
+      y: pos.y,
+    }));
+    if (posList.length > 0) {
+      try {
+        await axios.post(`/api/cases/${caseId}/timeline/positions`, { positions: posList });
+      } catch (err) {
+        console.error('Failed to save layout positions:', err);
+      }
+    }
+
+    // Fit view to show all events after layout
+    setTimeout(() => fitView({ padding: 0.3, duration: 500 }), 50);
+  }, [caseId, nodes, setNodes, fitView]);
+
+  // Compute year markers from current node positions (for when layout was already saved)
+  useEffect(() => {
+    if (nodes.length === 0) return;
+    const { yearMarkers: markers } = computeTimelineLayout(nodes);
+    setYearMarkers(markers);
+  }, [nodes]);
 
   // ── Display nodes with selection ───────────────────────────────────────────
 
@@ -208,6 +392,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       setNewDescription('');
       setNewCategory('general');
       setShowCreateForm(false);
+      shouldAutoLayoutAfterLoad.current = true;
       await loadTimeline();
     } catch (err) {
       console.error('Failed to create event:', err);
@@ -336,6 +521,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       if (imported > 0) toast.success(`Imported ${imported} event${imported !== 1 ? 's' : ''}`);
       if (skipped > 0) toast(`${skipped} already imported`);
       setShowImport(false);
+      shouldAutoLayoutAfterLoad.current = true;
       await loadTimeline();
     } catch (err) {
       console.error('Failed to import events:', err);
@@ -396,6 +582,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         position_x: centerX + offset,
         position_y: centerY + offset,
       });
+      shouldAutoLayoutAfterLoad.current = true;
       await loadTimeline();
       toast.success(`Added "${event.title}"`);
     } catch (err) {
@@ -629,6 +816,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
             onEdgeLabelDrag={onEdgeLabelDrag}
             onEdgeLabelDragEnd={onEdgeLabelDragEnd}
           />
+          <YearMarkers markers={yearMarkers} />
 
           {/* MiniMap toggle */}
           <button
@@ -886,6 +1074,16 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
           >
             {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
           </button>
+          {!readOnly && (
+            <button
+              onClick={() => autoLayout()}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white"
+              title="Auto-layout by date"
+            >
+              <LayoutGrid size={11} />
+              Sort
+            </button>
+          )}
           <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
             {nodes.length} {nodes.length === 1 ? 'event' : 'events'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
             {selectMode && selectedNodeIds.size === 0 && ' · Tap events to select'}
