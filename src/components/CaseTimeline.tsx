@@ -9,9 +9,10 @@ import axios from 'axios';
 
 // ── Timeline auto-layout ────────────────────────────────────────────────────
 
-const CARD_WIDTH = 220;
-const ROW_HEIGHT = 160;
-const YEAR_GAP = 100;
+const CARD_WIDTH = 240;
+const ROW_HEIGHT = 170;
+const YEAR_GAP = 140;
+const MAX_STACK = 3; // max events stacked vertically before starting a new column
 const BASE_Y = 0;
 
 interface YearMarker {
@@ -70,13 +71,20 @@ function computeTimelineLayout(eventNodes: Node[]): { positions: Record<string, 
     }
 
     for (const [, monthEvents] of monthGroups) {
+      let col = 0;
+      let row = 0;
       for (let i = 0; i < monthEvents.length; i++) {
         positions[monthEvents[i].id] = {
-          x: currentX,
-          y: BASE_Y + i * ROW_HEIGHT,
+          x: currentX + col * CARD_WIDTH,
+          y: BASE_Y + row * ROW_HEIGHT,
         };
+        row++;
+        if (row >= MAX_STACK) {
+          row = 0;
+          col++;
+        }
       }
-      currentX += CARD_WIDTH;
+      currentX += (col + 1) * CARD_WIDTH;
     }
 
     yearMarkers.push({
