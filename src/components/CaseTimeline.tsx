@@ -966,7 +966,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedFilteredEvents.map((node, i) => {
+                  {sortedFilteredEvents.map((node) => {
                     const cat = EVENT_CATEGORIES[node.data?.category] || EVENT_CATEGORIES.general;
                     const Icon = cat.icon;
                     return (
@@ -1279,7 +1279,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                     </button>
                   )}
                 </div>
-                {Object.entries(EVENT_CATEGORIES).map(([key, { label, color, icon: CatIcon }]) => {
+                {Object.entries(EVENT_CATEGORIES).map(([key, { label, color }]) => {
                   const count = nodes.filter(n => (n.data?.category || 'general') === key).length;
                   if (count === 0) return null;
                   return (
