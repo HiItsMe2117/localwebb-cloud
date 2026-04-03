@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow, useViewport } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
-import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter } from 'lucide-react';
+import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import EventNode, { EVENT_CATEGORIES, formatEventDate } from './EventNode';
 import axios from 'axios';
@@ -565,9 +565,20 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     setTimeout(() => researchEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
 
     try {
+      // Build focused events from selection
+      const focusedEvents = selectedNodeIds.size > 0
+        ? nodes.filter(n => selectedNodeIds.has(n.id)).map(n => ({
+            title: n.data?.title || '',
+            date: n.data?.event_date || '',
+            description: n.data?.description || '',
+            category: n.data?.category || 'general',
+          }))
+        : [];
+
       const res = await axios.post(`/api/cases/${caseId}/timeline/research`, {
         query,
         messages: researchMessages.map(m => ({ role: m.role, content: m.content })),
+        focused_events: focusedEvents,
       });
 
       const assistantMsg = {
@@ -585,7 +596,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     } finally {
       setIsResearching(false);
     }
-  }, [caseId, researchQuery, isResearching, researchMessages]);
+  }, [caseId, researchQuery, isResearching, researchMessages, selectedNodeIds, nodes]);
 
   const addResearchEvent = useCallback(async (event: { title: string; date: string | null; description: string; category: string }, key: string) => {
     setAddingEventIndex(key);
@@ -996,14 +1007,22 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                         <tbody>
                           {events.map((node) => {
                             const nodeCat = EVENT_CATEGORIES[node.data?.category] || EVENT_CATEGORIES.general;
+                            const isSelected = selectedNodeIds.has(node.id);
                             return (
                               <tr
                                 key={node.id}
                                 className={`group border-b border-[rgba(84,84,88,0.15)] hover:bg-[#1C1C1E] transition-colors cursor-pointer ${
-                                  contextEvent?.id === node.id ? 'bg-[#1C1C1E]' : ''
+                                  isSelected ? 'bg-[#FF9F0A]/5' : contextEvent?.id === node.id ? 'bg-[#1C1C1E]' : ''
                                 }`}
-                                onClick={() => {
-                                  if (!readOnly) {
+                                onClick={(e) => {
+                                  if (e.shiftKey || selectMode) {
+                                    setSelectedNodeIds(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(node.id)) next.delete(node.id);
+                                      else next.add(node.id);
+                                      return next;
+                                    });
+                                  } else if (!readOnly) {
                                     setContextEvent(prev => {
                                       const target = prev?.id === node.id ? null : node;
                                       if (target) {
@@ -1017,7 +1036,27 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                   }
                                 }}
                               >
-                                <td className="pl-4 pr-2 py-2.5 w-28">
+                                <td className="pl-4 pr-1 py-2.5 w-8">
+                                  <div
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      setSelectedNodeIds(prev => {
+                                        const next = new Set(prev);
+                                        if (next.has(node.id)) next.delete(node.id);
+                                        else next.add(node.id);
+                                        return next;
+                                      });
+                                    }}
+                                    className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                                      isSelected
+                                        ? 'bg-[#FF9F0A] border-[#FF9F0A]'
+                                        : 'border-[rgba(84,84,88,0.65)] opacity-0 group-hover:opacity-100'
+                                    }`}
+                                  >
+                                    {isSelected && <Check size={10} className="text-black" />}
+                                  </div>
+                                </td>
+                                <td className="pr-2 py-2.5 w-28">
                                   <span className="text-[12px] font-mono font-medium" style={{ color: nodeCat.color }}>
                                     {formatEventDate(node.data?.event_date)}
                                   </span>
@@ -1065,14 +1104,22 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                   {sortedFilteredEvents.map((node) => {
                     const cat = EVENT_CATEGORIES[node.data?.category] || EVENT_CATEGORIES.general;
                     const Icon = cat.icon;
+                    const isSelected = selectedNodeIds.has(node.id);
                     return (
                       <tr
                         key={node.id}
                         className={`group border-b border-[rgba(84,84,88,0.25)] hover:bg-[#1C1C1E] transition-colors cursor-pointer ${
-                          contextEvent?.id === node.id ? 'bg-[#1C1C1E]' : ''
+                          isSelected ? 'bg-[#FF9F0A]/5' : contextEvent?.id === node.id ? 'bg-[#1C1C1E]' : ''
                         }`}
-                        onClick={() => {
-                          if (!readOnly) {
+                        onClick={(e) => {
+                          if (e.shiftKey || selectMode) {
+                            setSelectedNodeIds(prev => {
+                              const next = new Set(prev);
+                              if (next.has(node.id)) next.delete(node.id);
+                              else next.add(node.id);
+                              return next;
+                            });
+                          } else if (!readOnly) {
                             setContextEvent(prev => {
                               const target = prev?.id === node.id ? null : node;
                               if (target) {
@@ -1086,7 +1133,27 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                           }
                         }}
                       >
-                        <td className="px-4 py-2.5">
+                        <td className="px-2 py-2.5 w-8">
+                          <div
+                            onClick={e => {
+                              e.stopPropagation();
+                              setSelectedNodeIds(prev => {
+                                const next = new Set(prev);
+                                if (next.has(node.id)) next.delete(node.id);
+                                else next.add(node.id);
+                                return next;
+                              });
+                            }}
+                            className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                              isSelected
+                                ? 'bg-[#FF9F0A] border-[#FF9F0A]'
+                                : 'border-[rgba(84,84,88,0.65)] opacity-0 group-hover:opacity-100'
+                            }`}
+                          >
+                            {isSelected && <Check size={10} className="text-black" />}
+                          </div>
+                        </td>
+                        <td className="px-2 py-2.5">
                           <div
                             className="w-3 h-3 rounded-full shrink-0"
                             style={{ backgroundColor: cat.color }}
@@ -1178,7 +1245,8 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         {showResearch && (
           <div className="w-80 shrink-0 flex flex-col bg-[#0A0A0A] border-l border-[rgba(84,84,88,0.65)]">
             {/* Header */}
-            <div className="shrink-0 px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between">
+            <div className="shrink-0 px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)]">
+              <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Sparkles size={14} className="text-[#FF9F0A]" />
                 <span className="text-[13px] font-semibold text-white">Research</span>
@@ -1189,6 +1257,15 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               >
                 <X size={14} className="text-[rgba(235,235,245,0.4)]" />
               </button>
+              </div>
+              {selectedNodeIds.size > 0 && (
+                <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#FF9F0A]/10 border border-[#FF9F0A]/20">
+                  <MessageSquare size={10} className="text-[#FF9F0A]" />
+                  <span className="text-[10px] text-[#FF9F0A] font-medium">
+                    {selectedNodeIds.size} event{selectedNodeIds.size !== 1 ? 's' : ''} focused — AI will use them as context
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Messages */}
@@ -1401,7 +1478,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
             )}
           </div>
 
-          {viewMode === 'canvas' && nodes.length > 0 && !readOnly && (
+          {nodes.length > 0 && !readOnly && (
             <button
               onClick={() => setSelectMode(m => !m)}
               className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
@@ -1479,6 +1556,17 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                 </button>
               </>
             )}
+            <button
+              onClick={() => {
+                setShowResearch(true);
+                setShowCreateForm(false);
+                setShowImport(false);
+              }}
+              className="flex items-center gap-1.5 bg-[#FF9F0A]/20 hover:bg-[#FF9F0A]/30 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#FF9F0A] transition-colors"
+            >
+              <MessageSquare size={11} />
+              Discuss
+            </button>
             <button
               onClick={deleteSelected}
               className="flex items-center gap-1.5 bg-[#FF453A]/20 hover:bg-[#FF453A]/30 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#FF453A] transition-colors"

@@ -2283,6 +2283,7 @@ class ImportGraphEventsRequest(BaseModel):
 class TimelineResearchRequest(BaseModel):
     query: str
     messages: List[Dict[str, str]] = []
+    focused_events: List[Dict[str, str]] = []
 
 class GraphResearchRequest(BaseModel):
     query: str
@@ -4365,11 +4366,22 @@ async def timeline_research(case_id: str, request: TimelineResearchRequest, user
             event_lines = [f"- {e['title']}" + (f" ({e.get('event_date', '')})" if e.get('event_date') else "") for e in existing_events]
             events_context = f"\n\nEXISTING TIMELINE EVENTS:\n" + "\n".join(event_lines[:30])
 
+        # Build focused events context if any are selected
+        focused_context = ""
+        if request.focused_events:
+            focused_lines = []
+            for fe in request.focused_events:
+                line = f"- [{fe.get('category', 'general')}] {fe.get('date', 'No date')} — {fe.get('title', '')}"
+                if fe.get('description'):
+                    line += f": {fe['description']}"
+                focused_lines.append(line)
+            focused_context = f"\n\nFOCUSED EVENTS (the user has selected these to discuss):\n" + "\n".join(focused_lines)
+
         system_prompt = f"""You are a seasoned investigative researcher helping build a timeline of events for a case investigation. Your job is to research the user's question using web search and return findings as structured events that can be added to an investigation timeline.
 
 CASE: {case_data.get('title', 'Untitled')}
 CATEGORY: {case_data.get('category', 'Unknown')}
-SUMMARY: {case_data.get('summary', 'No summary.')}{events_context}
+SUMMARY: {case_data.get('summary', 'No summary.')}{focused_context}{events_context}
 
 IMPORTANT: After your narrative response, you MUST include a structured section at the very end formatted EXACTLY like this:
 
