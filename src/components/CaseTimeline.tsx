@@ -160,8 +160,9 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const [isLoadingGraphEvents, setIsLoadingGraphEvents] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
-  // Year markers for auto-layout
+  // Year markers and layout animation
   const [yearMarkers, setYearMarkers] = useState<YearMarker[]>([]);
+  const [isAnimatingLayout, setIsAnimatingLayout] = useState(false);
 
   // Research panel
   const [showResearch, setShowResearch] = useState(false);
@@ -207,10 +208,12 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         shouldAutoLayoutAfterLoad.current = false;
         const { positions, yearMarkers: markers } = computeTimelineLayout(loadedNodes);
         setYearMarkers(markers);
+        setIsAnimatingLayout(true);
         setNodes(loadedNodes.map((n: Node) => ({
           ...n,
           position: positions[n.id] || n.position,
         })));
+        setTimeout(() => setIsAnimatingLayout(false), 600);
         // Save positions
         const posList = Object.entries(positions).map(([id, pos]) => ({ event_id: id, x: pos.x, y: pos.y }));
         if (posList.length > 0) {
@@ -274,12 +277,14 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     const { positions, yearMarkers: markers } = computeTimelineLayout(evts);
     setYearMarkers(markers);
 
-    // Apply positions to nodes
+    // Enable transition animation, then apply positions
+    setIsAnimatingLayout(true);
     const updated = evts.map(n => ({
       ...n,
       position: positions[n.id] || n.position,
     }));
     setNodes(updated);
+    setTimeout(() => setIsAnimatingLayout(false), 600);
 
     // Save all positions to backend
     const posList = Object.entries(positions).map(([id, pos]) => ({
@@ -798,7 +803,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       {/* Canvas + Research panel */}
       <div className="flex-1 flex overflow-hidden">
         {/* Canvas */}
-        <div className="flex-1 relative">
+        <div className={`flex-1 relative${isAnimatingLayout ? ' timeline-animating' : ''}`}>
           <NexusCanvas
             nodes={displayNodes}
             edges={edges}

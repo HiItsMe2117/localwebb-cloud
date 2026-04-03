@@ -90,6 +90,11 @@ body {
   border-radius: 10px !important;
 }
 
+/* Timeline layout animation — only active during auto-layout, not drag */
+.timeline-animating .react-flow__node {
+  transition: transform 500ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
 /* Mobile touch fixes */
 @media (pointer: coarse) {
   button, a, input, select, textarea { touch-action: manipulation; }
