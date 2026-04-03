@@ -678,6 +678,26 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     });
   }, [nodes, filterCategories]);
 
+  // Group events by category (for filtered list view)
+  const groupedByCategory = useMemo(() => {
+    if (filterCategories.size === 0) return null;
+    const groups: { key: string; cat: typeof EVENT_CATEGORIES[string]; events: typeof sortedFilteredEvents }[] = [];
+    const catMap = new Map<string, typeof sortedFilteredEvents>();
+    for (const node of sortedFilteredEvents) {
+      const catKey = node.data?.category || 'general';
+      if (!catMap.has(catKey)) catMap.set(catKey, []);
+      catMap.get(catKey)!.push(node);
+    }
+    // Maintain a stable order based on EVENT_CATEGORIES key order
+    for (const key of Object.keys(EVENT_CATEGORIES)) {
+      const events = catMap.get(key);
+      if (events && events.length > 0) {
+        groups.push({ key, cat: EVENT_CATEGORIES[key], events });
+      }
+    }
+    return groups;
+  }, [sortedFilteredEvents, filterCategories]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -953,7 +973,79 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               <div className="flex items-center justify-center h-full text-[13px] text-[rgba(235,235,245,0.3)]">
                 {filterCategories.size > 0 ? 'No events match the selected filters' : 'No events yet'}
               </div>
+            ) : groupedByCategory ? (
+              /* Grouped by category when filters are active */
+              <div className="divide-y divide-[rgba(84,84,88,0.65)]">
+                {groupedByCategory.map(({ key: catKey, cat, events }) => {
+                  const CatIcon = cat.icon;
+                  return (
+                    <div key={catKey}>
+                      {/* Category header */}
+                      <div className="sticky top-0 z-10 bg-[#0A0A0A] px-4 py-2.5 flex items-center gap-2.5 border-b border-[rgba(84,84,88,0.35)]">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color }} />
+                        <CatIcon size={13} style={{ color: cat.color }} />
+                        <span className="text-[13px] font-bold" style={{ color: cat.color }}>{cat.label}</span>
+                        <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">{events.length}</span>
+                      </div>
+                      {/* Events in this category */}
+                      <table className="w-full">
+                        <tbody>
+                          {events.map((node) => {
+                            const nodeCat = EVENT_CATEGORIES[node.data?.category] || EVENT_CATEGORIES.general;
+                            return (
+                              <tr
+                                key={node.id}
+                                className={`group border-b border-[rgba(84,84,88,0.15)] hover:bg-[#1C1C1E] transition-colors cursor-pointer ${
+                                  contextEvent?.id === node.id ? 'bg-[#1C1C1E]' : ''
+                                }`}
+                                onClick={() => {
+                                  if (!readOnly) {
+                                    setContextEvent(prev => {
+                                      const target = prev?.id === node.id ? null : node;
+                                      if (target) {
+                                        setEditTitle(target.data.title || '');
+                                        setEditDate(target.data.event_date || '');
+                                        setEditDescription(target.data.description || '');
+                                        setEditCategory(target.data.category || 'general');
+                                      }
+                                      return target;
+                                    });
+                                  }
+                                }}
+                              >
+                                <td className="pl-4 pr-2 py-2.5 w-28">
+                                  <span className="text-[12px] font-mono font-medium" style={{ color: nodeCat.color }}>
+                                    {formatEventDate(node.data?.event_date)}
+                                  </span>
+                                </td>
+                                <td className="px-2 py-2.5">
+                                  <span className="text-[13px] font-semibold text-white">{node.data?.title}</span>
+                                </td>
+                                <td className="px-2 py-2.5">
+                                  <span className="text-[12px] text-[rgba(235,235,245,0.45)] line-clamp-2">{node.data?.description}</span>
+                                </td>
+                                {!readOnly && (
+                                  <td className="px-2 py-2.5 w-10">
+                                    <button
+                                      onClick={e => { e.stopPropagation(); deleteEvent(node.id); }}
+                                      className="p-1.5 rounded-lg hover:bg-[#FF453A]/20 transition-colors opacity-0 group-hover:opacity-100"
+                                      title="Delete"
+                                    >
+                                      <Trash2 size={12} className="text-[#FF453A]" />
+                                    </button>
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
+              /* Flat table when no filters */
               <table className="w-full">
                 <thead className="sticky top-0 z-10 bg-[#0A0A0A]">
                   <tr className="border-b border-[rgba(84,84,88,0.65)]">
