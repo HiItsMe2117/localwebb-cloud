@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow, useViewport } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
-import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid } from 'lucide-react';
+import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
-import EventNode, { EVENT_CATEGORIES } from './EventNode';
+import EventNode, { EVENT_CATEGORIES, formatEventDate } from './EventNode';
 import axios from 'axios';
 
 // ── Timeline auto-layout ────────────────────────────────────────────────────
@@ -183,6 +183,10 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   // UI
   const [showMiniMap, setShowMiniMap] = useState(() => window.innerWidth >= 768);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [viewMode, setViewMode] = useState<'canvas' | 'list'>('canvas');
+  const [filterCategories, setFilterCategories] = useState<Set<string>>(new Set());
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const filterRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Context menu for event editing
@@ -639,6 +643,41 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     }).catch(err => console.error('Failed to save label position:', err));
   }, [edges, caseId]);
 
+  // ── Filter dropdown close on outside click ─────────────────────────────────
+
+  useEffect(() => {
+    const handler = (e: PointerEvent) => {
+      if (filterRef.current && !filterRef.current.contains(e.target as HTMLElement)) {
+        setShowFilterDropdown(false);
+      }
+    };
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
+  }, []);
+
+  const toggleFilterCategory = useCallback((cat: string) => {
+    setFilterCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  }, []);
+
+  // ── Filtered & sorted list for list view ──────────────────────────────────
+
+  const sortedFilteredEvents = useMemo(() => {
+    let filtered = [...nodes];
+    if (filterCategories.size > 0) {
+      filtered = filtered.filter(n => filterCategories.has(n.data?.category || 'general'));
+    }
+    return filtered.sort((a, b) => {
+      const ka = parseEventSortKey(a.data?.event_date);
+      const kb = parseEventSortKey(b.data?.event_date);
+      return ka.localeCompare(kb);
+    });
+  }, [nodes, filterCategories]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -808,104 +847,236 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         </div>
       )}
 
-      {/* Canvas + Research panel */}
+      {/* Canvas/List + Research panel */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Canvas */}
-        <div className={`flex-1 relative${isAnimatingLayout ? ' timeline-animating' : ''}`}>
-          <NexusCanvas
-            nodes={displayNodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onNodeDragStop={onNodeDragStop}
-            onNodeClick={onNodeClick}
-            onEdgeClick={onEdgeClick}
-            onPaneClick={clearSelection}
-            onMoveEnd={onMoveEnd}
-            panOnDrag={true}
-            skipInitialFitView={hasSavedViewport.current}
-            showMiniMap={showMiniMap}
-            customNodeTypes={nodeTypes}
-            onEdgeLabelDrag={onEdgeLabelDrag}
-            onEdgeLabelDragEnd={onEdgeLabelDragEnd}
-          />
-          <YearMarkers markers={yearMarkers} />
+        {/* Canvas or List view */}
+        {viewMode === 'canvas' ? (
+          <div className={`flex-1 relative${isAnimatingLayout ? ' timeline-animating' : ''}`}>
+            <NexusCanvas
+              nodes={displayNodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onNodeDragStop={onNodeDragStop}
+              onNodeClick={onNodeClick}
+              onEdgeClick={onEdgeClick}
+              onPaneClick={clearSelection}
+              onMoveEnd={onMoveEnd}
+              panOnDrag={true}
+              skipInitialFitView={hasSavedViewport.current}
+              showMiniMap={showMiniMap}
+              customNodeTypes={nodeTypes}
+              onEdgeLabelDrag={onEdgeLabelDrag}
+              onEdgeLabelDragEnd={onEdgeLabelDragEnd}
+            />
+            <YearMarkers markers={yearMarkers} />
 
-          {/* MiniMap toggle */}
-          <button
-            onClick={() => setShowMiniMap(v => !v)}
-            className="absolute z-20 flex items-center gap-1 px-2 py-1 rounded-lg bg-[#1C1C1E]/90 border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] transition-all backdrop-blur-sm text-[10px] font-medium text-[rgba(235,235,245,0.5)] hover:text-white"
-            style={{ bottom: showMiniMap ? 160 : 14, right: 14 }}
-            title={showMiniMap ? 'Collapse minimap' : 'Expand minimap'}
-          >
-            <MapIcon size={10} />
-            {showMiniMap ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
-          </button>
-
-          {/* Context menu for event editing */}
-          {contextEvent && !readOnly && (
-            <div
-              ref={contextRef}
-              className="absolute top-4 right-4 z-30 w-72 bg-[#1C1C1E]/95 backdrop-blur-xl border border-[rgba(84,84,88,0.65)] rounded-2xl shadow-2xl overflow-hidden"
+            {/* MiniMap toggle */}
+            <button
+              onClick={() => setShowMiniMap(v => !v)}
+              className="absolute z-20 flex items-center gap-1 px-2 py-1 rounded-lg bg-[#1C1C1E]/90 border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] transition-all backdrop-blur-sm text-[10px] font-medium text-[rgba(235,235,245,0.5)] hover:text-white"
+              style={{ bottom: showMiniMap ? 160 : 14, right: 14 }}
+              title={showMiniMap ? 'Collapse minimap' : 'Expand minimap'}
             >
-              <div className="p-3 space-y-2">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">Edit Event</span>
-                  <button onClick={() => setContextEvent(null)} className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors">
-                    <X size={12} className="text-[rgba(235,235,245,0.4)]" />
-                  </button>
+              <MapIcon size={10} />
+              {showMiniMap ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
+            </button>
+
+            {/* Context menu for event editing */}
+            {contextEvent && !readOnly && (
+              <div
+                ref={contextRef}
+                className="absolute top-4 right-4 z-30 w-72 bg-[#1C1C1E]/95 backdrop-blur-xl border border-[rgba(84,84,88,0.65)] rounded-2xl shadow-2xl overflow-hidden"
+              >
+                <div className="p-3 space-y-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">Edit Event</span>
+                    <button onClick={() => setContextEvent(null)} className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors">
+                      <X size={12} className="text-[rgba(235,235,245,0.4)]" />
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={e => setEditTitle(e.target.value)}
+                    placeholder="Title"
+                    className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+                  />
+                  <input
+                    type="text"
+                    value={editDate}
+                    onChange={e => setEditDate(e.target.value)}
+                    placeholder="Date (YYYY-MM-DD)"
+                    className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors font-mono"
+                  />
+                  <textarea
+                    value={editDescription}
+                    onChange={e => setEditDescription(e.target.value)}
+                    placeholder="Description"
+                    rows={3}
+                    className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors resize-none"
+                  />
+                  <select
+                    value={editCategory}
+                    onChange={e => setEditCategory(e.target.value)}
+                    className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none transition-colors"
+                  >
+                    {Object.entries(EVENT_CATEGORIES).map(([key, { label }]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={updateEvent}
+                      disabled={isSavingEdit || !editTitle.trim()}
+                      className="flex-1 flex items-center justify-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-3 py-2 rounded-xl text-[12px] font-semibold text-white transition-colors"
+                    >
+                      {isSavingEdit ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      Save
+                    </button>
+                    <button
+                      onClick={() => deleteEvent(contextEvent.id)}
+                      className="flex items-center justify-center gap-1.5 bg-[#FF453A]/20 hover:bg-[#FF453A]/30 px-3 py-2 rounded-xl text-[12px] font-semibold text-[#FF453A] transition-colors"
+                    >
+                      <Trash2 size={12} />
+                      Delete
+                    </button>
+                  </div>
                 </div>
-                <input
-                  type="text"
-                  value={editTitle}
-                  onChange={e => setEditTitle(e.target.value)}
-                  placeholder="Title"
-                  className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
-                />
-                <input
-                  type="text"
-                  value={editDate}
-                  onChange={e => setEditDate(e.target.value)}
-                  placeholder="Date (YYYY-MM-DD)"
-                  className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors font-mono"
-                />
-                <textarea
-                  value={editDescription}
-                  onChange={e => setEditDescription(e.target.value)}
-                  placeholder="Description"
-                  rows={3}
-                  className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors resize-none"
-                />
-                <select
-                  value={editCategory}
-                  onChange={e => setEditCategory(e.target.value)}
-                  className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none transition-colors"
-                >
-                  {Object.entries(EVENT_CATEGORIES).map(([key, { label }]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-                <div className="flex items-center gap-2 pt-1">
+              </div>
+            )}
+          </div>
+        ) : (
+          /* ── List view ─────────────────────────────────────────────────── */
+          <div className="flex-1 overflow-y-auto">
+            {sortedFilteredEvents.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-[13px] text-[rgba(235,235,245,0.3)]">
+                {filterCategories.size > 0 ? 'No events match the selected filters' : 'No events yet'}
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead className="sticky top-0 z-10 bg-[#0A0A0A]">
+                  <tr className="border-b border-[rgba(84,84,88,0.65)]">
+                    <th className="text-left text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider px-4 py-2.5 w-10"></th>
+                    <th className="text-left text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider px-4 py-2.5 w-32">Date</th>
+                    <th className="text-left text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider px-4 py-2.5 w-28">Category</th>
+                    <th className="text-left text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider px-4 py-2.5">Title</th>
+                    <th className="text-left text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider px-4 py-2.5">Description</th>
+                    {!readOnly && <th className="w-10"></th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedFilteredEvents.map((node, i) => {
+                    const cat = EVENT_CATEGORIES[node.data?.category] || EVENT_CATEGORIES.general;
+                    const Icon = cat.icon;
+                    return (
+                      <tr
+                        key={node.id}
+                        className={`group border-b border-[rgba(84,84,88,0.25)] hover:bg-[#1C1C1E] transition-colors cursor-pointer ${
+                          contextEvent?.id === node.id ? 'bg-[#1C1C1E]' : ''
+                        }`}
+                        onClick={() => {
+                          if (!readOnly) {
+                            setContextEvent(prev => {
+                              const target = prev?.id === node.id ? null : node;
+                              if (target) {
+                                setEditTitle(target.data.title || '');
+                                setEditDate(target.data.event_date || '');
+                                setEditDescription(target.data.description || '');
+                                setEditCategory(target.data.category || 'general');
+                              }
+                              return target;
+                            });
+                          }
+                        }}
+                      >
+                        <td className="px-4 py-2.5">
+                          <div
+                            className="w-3 h-3 rounded-full shrink-0"
+                            style={{ backgroundColor: cat.color }}
+                          />
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-[12px] font-mono font-medium" style={{ color: cat.color }}>
+                            {formatEventDate(node.data?.event_date)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-1.5">
+                            <Icon size={11} style={{ color: cat.color }} />
+                            <span className="text-[11px] text-[rgba(235,235,245,0.5)]">{cat.label}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-[13px] font-semibold text-white">{node.data?.title}</span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-[12px] text-[rgba(235,235,245,0.45)] line-clamp-2">{node.data?.description}</span>
+                        </td>
+                        {!readOnly && (
+                          <td className="px-2 py-2.5">
+                            <button
+                              onClick={e => { e.stopPropagation(); deleteEvent(node.id); }}
+                              className="p-1.5 rounded-lg hover:bg-[#FF453A]/20 transition-colors opacity-0 group-hover:opacity-100"
+                              title="Delete"
+                            >
+                              <Trash2 size={12} className="text-[#FF453A]" />
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+
+            {/* Inline edit panel for list view */}
+            {contextEvent && !readOnly && viewMode === 'list' && (
+              <div className="sticky bottom-0 bg-[#1C1C1E]/95 backdrop-blur-xl border-t border-[rgba(84,84,88,0.65)] p-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={e => setEditTitle(e.target.value)}
+                    placeholder="Title"
+                    className="flex-1 min-w-[200px] bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+                  />
+                  <input
+                    type="text"
+                    value={editDate}
+                    onChange={e => setEditDate(e.target.value)}
+                    placeholder="YYYY-MM-DD"
+                    className="w-32 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors font-mono"
+                  />
+                  <select
+                    value={editCategory}
+                    onChange={e => setEditCategory(e.target.value)}
+                    className="bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none transition-colors"
+                  >
+                    {Object.entries(EVENT_CATEGORIES).map(([key, { label }]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
                   <button
                     onClick={updateEvent}
                     disabled={isSavingEdit || !editTitle.trim()}
-                    className="flex-1 flex items-center justify-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-3 py-2 rounded-xl text-[12px] font-semibold text-white transition-colors"
+                    className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-3 py-2 rounded-xl text-[12px] font-semibold text-white transition-colors"
                   >
                     {isSavingEdit ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
                     Save
                   </button>
                   <button
-                    onClick={() => deleteEvent(contextEvent.id)}
-                    className="flex items-center justify-center gap-1.5 bg-[#FF453A]/20 hover:bg-[#FF453A]/30 px-3 py-2 rounded-xl text-[12px] font-semibold text-[#FF453A] transition-colors"
+                    onClick={() => setContextEvent(null)}
+                    className="p-2 hover:bg-[#2C2C2E] rounded-xl transition-colors"
                   >
-                    <Trash2 size={12} />
-                    Delete
+                    <X size={14} className="text-[rgba(235,235,245,0.4)]" />
                   </button>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )
 
         {/* Research side panel */}
         {showResearch && (
@@ -1056,7 +1227,85 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       {/* Footer toolbar */}
       <div className="shrink-0 px-4 py-2 bg-black border-t border-[rgba(84,84,88,0.65)] flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2 shrink-0">
-          {nodes.length > 0 && !readOnly && (
+          {/* View mode toggle */}
+          <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">
+            <button
+              onClick={() => setViewMode('canvas')}
+              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium transition-colors ${
+                viewMode === 'canvas'
+                  ? 'bg-[#007AFF] text-white'
+                  : 'text-[rgba(235,235,245,0.5)] hover:text-white'
+              }`}
+              title="Canvas view"
+            >
+              <LayoutGrid size={11} />
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium transition-colors ${
+                viewMode === 'list'
+                  ? 'bg-[#007AFF] text-white'
+                  : 'text-[rgba(235,235,245,0.5)] hover:text-white'
+              }`}
+              title="List view"
+            >
+              <List size={11} />
+            </button>
+          </div>
+
+          {/* Category filter */}
+          <div className="relative" ref={filterRef}>
+            <button
+              onClick={() => setShowFilterDropdown(v => !v)}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+                filterCategories.size > 0
+                  ? 'bg-[#FF9F0A] text-black'
+                  : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white'
+              }`}
+            >
+              <Filter size={11} />
+              Filter{filterCategories.size > 0 && ` (${filterCategories.size})`}
+            </button>
+            {showFilterDropdown && (
+              <div className="absolute bottom-full mb-1 left-0 z-40 bg-[#1C1C1E]/95 backdrop-blur-xl border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl overflow-hidden min-w-[180px]">
+                <div className="px-3 py-2 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between">
+                  <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">Categories</span>
+                  {filterCategories.size > 0 && (
+                    <button
+                      onClick={() => setFilterCategories(new Set())}
+                      className="text-[10px] text-[#007AFF] hover:text-[#0071E3] font-medium"
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
+                {Object.entries(EVENT_CATEGORIES).map(([key, { label, color, icon: CatIcon }]) => {
+                  const count = nodes.filter(n => (n.data?.category || 'general') === key).length;
+                  if (count === 0) return null;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => toggleFilterCategory(key)}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[#2C2C2E] transition-colors"
+                    >
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                        filterCategories.has(key)
+                          ? 'border-transparent'
+                          : 'border-[rgba(84,84,88,0.65)]'
+                      }`} style={filterCategories.has(key) ? { backgroundColor: color } : {}}>
+                        {filterCategories.has(key) && <Check size={10} className="text-black" />}
+                      </div>
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                      <span className="text-[12px] text-[rgba(235,235,245,0.8)] flex-1 text-left">{label}</span>
+                      <span className="text-[10px] text-[rgba(235,235,245,0.3)] font-mono">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {viewMode === 'canvas' && nodes.length > 0 && !readOnly && (
             <button
               onClick={() => setSelectMode(m => !m)}
               className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
@@ -1069,17 +1318,19 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               Select
             </button>
           )}
-          <button
-            onClick={() => setShowMiniMap(v => !v)}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
-              showMiniMap
-                ? 'bg-[#007AFF] text-white'
-                : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)]'
-            }`}
-          >
-            <MapIcon size={11} />
-            Map
-          </button>
+          {viewMode === 'canvas' && (
+            <button
+              onClick={() => setShowMiniMap(v => !v)}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+                showMiniMap
+                  ? 'bg-[#007AFF] text-white'
+                  : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)]'
+              }`}
+            >
+              <MapIcon size={11} />
+              Map
+            </button>
+          )}
           <button
             onClick={toggleFullscreen}
             className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white"
@@ -1087,7 +1338,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
           >
             {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
           </button>
-          {!readOnly && (
+          {viewMode === 'canvas' && !readOnly && (
             <button
               onClick={() => autoLayout()}
               className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white"
@@ -1098,7 +1349,10 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
             </button>
           )}
           <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
-            {nodes.length} {nodes.length === 1 ? 'event' : 'events'} · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
+            {filterCategories.size > 0
+              ? `${sortedFilteredEvents.length}/${nodes.length} events`
+              : `${nodes.length} ${nodes.length === 1 ? 'event' : 'events'}`
+            } · {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
             {selectMode && selectedNodeIds.size === 0 && ' · Tap events to select'}
           </span>
         </div>

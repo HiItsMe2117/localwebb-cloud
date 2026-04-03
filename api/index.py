@@ -4375,7 +4375,7 @@ IMPORTANT: After your narrative response, you MUST include a structured section 
 
 ---EVENTS---
 [
-  {{"title": "Event title", "date": "YYYY-MM-DD or YYYY-MM or YYYY or null", "description": "Brief description", "category": "legal|financial|meeting|travel|crime|media|general"}}
+  {{"title": "Event title", "date": "YYYY-MM-DD or YYYY-MM or YYYY or null", "description": "Brief description", "category": "property|epstein-link|regulatory|political|corporate|financial|legal|crime|general"}}
 ]
 ---END---
 

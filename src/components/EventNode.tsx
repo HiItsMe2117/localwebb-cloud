@@ -1,21 +1,23 @@
 import { memo } from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
-import { Scale, Gavel, DollarSign, Users, Plane, AlertTriangle, Newspaper, Calendar } from 'lucide-react';
+import { Scale, Gavel, DollarSign, Link, AlertTriangle, Landmark, Briefcase, Building2, Calendar } from 'lucide-react';
 
 export const EVENT_CATEGORIES: Record<string, { label: string; color: string; icon: typeof Scale }> = {
-  general:   { label: 'General',   color: '#8E8E93', icon: Calendar },
-  legal:     { label: 'Legal',     color: '#AF52DE', icon: Gavel },
-  financial: { label: 'Financial', color: '#FF9F0A', icon: DollarSign },
-  meeting:   { label: 'Meeting',   color: '#5AC8FA', icon: Users },
-  travel:    { label: 'Travel',    color: '#4ade80', icon: Plane },
-  crime:     { label: 'Crime',     color: '#FF453A', icon: AlertTriangle },
-  media:     { label: 'Media',     color: '#60a5fa', icon: Newspaper },
+  general:      { label: 'General',      color: '#8E8E93', icon: Calendar },
+  property:     { label: 'Property',     color: '#34C759', icon: Building2 },
+  'epstein-link': { label: 'Epstein Link', color: '#FFD60A', icon: Link },
+  regulatory:   { label: 'Regulatory',   color: '#FF6B6B', icon: AlertTriangle },
+  political:    { label: 'Political',    color: '#5E5CE6', icon: Landmark },
+  corporate:    { label: 'Corporate',    color: '#5AC8FA', icon: Briefcase },
+  financial:    { label: 'Financial',    color: '#FF9F0A', icon: DollarSign },
+  legal:        { label: 'Legal',        color: '#AF52DE', icon: Gavel },
+  crime:        { label: 'Crime',        color: '#FF453A', icon: AlertTriangle },
 };
 
 const handleStyle = { background: '#3A3A3C', width: 8, height: 8, borderColor: '#1C1C1E', borderWidth: 2, opacity: 0 };
 
-function formatEventDate(dateStr?: string | null): string {
+export function formatEventDate(dateStr?: string | null): string {
   if (!dateStr) return 'No date';
   // Handle full ISO dates, partial dates (year only), etc.
   if (/^\d{4}$/.test(dateStr)) return dateStr;
