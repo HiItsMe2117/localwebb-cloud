@@ -207,7 +207,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         shouldAutoLayoutAfterLoad.current = false;
         const { positions, yearMarkers: markers } = computeTimelineLayout(loadedNodes);
         setYearMarkers(markers);
-        setNodes(loadedNodes.map(n => ({
+        setNodes(loadedNodes.map((n: Node) => ({
           ...n,
           position: positions[n.id] || n.position,
         })));
