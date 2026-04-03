@@ -1076,7 +1076,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               </div>
             )}
           </div>
-        )
+        )}
 
         {/* Research side panel */}
         {showResearch && (
