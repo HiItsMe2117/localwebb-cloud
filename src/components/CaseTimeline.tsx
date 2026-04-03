@@ -325,9 +325,13 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
 
   // ── Display nodes with selection ───────────────────────────────────────────
 
-  const displayNodes = useMemo(() =>
-    nodes.map(n => ({ ...n, selected: selectedNodeIds.has(n.id) })),
-    [nodes, selectedNodeIds]
+  const displayNodes = useMemo(() => {
+    let filtered = nodes;
+    if (filterCategories.size > 0) {
+      filtered = nodes.filter(n => filterCategories.has(n.data?.category || 'general'));
+    }
+    return filtered.map(n => ({ ...n, selected: selectedNodeIds.has(n.id) }));
+  }, [nodes, selectedNodeIds, filterCategories]
   );
 
   // ── Node click: select or show context menu ────────────────────────────────
