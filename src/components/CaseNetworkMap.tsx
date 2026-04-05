@@ -538,12 +538,31 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   }, [caseId, loadGraph, getViewport]);
 
   const updateStickyNote = useCallback(async (noteId: string, updates: Record<string, any>) => {
+    // Optimistically update local node state so the sticky note reflects changes
+    // immediately without waiting on a full graph reload. Without this, the blur
+    // effect in StickyNoteNode resets localContent back to the stale content prop.
+    setNodes(prev => prev.map(n => {
+      if (n.id !== noteId || n.type !== 'stickyNote') return n;
+      const dataPatch: Record<string, any> = {};
+      if ('content' in updates) dataPatch.content = updates.content;
+      if ('color' in updates) dataPatch.color = updates.color;
+      if ('width' in updates) dataPatch.noteWidth = updates.width;
+      if ('height' in updates) dataPatch.noteHeight = updates.height;
+      const stylePatch: Record<string, any> = {};
+      if ('width' in updates) stylePatch.width = updates.width;
+      if ('height' in updates) stylePatch.height = updates.height;
+      return {
+        ...n,
+        data: { ...n.data, ...dataPatch },
+        ...(Object.keys(stylePatch).length ? { style: { ...n.style, ...stylePatch } } : {}),
+      };
+    }));
     try {
       await axios.patch(`/api/cases/${caseId}/graph/sticky-notes/${noteId}`, updates);
     } catch (err) {
       console.error('Failed to update sticky note:', err);
     }
-  }, [caseId]);
+  }, [caseId, setNodes]);
 
   const deleteStickyNote = useCallback(async (noteId: string) => {
     try {
