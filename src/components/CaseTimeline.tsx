@@ -15,11 +15,21 @@ const ROW_HEIGHT = 170;
 const YEAR_GAP = 140;
 const MAX_STACK = 3; // max events stacked vertically before starting a new column
 const BASE_Y = 0;
+const LANE_HEIGHT = MAX_STACK * ROW_HEIGHT + 80; // vertical space reserved per swim lane
+const LANE_LABEL_WIDTH = 140; // reserved left-edge space for lane labels
 
 interface YearMarker {
   year: string;
   x: number;
   width: number;
+}
+
+interface LaneMarker {
+  laneKey: string;
+  label: string;
+  color: string;
+  y: number;
+  height: number;
 }
 
 function parseEventSortKey(dateStr: string | null | undefined): string {
@@ -100,6 +110,133 @@ function computeTimelineLayout(eventNodes: Node[]): { positions: Record<string, 
   return { positions, yearMarkers };
 }
 
+// ── Swim-lane layout: one horizontal row per track ──────────────────────────
+
+function computeSwimLaneLayout(
+  events: Node[],
+  enabledTracks: TimelineTrack[],
+): {
+  virtualNodes: Node[];
+  yearMarkers: YearMarker[];
+  laneMarkers: LaneMarker[];
+  totalWidth: number;
+  totalHeight: number;
+} {
+  const enabledIds = new Set(enabledTracks.map(t => t.id));
+  const lanes: { key: string; label: string; color: string }[] = [
+    { key: 'main', label: 'Main', color: '#8E8E93' },
+    ...enabledTracks.map(t => ({ key: t.id, label: t.label, color: t.color })),
+  ];
+  const laneIndex = new Map(lanes.map((l, i) => [l.key, i]));
+
+  // Expand each event into one placement per lane it belongs to
+  type Placement = { node: Node; laneKey: string; monthKey: string; sortKey: string };
+  const placements: Placement[] = [];
+  for (const n of events) {
+    const tids: string[] = (n.data?.track_ids || []).filter((id: string) => enabledIds.has(id));
+    const targetLanes = tids.length > 0 ? tids : ['main'];
+    const date: string = n.data?.event_date || '';
+    const monthKey = date.length >= 7 ? date.slice(0, 7) : (date.slice(0, 4) || 'none');
+    const sortKey = parseEventSortKey(n.data?.event_date);
+    for (const laneKey of targetLanes) {
+      placements.push({ node: n, laneKey, monthKey, sortKey });
+    }
+  }
+
+  placements.sort((a, b) => {
+    if (a.sortKey !== b.sortKey) return a.sortKey.localeCompare(b.sortKey);
+    return (laneIndex.get(a.laneKey) ?? 0) - (laneIndex.get(b.laneKey) ?? 0);
+  });
+
+  // Ordered unique month keys in chronological order
+  const monthOrder: string[] = [];
+  const seenMonths = new Set<string>();
+  for (const p of placements) {
+    if (!seenMonths.has(p.monthKey)) {
+      seenMonths.add(p.monthKey);
+      monthOrder.push(p.monthKey);
+    }
+  }
+
+  // Group placements: monthKey → laneKey → placements
+  const monthLaneEvents = new Map<string, Map<string, Placement[]>>();
+  for (const p of placements) {
+    if (!monthLaneEvents.has(p.monthKey)) monthLaneEvents.set(p.monthKey, new Map());
+    const byLane = monthLaneEvents.get(p.monthKey)!;
+    if (!byLane.has(p.laneKey)) byLane.set(p.laneKey, []);
+    byLane.get(p.laneKey)!.push(p);
+  }
+
+  // Assign shared x-range per month (max cols across all lanes wins)
+  const monthXStart = new Map<string, number>();
+  let currentX = LANE_LABEL_WIDTH;
+  let prevYear: string | null = null;
+  let yearStartX = currentX;
+  const yearMarkers: YearMarker[] = [];
+
+  for (const monthKey of monthOrder) {
+    const year = monthKey.slice(0, 4);
+    if (prevYear !== null && year !== prevYear) {
+      yearMarkers.push({ year: prevYear, x: yearStartX, width: currentX - yearStartX - CARD_WIDTH + 200 });
+      currentX += YEAR_GAP;
+      yearStartX = currentX;
+    }
+    prevYear = year;
+
+    const byLane = monthLaneEvents.get(monthKey)!;
+    let maxCols = 1;
+    for (const [, evs] of byLane) {
+      const cols = Math.ceil(evs.length / MAX_STACK);
+      if (cols > maxCols) maxCols = cols;
+    }
+    monthXStart.set(monthKey, currentX);
+    currentX += maxCols * CARD_WIDTH;
+  }
+  if (prevYear !== null) {
+    yearMarkers.push({ year: prevYear, x: yearStartX, width: currentX - yearStartX - CARD_WIDTH + 200 });
+  }
+
+  // Emit virtual nodes
+  const virtualNodes: Node[] = [];
+  for (const monthKey of monthOrder) {
+    const byLane = monthLaneEvents.get(monthKey)!;
+    const xStart = monthXStart.get(monthKey)!;
+    for (const [laneKey, evs] of byLane) {
+      const laneIdx = laneIndex.get(laneKey) ?? 0;
+      const laneY = BASE_Y + laneIdx * LANE_HEIGHT;
+      let col = 0;
+      let row = 0;
+      for (const p of evs) {
+        virtualNodes.push({
+          ...p.node,
+          id: `${p.node.id}::${laneKey}`,
+          data: { ...p.node.data, eventId: p.node.id, laneKey },
+          position: { x: xStart + col * CARD_WIDTH, y: laneY + row * ROW_HEIGHT },
+          draggable: false,
+        });
+        row++;
+        if (row >= MAX_STACK) { row = 0; col++; }
+      }
+    }
+  }
+
+  const laneMarkers: LaneMarker[] = lanes.map((l, i) => ({
+    laneKey: l.key,
+    label: l.label,
+    color: l.color,
+    y: BASE_Y + i * LANE_HEIGHT,
+    height: LANE_HEIGHT,
+  }));
+
+  return {
+    virtualNodes,
+    yearMarkers,
+    laneMarkers,
+    totalWidth: currentX,
+    totalHeight: lanes.length * LANE_HEIGHT,
+  };
+}
+
 // ── Year marker overlay ─────────────────────────────────────────────────────
 
 function YearMarkers({ markers }: { markers: YearMarker[] }) {
@@ -128,6 +265,63 @@ function YearMarkers({ markers }: { markers: YearMarker[] }) {
             height: 600 * zoom,
             borderLeft: '1px dashed rgba(235,235,245,0.07)',
           }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Lane label overlay (swim-lane mode) ─────────────────────────────────────
+
+function LaneLabels({ markers, totalWidth }: { markers: LaneMarker[]; totalWidth: number }) {
+  const { x: vx, y: vy, zoom } = useViewport();
+
+  if (markers.length === 0) return null;
+
+  return (
+    <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 0 }}>
+      {markers.map(m => (
+        <div key={m.laneKey}>
+          {/* Lane background band */}
+          <div style={{
+            position: 'absolute',
+            left: vx,
+            top: vy + m.y * zoom,
+            width: totalWidth * zoom,
+            height: m.height * zoom,
+            background: `${m.color}08`,
+            borderTop: `1px solid ${m.color}22`,
+            borderBottom: `1px solid ${m.color}22`,
+          }} />
+          {/* Left-side label */}
+          <div style={{
+            position: 'absolute',
+            left: vx,
+            top: vy + m.y * zoom,
+            width: LANE_LABEL_WIDTH * zoom,
+            height: m.height * zoom,
+            borderLeft: `4px solid ${m.color}`,
+            background: 'rgba(0,0,0,0.55)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            paddingTop: 12 * zoom,
+            paddingLeft: 12 * zoom,
+          }}>
+            <span style={{
+              fontSize: Math.max(10, 13 * zoom),
+              fontWeight: 700,
+              color: m.color,
+              letterSpacing: '0.02em',
+              textTransform: 'uppercase',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxWidth: (LANE_LABEL_WIDTH - 24) * zoom,
+            }}>
+              {m.label}
+            </span>
+          </div>
         </div>
       ))}
     </div>
@@ -171,6 +365,8 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
 
   // Year markers and layout animation
   const [yearMarkers, setYearMarkers] = useState<YearMarker[]>([]);
+  const [laneMarkers, setLaneMarkers] = useState<LaneMarker[]>([]);
+  const [laneTotalWidth, setLaneTotalWidth] = useState(0);
   const [isAnimatingLayout, setIsAnimatingLayout] = useState(false);
 
   // Research panel
@@ -334,12 +530,14 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     setTimeout(() => fitView({ padding: 0.3, duration: 500 }), 50);
   }, [caseId, nodes, setNodes, fitView]);
 
-  // Compute year markers from current node positions (for when layout was already saved)
+  // Compute year markers from current node positions (for freeform layout only;
+  // lane-mode year markers are set by the swim-lane effect below)
   useEffect(() => {
     if (nodes.length === 0) return;
+    if (tracks.length > 0 && tracks.some(t => !disabledTrackIds.has(t.id))) return;
     const { yearMarkers: markers } = computeTimelineLayout(nodes);
     setYearMarkers(markers);
-  }, [nodes]);
+  }, [nodes, tracks, disabledTrackIds]);
 
   // ── Display nodes with selection ───────────────────────────────────────────
 
@@ -355,41 +553,84 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     return trackIds.some(tid => !disabledTrackIds.has(tid));
   }, [disabledTrackIds]);
 
+  // Enabled tracks (ordered by creation) — defines swim-lane order
+  const enabledTracks = useMemo(
+    () => tracks.filter(t => !disabledTrackIds.has(t.id)),
+    [tracks, disabledTrackIds]
+  );
+
+  // Swim-lane mode is active whenever at least one track is enabled
+  const laneMode = enabledTracks.length > 0;
+
   const displayNodes = useMemo(() => {
     let filtered = nodes;
     if (filterCategories.size > 0) {
       filtered = filtered.filter(n => filterCategories.has(n.data?.category || 'general'));
     }
     filtered = filtered.filter(n => isEventTrackVisible(n.data?.track_ids));
-    return filtered.map(n => {
+
+    // Enrich each event with trackDots
+    const enriched = filtered.map(n => {
       const tids: string[] = n.data?.track_ids || [];
       const trackDots = tids
         .map(tid => trackById[tid])
         .filter(Boolean)
         .map(t => ({ id: t.id, color: t.color, label: t.label }));
-      return {
-        ...n,
-        data: { ...n.data, trackDots },
-        selected: selectedNodeIds.has(n.id),
-      };
+      return { ...n, data: { ...n.data, trackDots } };
     });
-  }, [nodes, selectedNodeIds, filterCategories, trackById, isEventTrackVisible]
-  );
+
+    if (laneMode) {
+      // Swim-lane layout: expand each event into one virtual node per lane it belongs to
+      const { virtualNodes } = computeSwimLaneLayout(enriched, enabledTracks);
+      return virtualNodes.map(vn => ({
+        ...vn,
+        selected: selectedNodeIds.has((vn.data as any).eventId || vn.id),
+      }));
+    }
+
+    // Freeform mode: preserve saved positions
+    return enriched.map(n => ({
+      ...n,
+      selected: selectedNodeIds.has(n.id),
+    }));
+  }, [nodes, selectedNodeIds, filterCategories, trackById, isEventTrackVisible, laneMode, enabledTracks]);
+
+  // Keep lane overlay markers in sync with swim-lane layout
+  useEffect(() => {
+    if (!laneMode || nodes.length === 0) {
+      setLaneMarkers([]);
+      setLaneTotalWidth(0);
+      return;
+    }
+    // Filter to visible events for marker computation (so lane width matches what's rendered)
+    let visible = nodes;
+    if (filterCategories.size > 0) {
+      visible = visible.filter(n => filterCategories.has(n.data?.category || 'general'));
+    }
+    visible = visible.filter(n => isEventTrackVisible(n.data?.track_ids));
+    const { laneMarkers: lm, yearMarkers: ym, totalWidth } = computeSwimLaneLayout(visible, enabledTracks);
+    setLaneMarkers(lm);
+    setLaneTotalWidth(totalWidth);
+    setYearMarkers(ym);
+  }, [laneMode, nodes, enabledTracks, filterCategories, isEventTrackVisible]);
 
   // ── Node click: select or show context menu ────────────────────────────────
 
   const onNodeClick = useCallback((node: Node, event?: React.MouseEvent) => {
+    // Resolve virtual lane nodes back to their real event
+    const realId: string = (node.data as any)?.eventId || node.id;
+    const realNode = nodes.find(n => n.id === realId) || node;
     if (event?.shiftKey || selectMode) {
       setSelectedNodeIds(prev => {
         const next = new Set(prev);
-        if (next.has(node.id)) next.delete(node.id);
-        else next.add(node.id);
+        if (next.has(realId)) next.delete(realId);
+        else next.add(realId);
         return next;
       });
       setContextEvent(null);
     } else {
       setContextEvent(prev => {
-        const newNode = prev?.id === node.id ? null : node;
+        const newNode = prev?.id === realId ? null : realNode;
         if (newNode) {
           setEditTitle(newNode.data.title || '');
           setEditDate(newNode.data.event_date || '');
@@ -400,7 +641,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       });
       setSelectedNodeIds(new Set());
     }
-  }, [selectMode]);
+  }, [selectMode, nodes]);
 
   const clearSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
@@ -423,6 +664,8 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   // ── Drag stop: save positions ──────────────────────────────────────────────
 
   const onNodeDragStop = useCallback(async (_: any, node: Node) => {
+    // Virtual lane nodes (id contains "::") aren't real events — positions are computed
+    if (node.id.includes('::')) return;
     try {
       await axios.post(`/api/cases/${caseId}/timeline/positions`, {
         positions: [{ event_id: node.id, x: node.position.x, y: node.position.y }],
@@ -909,6 +1152,35 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     return groups;
   }, [sortedFilteredEvents, filterCategories]);
 
+  // Group events by track — each track is a section; multi-track events appear
+  // in every section they belong to. Events without tracks go under "Main".
+  const groupedByTrack = useMemo(() => {
+    if (!laneMode) return null;
+    const groups: { key: string; label: string; color: string; events: typeof sortedFilteredEvents }[] = [];
+    const byLane = new Map<string, typeof sortedFilteredEvents>();
+    byLane.set('main', []);
+    for (const t of enabledTracks) byLane.set(t.id, []);
+    const enabledIds = new Set(enabledTracks.map(t => t.id));
+    for (const node of sortedFilteredEvents) {
+      const tids: string[] = (node.data?.track_ids || []).filter((id: string) => enabledIds.has(id));
+      const targets = tids.length > 0 ? tids : ['main'];
+      for (const laneKey of targets) {
+        byLane.get(laneKey)?.push(node);
+      }
+    }
+    const mainEvents = byLane.get('main') || [];
+    if (mainEvents.length > 0) {
+      groups.push({ key: 'main', label: 'Main', color: '#8E8E93', events: mainEvents });
+    }
+    for (const t of enabledTracks) {
+      const evs = byLane.get(t.id) || [];
+      if (evs.length > 0) {
+        groups.push({ key: t.id, label: t.label, color: t.color, events: evs });
+      }
+    }
+    return groups;
+  }, [sortedFilteredEvents, laneMode, enabledTracks]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -1164,6 +1436,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               onEdgeLabelDrag={onEdgeLabelDrag}
               onEdgeLabelDragEnd={onEdgeLabelDragEnd}
             />
+            {laneMode && <LaneLabels markers={laneMarkers} totalWidth={laneTotalWidth} />}
             <YearMarkers markers={yearMarkers} />
 
             {/* MiniMap toggle */}
@@ -1247,6 +1520,119 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
             {sortedFilteredEvents.length === 0 ? (
               <div className="flex items-center justify-center h-full text-[13px] text-[rgba(235,235,245,0.3)]">
                 {filterCategories.size > 0 ? 'No events match the selected filters' : 'No events yet'}
+              </div>
+            ) : groupedByTrack ? (
+              /* Grouped by track (swim-lane mode) */
+              <div className="divide-y divide-[rgba(84,84,88,0.65)]">
+                {groupedByTrack.map(({ key: trackKey, label, color, events }) => (
+                  <div key={trackKey}>
+                    {/* Track header */}
+                    <div className="sticky top-0 z-10 bg-[#0A0A0A] px-4 py-2.5 flex items-center gap-2.5 border-b border-[rgba(84,84,88,0.35)]">
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+                      <span className="text-[13px] font-bold" style={{ color }}>{label}</span>
+                      <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">{events.length}</span>
+                    </div>
+                    {/* Events in this track */}
+                    <table className="w-full">
+                      <tbody>
+                        {events.map((node) => {
+                          const nodeCat = EVENT_CATEGORIES[node.data?.category] || EVENT_CATEGORIES.general;
+                          const isSelected = selectedNodeIds.has(node.id);
+                          return (
+                            <tr
+                              key={`${trackKey}::${node.id}`}
+                              className={`group border-b border-[rgba(84,84,88,0.15)] hover:bg-[#1C1C1E] transition-colors cursor-pointer ${
+                                isSelected ? 'bg-[#FF9F0A]/5' : contextEvent?.id === node.id ? 'bg-[#1C1C1E]' : ''
+                              }`}
+                              onClick={(e) => {
+                                if (e.shiftKey || selectMode) {
+                                  setSelectedNodeIds(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(node.id)) next.delete(node.id);
+                                    else next.add(node.id);
+                                    return next;
+                                  });
+                                } else if (!readOnly) {
+                                  setContextEvent(prev => {
+                                    const target = prev?.id === node.id ? null : node;
+                                    if (target) {
+                                      setEditTitle(target.data.title || '');
+                                      setEditDate(target.data.event_date || '');
+                                      setEditDescription(target.data.description || '');
+                                      setEditCategory(target.data.category || 'general');
+                                    }
+                                    return target;
+                                  });
+                                }
+                              }}
+                            >
+                              <td className="pl-4 pr-1 py-2.5 w-8">
+                                <div
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setSelectedNodeIds(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(node.id)) next.delete(node.id);
+                                      else next.add(node.id);
+                                      return next;
+                                    });
+                                  }}
+                                  className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-[#FF9F0A] border-[#FF9F0A]'
+                                      : 'border-[rgba(84,84,88,0.65)] opacity-0 group-hover:opacity-100'
+                                  }`}
+                                >
+                                  {isSelected && <Check size={10} className="text-black" />}
+                                </div>
+                              </td>
+                              <td className="pr-2 py-2.5 w-28">
+                                <span className="text-[12px] font-mono font-medium" style={{ color: nodeCat.color }}>
+                                  {formatEventDate(node.data?.event_date)}
+                                </span>
+                              </td>
+                              <td className="px-2 py-2.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[13px] font-semibold text-white">{node.data?.title}</span>
+                                  {(node.data?.track_ids || []).length > 1 && (
+                                    <div className="flex items-center gap-0.5 shrink-0">
+                                      {(node.data.track_ids as string[]).slice(0, 6).map(tid => {
+                                        const t = trackById[tid];
+                                        if (!t || t.id === trackKey) return null;
+                                        return (
+                                          <div
+                                            key={tid}
+                                            className="w-1.5 h-1.5 rounded-full"
+                                            style={{ background: t.color }}
+                                            title={`Also in ${t.label}`}
+                                          />
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-2 py-2.5">
+                                <span className="text-[12px] text-[rgba(235,235,245,0.45)] line-clamp-2">{node.data?.description}</span>
+                              </td>
+                              {!readOnly && (
+                                <td className="px-2 py-2.5 w-10">
+                                  <button
+                                    onClick={e => { e.stopPropagation(); deleteEvent(node.id); }}
+                                    className="p-1.5 rounded-lg hover:bg-[#FF453A]/20 transition-colors opacity-0 group-hover:opacity-100"
+                                    title="Delete"
+                                  >
+                                    <Trash2 size={12} className="text-[#FF453A]" />
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
               </div>
             ) : groupedByCategory ? (
               /* Grouped by category when filters are active */
@@ -1988,7 +2374,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
           >
             {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
           </button>
-          {viewMode === 'canvas' && !readOnly && (
+          {viewMode === 'canvas' && !readOnly && !laneMode && (
             <button
               onClick={() => autoLayout()}
               className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white"
@@ -1996,6 +2382,16 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
             >
               <LayoutGrid size={11} />
               Sort
+            </button>
+          )}
+          {viewMode === 'canvas' && laneMode && (
+            <button
+              onClick={() => fitView({ padding: 0.25, duration: 400 })}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white"
+              title="Fit all lanes in view"
+            >
+              <LayoutGrid size={11} />
+              Fit
             </button>
           )}
           <span className="text-[11px] text-[rgba(235,235,245,0.3)] font-mono">
