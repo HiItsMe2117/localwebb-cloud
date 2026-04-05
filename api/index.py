@@ -301,12 +301,20 @@ class SupabaseStore:
         """Load graph from Supabase for ReactFlow compatibility, with server-side degree filtering."""
         if not supabase:
             print("ERROR: Supabase client not initialized. Cannot load graph.")
-            return {"nodes": [], "edges": []}
+            return {"nodes": [], "edges": [], "total_nodes": 0}
 
         try:
             # Fetch nodes with degree filter applied server-side
             nodes_data = self._fetch_nodes_filtered(min_degree)
             node_ids = {n["id"] for n in nodes_data}
+
+            # Cheap unfiltered count of all entities (used for the chat-tab pill)
+            try:
+                total_res = supabase.table("nodes").select("id", count="estimated").limit(0).execute()
+                total_nodes = total_res.count or 0
+            except Exception as e:
+                print(f"Warning: failed to fetch total node count: {e}")
+                total_nodes = len(nodes_data)
 
             # Fetch all edges, then filter to only those between visible nodes
             edges_data = self._fetch_all("edges")
@@ -352,11 +360,11 @@ class SupabaseStore:
                     }
                 })
 
-            return {"nodes": nodes, "edges": edges}
+            return {"nodes": nodes, "edges": edges, "total_nodes": total_nodes}
         except Exception as e:
             print(f"CRITICAL: Error loading graph from Supabase: {e}")
             import traceback; traceback.print_exc()
-            return {"nodes": [], "edges": []}
+            return {"nodes": [], "edges": [], "total_nodes": 0}
 
     def save(self, data):
         """This method is now primarily for GCS backup/migration if needed. 

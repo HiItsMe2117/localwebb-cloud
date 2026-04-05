@@ -61,6 +61,7 @@ function AppContent() {
   // Graph state
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [totalNodes, setTotalNodes] = useState(0);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [yearFilter, setYearFilter] = useState(2026);
   const [minDegree, setMinDegree] = useState(200);
@@ -164,6 +165,7 @@ function AppContent() {
       const res = await axios.get(`/api/graph?min_degree=${deg}`);
       const rawNodes: Node[] = res.data.nodes || [];
       const rawEdges: Edge[] = res.data.edges || [];
+      setTotalNodes(res.data.total_nodes || 0);
       console.log(`Loaded ${rawNodes.length} nodes and ${rawEdges.length} edges.`);
       
       if (res.data.communities) {
@@ -1169,7 +1171,7 @@ function AppContent() {
                 >
                   <div className={`w-1.5 h-1.5 rounded-full ${isSyncing ? 'bg-[#FF9F0A] animate-pulse' : graphLoading ? 'bg-[#007AFF] animate-pulse' : 'bg-[#30D158]'}`} />
                   <span className="text-[rgba(235,235,245,0.6)]">
-                    {isSyncing ? 'Syncing...' : graphLoading ? 'Loading...' : `${nodes.length} entities`}
+                    {isSyncing ? 'Syncing...' : graphLoading ? 'Loading...' : `${totalNodes.toLocaleString()} entities`}
                   </span>
                   <RefreshCw size={12} className={`text-[rgba(235,235,245,0.3)] ${isSyncing || graphLoading ? 'animate-spin' : ''}`} />
                 </button>
