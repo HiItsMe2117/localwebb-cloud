@@ -125,6 +125,30 @@ export const CASE_CATEGORIES: Record<string, { label: string; color: string }> =
   other:            { label: 'Other',            color: '#8E8E93' },
 };
 
+export interface TimelineTrack {
+  id: string;
+  case_id: string;
+  entity_node_id: string | null;
+  label: string;
+  color: string;
+  enabled: boolean;
+  event_count: number;
+  created_at: string;
+}
+
+export const TRACK_COLOR_PALETTE: string[] = [
+  '#5AC8FA', // blue
+  '#FF9F0A', // orange
+  '#34C759', // green
+  '#AF52DE', // purple
+  '#FF453A', // red
+  '#FFD60A', // yellow
+  '#5E5CE6', // indigo
+  '#FF6B6B', // pink-red
+  '#30D158', // bright green
+  '#BF5AF2', // magenta
+];
+
 export const DOC_TYPES = [
   { value: '', label: 'All Documents' },
   { value: 'flight_log', label: 'Flight Logs' },

@@ -2262,12 +2262,30 @@ class CreateTimelineEventRequest(BaseModel):
     category: str = "general"
     position_x: float = 0
     position_y: float = 0
+    track_ids: List[str] = []
 
 class UpdateTimelineEventRequest(BaseModel):
     title: Optional[str] = None
     event_date: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
+    track_ids: Optional[List[str]] = None
+
+class CreateTimelineTrackRequest(BaseModel):
+    entity_node_id: Optional[str] = None
+    label: str
+    color: str = "#5AC8FA"
+
+class UpdateTimelineTrackRequest(BaseModel):
+    label: Optional[str] = None
+    color: Optional[str] = None
+    enabled: Optional[bool] = None
+
+class GenerateTrackRequest(BaseModel):
+    entity_node_id: str
+    entity_label: str
+    messages: List[Dict[str, str]] = []
+    query: Optional[str] = None
 
 class SaveTimelinePositionsRequest(BaseModel):
     positions: List[Dict[str, Any]]
@@ -4145,6 +4163,23 @@ async def get_case_timeline(case_id: str, user = Depends(optional_user)):
         events_res = supabase.table("case_timeline_events").select("*").eq("case_id", case_id).order("created_at").execute()
         edges_res = supabase.table("case_timeline_edges").select("*").eq("case_id", case_id).execute()
 
+        # Load tracks + event→track mappings
+        tracks_res = supabase.table("case_timeline_tracks").select("*").eq("case_id", case_id).order("created_at").execute()
+        tracks = tracks_res.data or []
+        valid_track_ids = {t["id"] for t in tracks}
+        event_tracks: Dict[str, List[str]] = {}
+        if tracks:
+            map_res = supabase.table("case_timeline_event_tracks").select("event_id, track_id").in_("track_id", list(valid_track_ids)).execute()
+            for row in (map_res.data or []):
+                event_tracks.setdefault(row["event_id"], []).append(row["track_id"])
+        # Count events per track for the panel
+        track_counts: Dict[str, int] = {}
+        for tids in event_tracks.values():
+            for tid in tids:
+                track_counts[tid] = track_counts.get(tid, 0) + 1
+        for t in tracks:
+            t["event_count"] = track_counts.get(t["id"], 0)
+
         nodes = []
         for ev in (events_res.data or []):
             nodes.append({
@@ -4157,6 +4192,7 @@ async def get_case_timeline(case_id: str, user = Depends(optional_user)):
                     "description": ev.get("description", ""),
                     "category": ev.get("category", "general"),
                     "sourceGraphNodeId": ev.get("source_graph_node_id"),
+                    "track_ids": event_tracks.get(ev["id"], []),
                 },
             })
 
@@ -4174,7 +4210,7 @@ async def get_case_timeline(case_id: str, user = Depends(optional_user)):
                 },
             })
 
-        return {"nodes": nodes, "edges": edges}
+        return {"nodes": nodes, "edges": edges, "tracks": tracks}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -4198,7 +4234,11 @@ async def create_timeline_event(case_id: str, request: CreateTimelineEventReques
         }
         result = supabase.table("case_timeline_events").insert(record).execute()
         ev = result.data[0] if result.data else None
-        return {"id": ev["id"] if ev else None, "event": ev}
+        # Associate with tracks if provided
+        if ev and request.track_ids:
+            junction = [{"event_id": ev["id"], "track_id": tid} for tid in request.track_ids]
+            supabase.table("case_timeline_event_tracks").insert(junction).execute()
+        return {"id": ev["id"] if ev else None, "event": ev, "track_ids": request.track_ids}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -4220,13 +4260,22 @@ async def update_timeline_event(case_id: str, event_id: str, request: UpdateTime
             updates["description"] = request.description
         if request.category is not None:
             updates["category"] = request.category
-        if not updates:
-            return {"id": event_id}
 
-        result = supabase.table("case_timeline_events").update(updates).eq("id", event_id).eq("case_id", case_id).execute()
-        if not result.data:
-            return JSONResponse(status_code=404, content={"error": "Event not found."})
-        return {"id": event_id, **updates}
+        if updates:
+            result = supabase.table("case_timeline_events").update(updates).eq("id", event_id).eq("case_id", case_id).execute()
+            if not result.data:
+                return JSONResponse(status_code=404, content={"error": "Event not found."})
+
+        # Replace track associations if provided
+        if request.track_ids is not None:
+            supabase.table("case_timeline_event_tracks").delete().eq("event_id", event_id).execute()
+            if request.track_ids:
+                junction = [{"event_id": event_id, "track_id": tid} for tid in request.track_ids]
+                supabase.table("case_timeline_event_tracks").insert(junction).execute()
+
+        if not updates and request.track_ids is None:
+            return {"id": event_id}
+        return {"id": event_id, **updates, "track_ids": request.track_ids}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -4295,6 +4344,95 @@ async def delete_timeline_edge(case_id: str, edge_id: str, user = Depends(requir
 
         supabase.table("case_timeline_edges").delete().eq("id", edge_id).eq("case_id", case_id).execute()
         return {"deleted": edge_id}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ── Timeline tracks (per-entity overlay tracks) ───────────────────────────────
+
+@app.get("/api/cases/{case_id}/timeline/tracks")
+async def list_timeline_tracks(case_id: str, user = Depends(optional_user)):
+    """List all entity tracks for this case, each with event count."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=False)
+
+        tracks_res = supabase.table("case_timeline_tracks").select("*").eq("case_id", case_id).order("created_at").execute()
+        tracks = tracks_res.data or []
+        # Count events per track
+        if tracks:
+            track_ids = [t["id"] for t in tracks]
+            counts_res = supabase.table("case_timeline_event_tracks").select("track_id").in_("track_id", track_ids).execute()
+            counts: Dict[str, int] = {}
+            for row in (counts_res.data or []):
+                counts[row["track_id"]] = counts.get(row["track_id"], 0) + 1
+            for t in tracks:
+                t["event_count"] = counts.get(t["id"], 0)
+        return {"tracks": tracks}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/tracks")
+async def create_timeline_track(case_id: str, request: CreateTimelineTrackRequest, user = Depends(require_user)):
+    """Create a new entity track on the timeline."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        record = {
+            "case_id": case_id,
+            "entity_node_id": request.entity_node_id,
+            "label": request.label,
+            "color": request.color,
+        }
+        result = supabase.table("case_timeline_tracks").insert(record).execute()
+        track = result.data[0] if result.data else None
+        if track:
+            track["event_count"] = 0
+        return {"track": track}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/{case_id}/timeline/tracks/{track_id}")
+async def update_timeline_track(case_id: str, track_id: str, request: UpdateTimelineTrackRequest, user = Depends(require_user)):
+    """Update a track's label, color, or enabled state."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        updates = {}
+        if request.label is not None:
+            updates["label"] = request.label
+        if request.color is not None:
+            updates["color"] = request.color
+        if request.enabled is not None:
+            updates["enabled"] = request.enabled
+        if not updates:
+            return {"id": track_id}
+
+        result = supabase.table("case_timeline_tracks").update(updates).eq("id", track_id).eq("case_id", case_id).execute()
+        if not result.data:
+            return JSONResponse(status_code=404, content={"error": "Track not found."})
+        return {"id": track_id, **updates}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/cases/{case_id}/timeline/tracks/{track_id}")
+async def delete_timeline_track(case_id: str, track_id: str, user = Depends(require_user)):
+    """Delete a track (junction rows cascade; events themselves are preserved)."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        supabase.table("case_timeline_tracks").delete().eq("id", track_id).eq("case_id", case_id).execute()
+        return {"deleted": track_id}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -4462,6 +4600,222 @@ Guidelines:
         }
     except Exception as e:
         print(f"Timeline research failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/generate-track")
+async def generate_timeline_track(case_id: str, request: GenerateTrackRequest, user = Depends(require_paid)):
+    """AI generates a timeline of events for a specific entity, drawing on network-graph connections + web search."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        # 1. Load case context
+        case_res = supabase.table("cases").select("title, summary, category").eq("id", case_id).execute()
+        case_data = case_res.data[0] if case_res.data else {}
+
+        # 2. Resolve entity info (could be a global node OR a case_graph_custom_node)
+        entity_label = request.entity_label
+        entity_type = "PERSON"
+        entity_description = ""
+        entity_aliases: List[str] = []
+
+        global_node_res = supabase.table("nodes").select("label, type, description, aliases").eq("id", request.entity_node_id).execute()
+        if global_node_res.data:
+            node = global_node_res.data[0]
+            entity_label = node.get("label") or entity_label
+            entity_type = node.get("type") or entity_type
+            entity_description = node.get("description") or ""
+            entity_aliases = node.get("aliases") or []
+        else:
+            custom_res = supabase.table("case_graph_custom_nodes").select("label, type").eq("id", request.entity_node_id).eq("case_id", case_id).execute()
+            if custom_res.data:
+                node = custom_res.data[0]
+                entity_label = node.get("label") or entity_label
+                entity_type = node.get("type") or entity_type
+
+        # 3. Case-specific description override
+        case_desc_res = supabase.table("case_entity_descriptions").select("description").eq("case_id", case_id).eq("node_id", request.entity_node_id).execute()
+        case_description = ""
+        if case_desc_res.data:
+            case_description = case_desc_res.data[0].get("description", "") or ""
+
+        # 4. Pull network-graph connections for this entity (both global and case-local edges)
+        connections: List[Dict[str, Any]] = []
+        try:
+            global_out = supabase.table("edges").select("source, target, label, predicate, evidence_text, source_filename, date_mentioned").eq("source", request.entity_node_id).limit(20).execute()
+            global_in = supabase.table("edges").select("source, target, label, predicate, evidence_text, source_filename, date_mentioned").eq("target", request.entity_node_id).limit(20).execute()
+            for row in (global_out.data or []) + (global_in.data or []):
+                connections.append({
+                    "neighbor_id": row["target"] if row["source"] == request.entity_node_id else row["source"],
+                    "label": row.get("label") or row.get("predicate") or "related_to",
+                    "evidence": (row.get("evidence_text") or "")[:220],
+                    "source_filename": row.get("source_filename") or "",
+                    "date_mentioned": row.get("date_mentioned") or "",
+                    "is_case_local": False,
+                })
+        except Exception:
+            pass
+        try:
+            case_out = supabase.table("case_graph_edges").select("source_node_id, target_node_id, label, evidence_text, source_filename").eq("case_id", case_id).eq("source_node_id", request.entity_node_id).limit(20).execute()
+            case_in = supabase.table("case_graph_edges").select("source_node_id, target_node_id, label, evidence_text, source_filename").eq("case_id", case_id).eq("target_node_id", request.entity_node_id).limit(20).execute()
+            for row in (case_out.data or []) + (case_in.data or []):
+                connections.append({
+                    "neighbor_id": row["target_node_id"] if row["source_node_id"] == request.entity_node_id else row["source_node_id"],
+                    "label": row.get("label") or "related_to",
+                    "evidence": (row.get("evidence_text") or "")[:220],
+                    "source_filename": row.get("source_filename") or "",
+                    "date_mentioned": "",
+                    "is_case_local": True,
+                })
+        except Exception:
+            pass
+        # Cap connections
+        connections = connections[:30]
+
+        # 5. Resolve neighbor labels
+        neighbor_ids = list({c["neighbor_id"] for c in connections if c.get("neighbor_id")})
+        neighbor_labels: Dict[str, str] = {}
+        if neighbor_ids:
+            try:
+                nbr_res = supabase.table("nodes").select("id, label").in_("id", neighbor_ids).execute()
+                for n in (nbr_res.data or []):
+                    neighbor_labels[n["id"]] = n.get("label") or n["id"]
+            except Exception:
+                pass
+            try:
+                custom_nbr_res = supabase.table("case_graph_custom_nodes").select("id, label").in_("id", neighbor_ids).execute()
+                for n in (custom_nbr_res.data or []):
+                    neighbor_labels.setdefault(n["id"], n.get("label") or n["id"])
+            except Exception:
+                pass
+
+        connections_block = ""
+        if connections:
+            lines = []
+            for c in connections:
+                nbr = neighbor_labels.get(c["neighbor_id"], c["neighbor_id"])
+                line = f"- {nbr} — {c['label']}"
+                if c["evidence"]:
+                    line += f": {c['evidence']}"
+                if c["source_filename"]:
+                    line += f" [{c['source_filename']}]"
+                if c["date_mentioned"]:
+                    line += f" ({c['date_mentioned']})"
+                lines.append(line)
+            connections_block = "\n\nNETWORK-GRAPH CONNECTIONS (from existing case evidence):\n" + "\n".join(lines)
+
+        # 6. Existing timeline events for dedup
+        events_res = supabase.table("case_timeline_events").select("title, event_date").eq("case_id", case_id).execute()
+        existing_events = events_res.data or []
+        events_context = ""
+        if existing_events:
+            event_lines = [f"- {e.get('event_date', 'no date')} — {e['title']}" for e in existing_events]
+            events_context = "\n\nEXISTING TIMELINE EVENTS (do not duplicate):\n" + "\n".join(event_lines[:40])
+
+        aliases_str = ", ".join(entity_aliases) if entity_aliases else "(none)"
+        extra_guidance = f"\n\nUSER GUIDANCE: {request.query}" if request.query else ""
+
+        system_prompt = f"""You are an investigative researcher building a timeline of events for {entity_label} ({entity_type}) within the case "{case_data.get('title', 'Untitled')}".
+
+CASE CATEGORY: {case_data.get('category', 'Unknown')}
+CASE SUMMARY: {case_data.get('summary', 'No summary.')}
+
+ENTITY: {entity_label}
+Description: {entity_description or '(none)'}
+Aliases: {aliases_str}
+Case-specific note: {case_description or '(none)'}{connections_block}{events_context}{extra_guidance}
+
+Use web search to find 4–10 events where {entity_label} was personally involved. Prefer events that illuminate the listed connections above, but also include independent milestones (education, marriage, career moves, major legal/financial/public events).
+
+Dates:
+- Confirmed precise dates: return as YYYY-MM-DD or YYYY-MM.
+- Year-only confirmed: return as YYYY.
+- Approximate/inferred (e.g. "early 2010s", "circa 2005"): return best-guess YYYY and prefix the description with "(approx.)".
+- Never invent precision you don't have.
+
+After your narrative response, you MUST include a structured section at the very end formatted EXACTLY like this:
+
+---EVENTS---
+[
+  {{"title": "Event title", "date": "YYYY-MM-DD or YYYY-MM or YYYY or null", "description": "Brief description", "category": "property|epstein-link|regulatory|political|corporate|financial|legal|crime|general"}}
+]
+---END---
+
+Guidelines:
+- Keep descriptions concise (1-2 sentences).
+- Do NOT repeat events already on the timeline.
+- Cite sources via web search grounding (handled automatically).
+- Think like an investigative journalist."""
+
+        default_query = f"Build a timeline of significant events in {entity_label}'s life, especially those relevant to the case and the connections listed."
+        user_query = request.query or default_query
+
+        contents = [system_prompt]
+        for msg in request.messages:
+            contents.append(f"{'Researcher' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}")
+        contents.append(f"Researcher: {user_query}")
+
+        config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())]
+        )
+
+        res = generate(
+            client,
+            model="gemini-2.0-flash",
+            contents="\n\n".join(contents),
+            config=config,
+        )
+
+        log_usage(user, "/api/cases/timeline/generate-track", "gemini-2.0-flash", res.usage_metadata)
+
+        # Extract web sources
+        web_sources = []
+        if res.candidates and res.candidates[0].grounding_metadata:
+            gm = res.candidates[0].grounding_metadata
+            if gm.grounding_chunks:
+                import urllib.parse
+                for gc in gm.grounding_chunks:
+                    if gc.web:
+                        uri = gc.web.uri or ""
+                        if uri:
+                            domain = urllib.parse.urlparse(uri).netloc.removeprefix('www.')
+                            web_sources.append({
+                                "title": gc.web.title or "",
+                                "uri": uri,
+                                "domain": domain,
+                            })
+
+        # Parse structured events
+        full_text = res.text or ""
+        events = []
+        narrative = full_text
+        if "---EVENTS---" in full_text and "---END---" in full_text:
+            parts = full_text.split("---EVENTS---")
+            narrative = parts[0].strip()
+            events_json = parts[1].split("---END---")[0].strip()
+            try:
+                events = json.loads(events_json)
+            except json.JSONDecodeError:
+                try:
+                    cleaned = events_json.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                    events = json.loads(cleaned)
+                except json.JSONDecodeError:
+                    pass
+
+        return {
+            "narrative": narrative,
+            "events": events,
+            "web_sources": web_sources,
+            "entity_label": entity_label,
+            "entity_node_id": request.entity_node_id,
+        }
+    except Exception as e:
+        print(f"Generate track failed: {e}")
         import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 

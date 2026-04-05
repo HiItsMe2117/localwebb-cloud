@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow, useViewport } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
-import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare } from 'lucide-react';
+import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare, Users } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import EventNode, { EVENT_CATEGORIES, formatEventDate } from './EventNode';
+import { TRACK_COLOR_PALETTE, type TimelineTrack } from '../types';
 import axios from 'axios';
 
 // ── Timeline auto-layout ────────────────────────────────────────────────────
@@ -180,6 +181,22 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const [addingEventIndex, setAddingEventIndex] = useState<string | null>(null);
   const researchEndRef = useRef<HTMLDivElement>(null);
 
+  // Tracks (per-entity overlay tracks)
+  const [tracks, setTracks] = useState<TimelineTrack[]>([]);
+  const [disabledTrackIds, setDisabledTrackIds] = useState<Set<string>>(new Set()); // client-side toggle state
+  const [showTrackModal, setShowTrackModal] = useState(false); // entity picker
+  const [caseEntities, setCaseEntities] = useState<{ id: string; label: string; type: string }[]>([]);
+  const [newTrackEntityId, setNewTrackEntityId] = useState<string>('');
+  const [newTrackColor, setNewTrackColor] = useState<string>(TRACK_COLOR_PALETTE[0]);
+  const [isCreatingTrack, setIsCreatingTrack] = useState(false);
+  // Generate-track panel
+  const [generateTrack, setGenerateTrack] = useState<TimelineTrack | null>(null);
+  const [trackQuery, setTrackQuery] = useState('');
+  const [isGeneratingTrack, setIsGeneratingTrack] = useState(false);
+  const [trackMessages, setTrackMessages] = useState<{ role: 'user' | 'assistant'; content: string; events?: { title: string; date: string | null; description: string; category: string }[]; webSources?: { title: string; uri: string; domain: string }[] }[]>([]);
+  const [addingTrackEventIndex, setAddingTrackEventIndex] = useState<string | null>(null);
+  const trackEndRef = useRef<HTMLDivElement>(null);
+
   // UI
   const [showMiniMap, setShowMiniMap] = useState(() => window.innerWidth >= 768);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -214,6 +231,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       const loadedNodes = res.data.nodes || [];
       setNodes(loadedNodes);
       setEdges(res.data.edges || []);
+      setTracks(res.data.tracks || []);
 
       // If flagged, run auto-layout with the freshly loaded nodes
       if (shouldAutoLayoutAfterLoad.current) {
@@ -325,13 +343,37 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
 
   // ── Display nodes with selection ───────────────────────────────────────────
 
+  const trackById = useMemo(() => {
+    const m: Record<string, TimelineTrack> = {};
+    for (const t of tracks) m[t.id] = t;
+    return m;
+  }, [tracks]);
+
+  // An event is track-visible if it has no tracks, OR at least one of its tracks is enabled.
+  const isEventTrackVisible = useCallback((trackIds: string[] | undefined) => {
+    if (!trackIds || trackIds.length === 0) return true;
+    return trackIds.some(tid => !disabledTrackIds.has(tid));
+  }, [disabledTrackIds]);
+
   const displayNodes = useMemo(() => {
     let filtered = nodes;
     if (filterCategories.size > 0) {
-      filtered = nodes.filter(n => filterCategories.has(n.data?.category || 'general'));
+      filtered = filtered.filter(n => filterCategories.has(n.data?.category || 'general'));
     }
-    return filtered.map(n => ({ ...n, selected: selectedNodeIds.has(n.id) }));
-  }, [nodes, selectedNodeIds, filterCategories]
+    filtered = filtered.filter(n => isEventTrackVisible(n.data?.track_ids));
+    return filtered.map(n => {
+      const tids: string[] = n.data?.track_ids || [];
+      const trackDots = tids
+        .map(tid => trackById[tid])
+        .filter(Boolean)
+        .map(t => ({ id: t.id, color: t.color, label: t.label }));
+      return {
+        ...n,
+        data: { ...n.data, trackDots },
+        selected: selectedNodeIds.has(n.id),
+      };
+    });
+  }, [nodes, selectedNodeIds, filterCategories, trackById, isEventTrackVisible]
   );
 
   // ── Node click: select or show context menu ────────────────────────────────
@@ -625,6 +667,159 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     }
   }, [caseId, loadTimeline, getViewport]);
 
+  // ── Tracks: load case entities for picker ─────────────────────────────────
+
+  const loadCaseEntities = useCallback(async () => {
+    try {
+      const res = await axios.get(`/api/cases/${caseId}/graph`);
+      const gnodes = (res.data.nodes || []).filter((n: any) => n.type === 'entityNode');
+      setCaseEntities(gnodes.map((n: any) => ({
+        id: n.id,
+        label: n.data?.label || 'Unknown',
+        type: n.data?.entityType || 'PERSON',
+      })));
+    } catch (err) {
+      console.error('Failed to load case entities:', err);
+      toast.error('Failed to load entities');
+    }
+  }, [caseId]);
+
+  // ── Tracks: CRUD ──────────────────────────────────────────────────────────
+
+  const createTrack = useCallback(async () => {
+    if (!newTrackEntityId) return;
+    const entity = caseEntities.find(e => e.id === newTrackEntityId);
+    if (!entity) return;
+    setIsCreatingTrack(true);
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/timeline/tracks`, {
+        entity_node_id: entity.id,
+        label: entity.label,
+        color: newTrackColor,
+      });
+      const track = res.data.track as TimelineTrack;
+      setTracks(prev => [...prev, track]);
+      setShowTrackModal(false);
+      setNewTrackEntityId('');
+      // Open generate panel for the new track
+      setGenerateTrack(track);
+      setTrackMessages([]);
+    } catch (err: any) {
+      console.error('Failed to create track:', err);
+      const status = err?.response?.status;
+      if (status === 409 || err?.response?.data?.error?.includes('duplicate')) {
+        toast.error('A track for this entity already exists');
+      } else {
+        toast.error('Failed to create track');
+      }
+    } finally {
+      setIsCreatingTrack(false);
+    }
+  }, [caseId, newTrackEntityId, newTrackColor, caseEntities]);
+
+  const toggleTrackEnabled = useCallback((trackId: string) => {
+    setDisabledTrackIds(prev => {
+      const next = new Set(prev);
+      if (next.has(trackId)) next.delete(trackId);
+      else next.add(trackId);
+      return next;
+    });
+  }, []);
+
+  const deleteTrack = useCallback(async (trackId: string) => {
+    if (!confirm('Delete this track? Events themselves will be kept, but they will lose this track association.')) return;
+    try {
+      await axios.delete(`/api/cases/${caseId}/timeline/tracks/${trackId}`);
+      setTracks(prev => prev.filter(t => t.id !== trackId));
+      // Strip trackId from any events that had it (optimistic)
+      setNodes(prev => prev.map(n => {
+        const tids: string[] = n.data?.track_ids || [];
+        if (!tids.includes(trackId)) return n;
+        return { ...n, data: { ...n.data, track_ids: tids.filter(t => t !== trackId) } };
+      }));
+      if (generateTrack?.id === trackId) setGenerateTrack(null);
+    } catch (err) {
+      console.error('Failed to delete track:', err);
+      toast.error('Failed to delete track');
+    }
+  }, [caseId, generateTrack, setNodes]);
+
+  const updateTrackColor = useCallback(async (trackId: string, color: string) => {
+    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, color } : t));
+    try {
+      await axios.patch(`/api/cases/${caseId}/timeline/tracks/${trackId}`, { color });
+    } catch (err) {
+      console.error('Failed to update track color:', err);
+    }
+  }, [caseId]);
+
+  // ── Tracks: generate AI events for this entity ────────────────────────────
+
+  const sendGenerateTrack = useCallback(async (customQuery?: string) => {
+    if (!generateTrack) return;
+    const query = (customQuery !== undefined ? customQuery : trackQuery).trim();
+    if (isGeneratingTrack) return;
+
+    if (query) {
+      const userMsg = { role: 'user' as const, content: query };
+      setTrackMessages(prev => [...prev, userMsg]);
+      setTrackQuery('');
+      setTimeout(() => trackEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    }
+    setIsGeneratingTrack(true);
+
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/timeline/generate-track`, {
+        entity_node_id: generateTrack.entity_node_id,
+        entity_label: generateTrack.label,
+        messages: trackMessages.map(m => ({ role: m.role, content: m.content })),
+        query: query || null,
+      });
+      const assistantMsg = {
+        role: 'assistant' as const,
+        content: res.data.narrative || 'No results found.',
+        events: res.data.events || [],
+        webSources: res.data.web_sources || [],
+      };
+      setTrackMessages(prev => [...prev, assistantMsg]);
+      setTimeout(() => trackEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    } catch (err) {
+      console.error('Generate track failed:', err);
+      toast.error('Generating track failed');
+      setTrackMessages(prev => [...prev, { role: 'assistant', content: 'Generation failed. Please try again.' }]);
+    } finally {
+      setIsGeneratingTrack(false);
+    }
+  }, [caseId, generateTrack, trackQuery, isGeneratingTrack, trackMessages]);
+
+  const addTrackEvent = useCallback(async (event: { title: string; date: string | null; description: string; category: string }, key: string) => {
+    if (!generateTrack) return;
+    setAddingTrackEventIndex(key);
+    try {
+      const vp = getViewport();
+      const centerX = (-vp.x + window.innerWidth / 2) / vp.zoom;
+      const centerY = (-vp.y + window.innerHeight / 2) / vp.zoom;
+      const offset = Math.random() * 200 - 100;
+      await axios.post(`/api/cases/${caseId}/timeline/events`, {
+        title: event.title,
+        event_date: event.date || null,
+        description: event.description,
+        category: event.category || 'general',
+        position_x: centerX + offset,
+        position_y: centerY + offset,
+        track_ids: [generateTrack.id],
+      });
+      shouldAutoLayoutAfterLoad.current = true;
+      await loadTimeline();
+      toast.success(`Added "${event.title}" to ${generateTrack.label}`);
+    } catch (err) {
+      console.error('Failed to add track event:', err);
+      toast.error('Failed to add event');
+    } finally {
+      setAddingTrackEventIndex(null);
+    }
+  }, [caseId, generateTrack, loadTimeline, getViewport]);
+
   // ── Fullscreen ─────────────────────────────────────────────────────────────
 
   const toggleFullscreen = useCallback(() => {
@@ -686,12 +881,13 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     if (filterCategories.size > 0) {
       filtered = filtered.filter(n => filterCategories.has(n.data?.category || 'general'));
     }
+    filtered = filtered.filter(n => isEventTrackVisible(n.data?.track_ids));
     return filtered.sort((a, b) => {
       const ka = parseEventSortKey(a.data?.event_date);
       const kb = parseEventSortKey(b.data?.event_date);
       return ka.localeCompare(kb);
     });
-  }, [nodes, filterCategories]);
+  }, [nodes, filterCategories, isEventTrackVisible]);
 
   // Group events by category (for filtered list view)
   const groupedByCategory = useMemo(() => {
@@ -766,7 +962,71 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               <Sparkles size={14} />
               Research
             </button>
+            <button
+              onClick={() => { setShowTrackModal(true); loadCaseEntities(); }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-semibold transition-colors bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)] hover:border-[#5AC8FA]"
+            >
+              <Users size={14} />
+              Generate Track
+            </button>
           </div>
+
+          {/* Track pills row */}
+          {tracks.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider">Tracks</span>
+              {tracks.map(t => {
+                const isDisabled = disabledTrackIds.has(t.id);
+                return (
+                  <div
+                    key={t.id}
+                    className="group flex items-center gap-1.5 pl-1.5 pr-1 py-0.5 rounded-full border transition-all"
+                    style={{
+                      background: isDisabled ? 'rgba(28,28,30,0.6)' : `${t.color}15`,
+                      borderColor: isDisabled ? 'rgba(84,84,88,0.35)' : `${t.color}60`,
+                    }}
+                  >
+                    <button
+                      onClick={() => toggleTrackEnabled(t.id)}
+                      className="flex items-center gap-1.5"
+                      title={isDisabled ? 'Show this track' : 'Hide this track'}
+                    >
+                      <div
+                        className="w-2.5 h-2.5 rounded-full transition-opacity"
+                        style={{ background: t.color, opacity: isDisabled ? 0.3 : 1 }}
+                      />
+                      <span
+                        className="text-[11px] font-medium transition-opacity"
+                        style={{ color: isDisabled ? 'rgba(235,235,245,0.35)' : t.color, opacity: isDisabled ? 0.6 : 1 }}
+                      >
+                        {t.label}
+                      </span>
+                      <span className="text-[10px] font-mono text-[rgba(235,235,245,0.35)]">
+                        {t.event_count ?? 0}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setGenerateTrack(t);
+                        setTrackMessages([]);
+                      }}
+                      className="p-0.5 rounded hover:bg-[rgba(255,255,255,0.1)] transition-colors"
+                      title="Generate more events for this track"
+                    >
+                      <Sparkles size={10} className="text-[rgba(235,235,245,0.5)]" />
+                    </button>
+                    <button
+                      onClick={() => deleteTrack(t.id)}
+                      className="p-0.5 rounded hover:bg-[#FF453A]/30 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete track"
+                    >
+                      <X size={10} className="text-[#FF453A]" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Create form */}
           {showCreateForm && (
@@ -1062,7 +1322,25 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                   </span>
                                 </td>
                                 <td className="px-2 py-2.5">
-                                  <span className="text-[13px] font-semibold text-white">{node.data?.title}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[13px] font-semibold text-white">{node.data?.title}</span>
+                                    {(node.data?.track_ids || []).length > 0 && (
+                                      <div className="flex items-center gap-0.5 shrink-0">
+                                        {(node.data.track_ids as string[]).slice(0, 6).map(tid => {
+                                          const t = trackById[tid];
+                                          if (!t) return null;
+                                          return (
+                                            <div
+                                              key={tid}
+                                              className="w-1.5 h-1.5 rounded-full"
+                                              style={{ background: t.color }}
+                                              title={t.label}
+                                            />
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="px-2 py-2.5">
                                   <span className="text-[12px] text-[rgba(235,235,245,0.45)] line-clamp-2">{node.data?.description}</span>
@@ -1171,7 +1449,25 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                           </div>
                         </td>
                         <td className="px-4 py-2.5">
-                          <span className="text-[13px] font-semibold text-white">{node.data?.title}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13px] font-semibold text-white">{node.data?.title}</span>
+                            {(node.data?.track_ids || []).length > 0 && (
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                {(node.data.track_ids as string[]).slice(0, 6).map(tid => {
+                                  const t = trackById[tid];
+                                  if (!t) return null;
+                                  return (
+                                    <div
+                                      key={tid}
+                                      className="w-1.5 h-1.5 rounded-full"
+                                      style={{ background: t.color }}
+                                      title={t.label}
+                                    />
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-2.5">
                           <span className="text-[12px] text-[rgba(235,235,245,0.45)] line-clamp-2">{node.data?.description}</span>
@@ -1238,6 +1534,187 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Generate-track side panel */}
+        {generateTrack && (
+          <div className="w-80 shrink-0 flex flex-col bg-[#0A0A0A] border-l border-[rgba(84,84,88,0.65)]">
+            <div className="shrink-0 px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-3 h-3 rounded-full shrink-0" style={{ background: generateTrack.color }} />
+                  <span className="text-[13px] font-semibold text-white truncate">Track: {generateTrack.label}</span>
+                </div>
+                <button
+                  onClick={() => { setGenerateTrack(null); setTrackMessages([]); setTrackQuery(''); }}
+                  className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors shrink-0"
+                >
+                  <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+                </button>
+              </div>
+              <div className="mt-1.5 flex items-center gap-1">
+                {TRACK_COLOR_PALETTE.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => updateTrackColor(generateTrack.id, c)}
+                    className="w-4 h-4 rounded-full border-2 transition-transform hover:scale-110"
+                    style={{ background: c, borderColor: c === generateTrack.color ? 'white' : 'transparent' }}
+                    title={c}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+              {trackMessages.length === 0 && !isGeneratingTrack && (
+                <div className="text-center py-8">
+                  <Users size={24} className="mx-auto mb-3" style={{ color: `${generateTrack.color}60` }} />
+                  <p className="text-[13px] text-[rgba(235,235,245,0.4)] mb-1">Generate events for {generateTrack.label}</p>
+                  <p className="text-[11px] text-[rgba(235,235,245,0.25)] leading-relaxed px-4 mb-4">
+                    AI will use this person's network-graph connections + web research to suggest events.
+                  </p>
+                  <button
+                    onClick={() => sendGenerateTrack('')}
+                    disabled={isGeneratingTrack}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold text-white transition-colors disabled:opacity-50"
+                    style={{ background: generateTrack.color }}
+                  >
+                    <Sparkles size={12} />
+                    Start generating
+                  </button>
+                </div>
+              )}
+
+              {trackMessages.map((msg, i) => (
+                <div key={i}>
+                  {msg.role === 'user' ? (
+                    <div className="flex justify-end">
+                      <div
+                        className="rounded-2xl rounded-br-md px-3 py-2 max-w-[85%]"
+                        style={{ background: generateTrack.color, color: 'black' }}
+                      >
+                        <p className="text-[12px] font-medium">{msg.content}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.35)] rounded-2xl rounded-bl-md px-3 py-2.5">
+                        <p className="text-[12px] text-[rgba(235,235,245,0.8)] leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                        {msg.webSources && msg.webSources.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-[rgba(84,84,88,0.25)] flex flex-wrap gap-1.5">
+                            {msg.webSources.slice(0, 5).map((src, si) => (
+                              <a
+                                key={si}
+                                href={src.uri}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#2C2C2E] hover:bg-[#3A3A3C] transition-colors"
+                                title={src.title}
+                              >
+                                <ExternalLink size={9} className="text-[#007AFF]" />
+                                <span className="text-[10px] text-[#007AFF] truncate max-w-[120px]">{src.domain}</span>
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {msg.events && msg.events.length > 0 && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between px-1">
+                            <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider">
+                              Suggested Events
+                            </span>
+                            <button
+                              onClick={async () => {
+                                for (let ei = 0; ei < (msg.events || []).length; ei++) {
+                                  const ev = msg.events![ei];
+                                  await addTrackEvent(ev, `${i}-${ei}`);
+                                }
+                              }}
+                              className="text-[10px] font-semibold transition-colors"
+                              style={{ color: generateTrack.color }}
+                            >
+                              + Add all
+                            </button>
+                          </div>
+                          {msg.events.map((ev, ei) => {
+                            const cat = EVENT_CATEGORIES[ev.category] || EVENT_CATEGORIES.general;
+                            const key = `${i}-${ei}`;
+                            return (
+                              <div
+                                key={ei}
+                                className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.35)] rounded-xl overflow-hidden"
+                              >
+                                <div style={{ height: 3, backgroundColor: cat.color }} />
+                                <div className="px-2.5 py-2">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-[12px] font-semibold text-white leading-tight">{ev.title}</p>
+                                      {ev.date && (
+                                        <span className="text-[10px] font-mono" style={{ color: cat.color }}>{ev.date}</span>
+                                      )}
+                                      {ev.description && (
+                                        <p className="text-[10px] text-[rgba(235,235,245,0.4)] leading-snug mt-0.5">{ev.description}</p>
+                                      )}
+                                    </div>
+                                    <button
+                                      onClick={() => addTrackEvent(ev, key)}
+                                      disabled={addingTrackEventIndex === key}
+                                      className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors disabled:opacity-50"
+                                      style={{ background: `${generateTrack.color}30`, color: generateTrack.color }}
+                                    >
+                                      {addingTrackEventIndex === key ? (
+                                        <Loader2 size={10} className="animate-spin" />
+                                      ) : (
+                                        <Plus size={10} />
+                                      )}
+                                      Add
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {isGeneratingTrack && (
+                <div className="flex items-center gap-2 px-1">
+                  <Loader2 size={14} className="animate-spin" style={{ color: generateTrack.color }} />
+                  <span className="text-[11px] text-[rgba(235,235,245,0.4)]">Generating...</span>
+                </div>
+              )}
+              <div ref={trackEndRef} />
+            </div>
+
+            <div className="shrink-0 px-3 py-2.5 border-t border-[rgba(84,84,88,0.35)]">
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={trackQuery}
+                  onChange={e => setTrackQuery(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendGenerateTrack(); } }}
+                  placeholder="Refine (e.g. focus on 2005-2010)..."
+                  disabled={isGeneratingTrack}
+                  className="flex-1 bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[12px] text-white focus:outline-none transition-colors placeholder:text-[rgba(235,235,245,0.2)] disabled:opacity-50"
+                  style={{ borderColor: isGeneratingTrack ? 'rgba(84,84,88,0.65)' : undefined }}
+                />
+                <button
+                  onClick={() => sendGenerateTrack()}
+                  disabled={isGeneratingTrack}
+                  className="w-8 h-8 rounded-xl disabled:opacity-30 flex items-center justify-center transition-colors shrink-0"
+                  style={{ background: generateTrack.color }}
+                >
+                  <Send size={12} className="text-black" />
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1583,6 +2060,107 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
           </div>
         )}
       </div>
+
+      {/* Entity picker modal for creating a new track */}
+      {showTrackModal && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => { if (!isCreatingTrack) setShowTrackModal(false); }}
+        >
+          <div
+            className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users size={16} className="text-[#5AC8FA]" />
+                <h3 className="text-[14px] font-semibold text-white">New Timeline Track</h3>
+              </div>
+              <button
+                onClick={() => setShowTrackModal(false)}
+                disabled={isCreatingTrack}
+                className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors disabled:opacity-50"
+              >
+                <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+              </button>
+            </div>
+
+            <div className="px-4 py-4 space-y-4">
+              <div>
+                <label className="block text-[11px] font-semibold text-[rgba(235,235,245,0.5)] uppercase tracking-wider mb-1.5">
+                  Entity
+                </label>
+                {caseEntities.length === 0 ? (
+                  <div className="text-[12px] text-[rgba(235,235,245,0.4)] italic py-2">
+                    No entities found in this case's network graph.
+                  </div>
+                ) : (
+                  <select
+                    value={newTrackEntityId}
+                    onChange={e => setNewTrackEntityId(e.target.value)}
+                    className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#5AC8FA] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none transition-colors"
+                  >
+                    <option value="">Select a person or entity...</option>
+                    {caseEntities
+                      .filter(e => !tracks.some(t => t.entity_node_id === e.id))
+                      .map(e => (
+                        <option key={e.id} value={e.id}>
+                          {e.label} {e.type && e.type !== 'PERSON' ? `(${e.type})` : ''}
+                        </option>
+                      ))}
+                  </select>
+                )}
+                <p className="mt-1.5 text-[10px] text-[rgba(235,235,245,0.35)] leading-relaxed">
+                  AI will use this entity's connections in your case graph plus web search to suggest timeline events.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-[rgba(235,235,245,0.5)] uppercase tracking-wider mb-1.5">
+                  Track Color
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {TRACK_COLOR_PALETTE.map(c => (
+                    <button
+                      key={c}
+                      onClick={() => setNewTrackColor(c)}
+                      className="w-7 h-7 rounded-full border-2 transition-transform hover:scale-110"
+                      style={{
+                        background: c,
+                        borderColor: c === newTrackColor ? 'white' : 'transparent',
+                      }}
+                      title={c}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="px-4 py-3 border-t border-[rgba(84,84,88,0.35)] flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowTrackModal(false)}
+                disabled={isCreatingTrack}
+                className="px-3 py-2 rounded-xl text-[13px] font-semibold text-[rgba(235,235,245,0.6)] hover:bg-[#2C2C2E] transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createTrack}
+                disabled={!newTrackEntityId || isCreatingTrack}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-semibold text-white transition-colors disabled:opacity-40"
+                style={{ background: newTrackColor }}
+              >
+                {isCreatingTrack ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Plus size={12} />
+                )}
+                Create Track
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

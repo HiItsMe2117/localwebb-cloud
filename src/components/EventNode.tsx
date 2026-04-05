@@ -38,6 +38,7 @@ export function formatEventDate(dateStr?: string | null): string {
 function EventNode({ data, selected }: NodeProps) {
   const category = EVENT_CATEGORIES[data.category] || EVENT_CATEGORIES.general;
   const Icon = category.icon;
+  const trackDots: { id: string; color: string; label: string }[] = data.trackDots || [];
 
   return (
     <div
@@ -104,6 +105,28 @@ function EventNode({ data, selected }: NodeProps) {
           </p>
         )}
       </div>
+
+      {/* Track dots */}
+      {trackDots.length > 0 && (
+        <div
+          className="flex items-center gap-1 px-3 py-1.5 border-t"
+          style={{ borderColor: `${category.color}20`, background: 'rgba(0,0,0,0.25)' }}
+        >
+          {trackDots.slice(0, 8).map(t => (
+            <div
+              key={t.id}
+              className="w-2 h-2 rounded-full"
+              style={{ background: t.color, boxShadow: `0 0 4px ${t.color}80` }}
+              title={t.label}
+            />
+          ))}
+          {trackDots.length > 8 && (
+            <span className="text-[9px] font-mono text-[rgba(235,235,245,0.4)] ml-0.5">
+              +{trackDots.length - 8}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
