@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Loader2, CreditCard, LogOut, Zap, ExternalLink, Clock, User, XCircle, RotateCcw } from 'lucide-react';
+import { Loader2, CreditCard, LogOut, Zap, ExternalLink, Clock, User, XCircle, RotateCcw, Mail, Check } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 
 interface AccountPanelProps {
   onUpgrade: () => void;
@@ -77,6 +78,10 @@ export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
   const [billingLoading, setBillingLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [emailStatus, setEmailStatus] = useState<'idle' | 'loading' | 'sent' | 'error'>('idle');
+  const [emailError, setEmailError] = useState('');
 
   const fetchAccount = () => {
     axios.get('/api/billing/account')
@@ -86,6 +91,20 @@ export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
   };
 
   useEffect(() => { fetchAccount(); }, []);
+
+  const handleChangeEmail = async () => {
+    if (!newEmail.trim()) return;
+    setEmailStatus('loading');
+    setEmailError('');
+    try {
+      const { error } = await supabase.auth.updateUser({ email: newEmail.trim() });
+      if (error) throw error;
+      setEmailStatus('sent');
+    } catch (err: any) {
+      setEmailStatus('error');
+      setEmailError(err.message || 'Failed to update email');
+    }
+  };
 
   const handleBilling = async () => {
     setBillingLoading(true);
@@ -162,6 +181,52 @@ export default function AccountPanel({ onUpgrade }: AccountPanelProps) {
               )}
             </div>
           </div>
+          {!editingEmail ? (
+            <button
+              onClick={() => { setEditingEmail(true); setNewEmail(''); setEmailStatus('idle'); setEmailError(''); }}
+              className="flex items-center gap-1.5 text-[13px] text-[#007AFF] hover:text-[#0071E3] transition-colors mb-4"
+            >
+              <Mail size={13} />
+              Change Email
+            </button>
+          ) : emailStatus === 'sent' ? (
+            <div className="bg-[#30D158]/10 border border-[#30D158]/30 rounded-xl px-3.5 py-2.5 mb-4 flex items-center gap-2">
+              <Check size={14} className="text-[#30D158] shrink-0" />
+              <p className="text-[13px] text-[#30D158]">
+                Confirmation email sent to <span className="font-medium">{newEmail}</span>. Check your inbox to confirm the change.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2 mb-4">
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={newEmail}
+                  onChange={e => setNewEmail(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleChangeEmail()}
+                  placeholder="New email address"
+                  className="flex-1 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3.5 py-2 text-[14px] text-white placeholder-[rgba(235,235,245,0.3)] outline-none focus:border-[#007AFF] transition-colors"
+                  autoFocus
+                />
+                <button
+                  onClick={handleChangeEmail}
+                  disabled={emailStatus === 'loading' || !newEmail.trim()}
+                  className="bg-[#007AFF] rounded-xl px-4 py-2 text-[14px] font-semibold text-white hover:bg-[#0071E3] transition-colors disabled:opacity-50"
+                >
+                  {emailStatus === 'loading' ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+                </button>
+                <button
+                  onClick={() => setEditingEmail(false)}
+                  className="bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-2 text-[14px] text-[rgba(235,235,245,0.6)] hover:border-[rgba(84,84,88,1)] transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+              {emailStatus === 'error' && (
+                <p className="text-[12px] text-[#FF453A] px-1">{emailError}</p>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-[#2C2C2E] rounded-xl px-3.5 py-2.5">
               <p className="text-[11px] text-[rgba(235,235,245,0.4)] uppercase tracking-wider">Plan</p>
