@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow, useViewport } from 'reactflow';
-import type { Node, Edge } from 'reactflow';
+import type { Node, Edge, NodeChange } from 'reactflow';
 import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare, Users } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import EventNode, { EVENT_CATEGORIES, formatEventDate } from './EventNode';
@@ -594,7 +594,6 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         ...vn,
         selected: selectedNodeIds.has((vn.data as any).eventId || vn.id),
       }));
-      console.log('[Timeline DEBUG] laneMode displayNodes:', result.length, 'nodes, first 3:', result.slice(0, 3).map(n => ({ id: n.id, type: n.type, pos: n.position, title: n.data?.title })));
       return result;
     }
 
@@ -603,9 +602,25 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       ...n,
       selected: selectedNodeIds.has(n.id),
     }));
-    console.log('[Timeline DEBUG] freeform displayNodes:', result.length, 'nodes, first 3:', result.slice(0, 3).map(n => ({ id: n.id, type: n.type, pos: n.position, title: n.data?.title })));
     return result;
   }, [nodes, selectedNodeIds, filterCategories, trackById, isEventTrackVisible, laneMode, enabledTracks]);
+
+  // In lane mode, displayNodes have virtual IDs (e.g. "uuid::main") that don't exist
+  // in useNodesState. ReactFlow fires onNodesChange with those virtual IDs (dimension
+  // updates, selection, etc.) which useNodesState can't resolve, causing an infinite
+  // render loop. In lane mode, positions are computed — so we only forward changes that
+  // map to real node IDs (strip the "::lane" suffix).
+  const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    if (!laneMode) {
+      onNodesChange(changes);
+      return;
+    }
+    // In lane mode, displayNodes contain virtual IDs (e.g. "uuid::main") that
+    // don't exist in useNodesState. Forwarding ANY changes with those IDs causes
+    // useNodesState to update → nodes changes → displayNodes recomputes → ReactFlow
+    // re-measures → onNodesChange fires again → infinite loop. Since lane layout
+    // is fully computed, we drop all changes in lane mode.
+  }, [laneMode, onNodesChange]);
 
   // Keep lane overlay markers in sync with swim-lane layout
   useEffect(() => {
@@ -1434,7 +1449,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
             <NexusCanvas
               nodes={displayNodes}
               edges={edges}
-              onNodesChange={onNodesChange}
+              onNodesChange={handleNodesChange}
               onEdgesChange={onEdgesChange}
               onNodeDragStop={onNodeDragStop}
               onNodeClick={onNodeClick}
