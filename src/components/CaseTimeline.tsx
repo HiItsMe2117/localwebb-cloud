@@ -429,8 +429,10 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       setEdges(res.data.edges || []);
       setTracks(res.data.tracks || []);
 
-      // If flagged, run auto-layout with the freshly loaded nodes
-      if (shouldAutoLayoutAfterLoad.current) {
+      // Auto-layout if flagged, or if all nodes are stuck at origin (never laid out)
+      const needsLayout = shouldAutoLayoutAfterLoad.current ||
+        (loadedNodes.length > 0 && loadedNodes.every((n: Node) => n.position.x === 0 && n.position.y === 0));
+      if (needsLayout) {
         shouldAutoLayoutAfterLoad.current = false;
         const { positions, yearMarkers: markers } = computeTimelineLayout(loadedNodes);
         setYearMarkers(markers);
