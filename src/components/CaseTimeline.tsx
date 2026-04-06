@@ -590,17 +590,21 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     if (laneMode) {
       // Swim-lane layout: expand each event into one virtual node per lane it belongs to
       const { virtualNodes } = computeSwimLaneLayout(enriched, enabledTracks);
-      return virtualNodes.map(vn => ({
+      const result = virtualNodes.map(vn => ({
         ...vn,
         selected: selectedNodeIds.has((vn.data as any).eventId || vn.id),
       }));
+      console.log('[Timeline DEBUG] laneMode displayNodes:', result.length, 'nodes, first 3:', result.slice(0, 3).map(n => ({ id: n.id, type: n.type, pos: n.position, title: n.data?.title })));
+      return result;
     }
 
     // Freeform mode: preserve saved positions
-    return enriched.map(n => ({
+    const result = enriched.map(n => ({
       ...n,
       selected: selectedNodeIds.has(n.id),
     }));
+    console.log('[Timeline DEBUG] freeform displayNodes:', result.length, 'nodes, first 3:', result.slice(0, 3).map(n => ({ id: n.id, type: n.type, pos: n.position, title: n.data?.title })));
+    return result;
   }, [nodes, selectedNodeIds, filterCategories, trackById, isEventTrackVisible, laneMode, enabledTracks]);
 
   // Keep lane overlay markers in sync with swim-lane layout
