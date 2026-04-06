@@ -357,7 +357,7 @@ function NexusCanvas({ nodes, edges, onNodesChange, onEdgesChange, onNodeDragSta
         edgesFocusable={true}
         edgesUpdatable={true}
         panOnDrag={panOnDrag}
-        onlyRenderVisibleElements={true}
+        onlyRenderVisibleElements={false}
         zoomOnDoubleClick={false}
       >
         <Background
