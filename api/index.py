@@ -3058,9 +3058,10 @@ Answer the researcher's questions using this context. Be specific, cite entity n
         log_usage(user, "/api/cases/chat", "gemini-2.0-flash", res.usage_metadata)
 
         web_sources = []
-        if res.candidates and res.candidates[0].grounding_metadata:
-            gm = res.candidates[0].grounding_metadata
-            if gm.grounding_chunks:
+        candidates = getattr(res, 'candidates', None)
+        if candidates and len(candidates) > 0:
+            gm = getattr(candidates[0], 'grounding_metadata', None)
+            if gm and getattr(gm, 'grounding_chunks', None):
                 import urllib.parse
                 for gc in gm.grounding_chunks:
                     if gc.web:
@@ -3175,9 +3176,10 @@ Answer the researcher's questions using this context. Be specific, cite entity n
         log_usage(user, "/api/cases/chat", "gemini-2.0-flash", res.usage_metadata)
 
         web_sources = []
-        if res.candidates and res.candidates[0].grounding_metadata:
-            gm = res.candidates[0].grounding_metadata
-            if gm.grounding_chunks:
+        candidates = getattr(res, 'candidates', None)
+        if candidates and len(candidates) > 0:
+            gm = getattr(candidates[0], 'grounding_metadata', None)
+            if gm and getattr(gm, 'grounding_chunks', None):
                 import urllib.parse
                 for gc in gm.grounding_chunks:
                     if gc.web:
@@ -4564,11 +4566,12 @@ Guidelines:
 
         log_usage(user, "/api/cases/timeline/research", "gemini-2.0-flash", res.usage_metadata)
 
-        # Extract web sources
+        # Extract web sources (may be absent when Groq fallback is used)
         web_sources = []
-        if res.candidates and res.candidates[0].grounding_metadata:
-            gm = res.candidates[0].grounding_metadata
-            if gm.grounding_chunks:
+        candidates = getattr(res, 'candidates', None)
+        if candidates and len(candidates) > 0:
+            gm = getattr(candidates[0], 'grounding_metadata', None)
+            if gm and getattr(gm, 'grounding_chunks', None):
                 import urllib.parse
                 for gc in gm.grounding_chunks:
                     if gc.web:
@@ -4781,11 +4784,12 @@ Guidelines:
 
         log_usage(user, "/api/cases/timeline/generate-track", "gemini-2.0-flash", res.usage_metadata)
 
-        # Extract web sources
+        # Extract web sources (may be absent when Groq fallback is used)
         web_sources = []
-        if res.candidates and res.candidates[0].grounding_metadata:
-            gm = res.candidates[0].grounding_metadata
-            if gm.grounding_chunks:
+        candidates = getattr(res, 'candidates', None)
+        if candidates and len(candidates) > 0:
+            gm = getattr(candidates[0], 'grounding_metadata', None)
+            if gm and getattr(gm, 'grounding_chunks', None):
                 import urllib.parse
                 for gc in gm.grounding_chunks:
                     if gc.web:
@@ -4922,9 +4926,10 @@ Guidelines:
 
         # Extract web sources from grounding metadata
         web_sources = []
-        if res.candidates and res.candidates[0].grounding_metadata:
-            gm = res.candidates[0].grounding_metadata
-            if gm.grounding_chunks:
+        candidates = getattr(res, 'candidates', None)
+        if candidates and len(candidates) > 0:
+            gm = getattr(candidates[0], 'grounding_metadata', None)
+            if gm and getattr(gm, 'grounding_chunks', None):
                 import urllib.parse
                 for gc in gm.grounding_chunks:
                     if gc.web:
