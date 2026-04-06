@@ -429,9 +429,15 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       setEdges(res.data.edges || []);
       setTracks(res.data.tracks || []);
 
-      // Auto-layout if flagged, or if all nodes are stuck at origin (never laid out)
+      // Auto-layout if flagged, or if nodes are bunched into a tiny area (never properly laid out)
       const needsLayout = shouldAutoLayoutAfterLoad.current ||
-        (loadedNodes.length > 0 && loadedNodes.every((n: Node) => n.position.x === 0 && n.position.y === 0));
+        (loadedNodes.length > 1 && (() => {
+          const xs = loadedNodes.map((n: Node) => n.position.x);
+          const ys = loadedNodes.map((n: Node) => n.position.y);
+          const spread = Math.max(...xs) - Math.min(...xs) + Math.max(...ys) - Math.min(...ys);
+          return spread < CARD_WIDTH;
+        })()) ||
+        (loadedNodes.length === 1 && loadedNodes[0].position.x === 0 && loadedNodes[0].position.y === 0);
       if (needsLayout) {
         shouldAutoLayoutAfterLoad.current = false;
         const { positions, yearMarkers: markers } = computeTimelineLayout(loadedNodes);
