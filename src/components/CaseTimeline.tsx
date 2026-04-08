@@ -1520,7 +1520,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                     <div className="flex items-center gap-2">
                       <Bot size={14} className="text-[#AF52DE]" />
                       <span className="text-[12px] font-semibold text-white">Timeline Analyst</span>
-                      <Globe size={10} className="text-[#30D158]" title="Web search enabled" />
+                      <span title="Web search enabled"><Globe size={10} className="text-[#30D158]" /></span>
                     </div>
                     <div className="flex items-center gap-1">
                       {timelineChatMessages.length > 0 && (
