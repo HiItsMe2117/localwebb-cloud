@@ -2295,6 +2295,9 @@ class GenerateTrackRequest(BaseModel):
     messages: List[Dict[str, str]] = []
     query: Optional[str] = None
 
+class TimelineChatRequest(BaseModel):
+    messages: List[Dict[str, str]]
+
 class SaveTimelinePositionsRequest(BaseModel):
     positions: List[Dict[str, Any]]
 
@@ -4828,6 +4831,119 @@ Guidelines:
         }
     except Exception as e:
         print(f"Generate track failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/chat")
+async def timeline_chat(case_id: str, request: TimelineChatRequest, user = Depends(require_paid)):
+    """AI chat about the case timeline — has full context of events, tracks, and connections, plus web search."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=False)
+
+        # Load case metadata
+        case_res = supabase.table("cases").select("title, summary, category").eq("id", case_id).execute()
+        case_data = case_res.data[0] if case_res.data else {}
+
+        # Load all timeline events
+        events_res = supabase.table("case_timeline_events").select("title, description, event_date, category, track_ids").eq("case_id", case_id).order("event_date").execute()
+        events = events_res.data or []
+
+        event_lines = []
+        for e in events:
+            date_str = e.get("event_date") or "undated"
+            cat = e.get("category") or "general"
+            desc = (e.get("description") or "")[:300]
+            line = f"- [{date_str}] ({cat}) {e['title']}"
+            if desc:
+                line += f": {desc}"
+            event_lines.append(line)
+
+        # Load timeline tracks (entity-based lanes)
+        tracks_res = supabase.table("case_timeline_tracks").select("id, label, entity_node_id, color").eq("case_id", case_id).execute()
+        tracks = tracks_res.data or []
+
+        track_lines = []
+        for t in tracks:
+            # Count events in this track
+            count = sum(1 for e in events if t["id"] in (e.get("track_ids") or []))
+            track_lines.append(f"- {t['label']} ({count} events)")
+
+        # Load timeline edges (connections between events)
+        edges_res = supabase.table("case_timeline_edges").select("source_event_id, target_event_id, label").eq("case_id", case_id).execute()
+        edge_data = edges_res.data or []
+
+        # Build event title lookup for edge display
+        event_titles = {e.get("id", ""): e["title"] for e in events if e.get("id")}
+        # Fallback: also try to map by title if id isn't in the select
+        events_by_id_res = supabase.table("case_timeline_events").select("id, title").eq("case_id", case_id).execute()
+        for e in (events_by_id_res.data or []):
+            event_titles[e["id"]] = e["title"]
+
+        edge_lines = []
+        for ed in edge_data:
+            src = event_titles.get(ed["source_event_id"], ed["source_event_id"][:8])
+            tgt = event_titles.get(ed["target_event_id"], ed["target_event_id"][:8])
+            lbl = ed.get("label") or "related"
+            edge_lines.append(f"- {src} → {lbl} → {tgt}")
+
+        system_context = f"""You are a seasoned investigative journalist and timeline analyst with decades of experience uncovering patterns in criminal cases — following the money, identifying when key players met, and spotting gaps in official narratives. You're having a conversation with a researcher about their case timeline.
+
+CASE: {case_data.get('title', 'Untitled')}
+CATEGORY: {case_data.get('category', 'Unknown')}
+SUMMARY: {case_data.get('summary', 'No summary.')}
+
+TIMELINE EVENTS ({len(event_lines)}):
+{chr(10).join(event_lines[:60]) if event_lines else "No events yet."}
+
+{"TRACKS (entity lanes):" + chr(10) + chr(10).join(track_lines) if track_lines else ""}
+
+{"EVENT CONNECTIONS:" + chr(10) + chr(10).join(edge_lines[:30]) if edge_lines else ""}
+
+Use web search to supplement your knowledge. Help the researcher analyze their timeline — identify patterns, suspicious timing, gaps in the record, correlations between events, and suggest new leads or events they may be missing. Be specific, cite dates and event names, and think like an investigative journalist. Keep responses concise and actionable."""
+
+        contents = [system_context]
+        for msg in request.messages:
+            contents.append(f"{'Researcher' if msg['role'] == 'user' else 'Journalist'}: {msg['content']}")
+
+        config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())]
+        )
+
+        res = generate(
+            client,
+            model="gemini-2.0-flash",
+            contents="\n\n".join(contents),
+            config=config,
+        )
+
+        log_usage(user, "/api/cases/timeline/chat", "gemini-2.0-flash", res.usage_metadata)
+
+        # Extract web sources (may be absent when Groq fallback is used)
+        web_sources = []
+        candidates = getattr(res, 'candidates', None)
+        if candidates and len(candidates) > 0:
+            gm = getattr(candidates[0], 'grounding_metadata', None)
+            if gm and getattr(gm, 'grounding_chunks', None):
+                import urllib.parse
+                for gc in gm.grounding_chunks:
+                    if gc.web:
+                        uri = gc.web.uri or ""
+                        if uri:
+                            domain = urllib.parse.urlparse(uri).netloc.removeprefix('www.')
+                            web_sources.append({
+                                "title": gc.web.title or "",
+                                "uri": uri,
+                                "domain": domain,
+                            })
+
+        return {"response": res.text, "web_sources": web_sources}
+    except Exception as e:
+        print(f"Timeline chat failed: {e}")
         import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow, useViewport } from 'reactflow';
 import type { Node, Edge, NodeChange } from 'reactflow';
-import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare, Users } from 'lucide-react';
+import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare, Users, Bot, Globe } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import EventNode, { EVENT_CATEGORIES, formatEventDate } from './EventNode';
 import { TRACK_COLOR_PALETTE, type TimelineTrack } from '../types';
@@ -392,6 +392,13 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const [trackMessages, setTrackMessages] = useState<{ role: 'user' | 'assistant'; content: string; events?: { title: string; date: string | null; description: string; category: string }[]; webSources?: { title: string; uri: string; domain: string }[] }[]>([]);
   const [addingTrackEventIndex, setAddingTrackEventIndex] = useState<string | null>(null);
   const trackEndRef = useRef<HTMLDivElement>(null);
+
+  // Timeline AI chat
+  const [timelineChatOpen, setTimelineChatOpen] = useState(false);
+  const [timelineChatMessages, setTimelineChatMessages] = useState<{ role: 'user' | 'assistant'; content: string; webSources?: { title: string; uri: string; domain: string }[] }[]>([]);
+  const [timelineChatInput, setTimelineChatInput] = useState('');
+  const [isTimelineChatting, setIsTimelineChatting] = useState(false);
+  const timelineChatEndRef = useRef<HTMLDivElement>(null);
 
   // UI
   const [showMiniMap, setShowMiniMap] = useState(() => window.innerWidth >= 768);
@@ -1090,6 +1097,30 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     }
   }, [caseId, generateTrack, loadTimeline, getViewport]);
 
+  // ── Timeline AI Chat ───────────────────────────────────────────────────────
+
+  const sendTimelineChatMessage = useCallback(async () => {
+    const msg = timelineChatInput.trim();
+    if (!msg || isTimelineChatting) return;
+    const newMessages = [...timelineChatMessages, { role: 'user' as const, content: msg }];
+    setTimelineChatMessages(newMessages);
+    setTimelineChatInput('');
+    setIsTimelineChatting(true);
+    setTimeout(() => timelineChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/timeline/chat`, {
+        messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+      });
+      setTimelineChatMessages(prev => [...prev, { role: 'assistant', content: res.data.response, webSources: res.data.web_sources }]);
+      setTimeout(() => timelineChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    } catch (err) {
+      console.error('Timeline chat failed:', err);
+      setTimelineChatMessages(prev => [...prev, { role: 'assistant', content: 'Failed to get a response. Try again.' }]);
+    } finally {
+      setIsTimelineChatting(false);
+    }
+  }, [caseId, timelineChatInput, timelineChatMessages, isTimelineChatting]);
+
   // ── Fullscreen ─────────────────────────────────────────────────────────────
 
   const toggleFullscreen = useCallback(() => {
@@ -1476,6 +1507,116 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               <MapIcon size={10} />
               {showMiniMap ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
             </button>
+
+            {/* Timeline AI chat widget */}
+            <div
+              className="absolute z-20 flex flex-col transition-all"
+              style={{ bottom: showMiniMap ? 165 : 14, right: showMiniMap ? 220 : 50, width: timelineChatOpen ? 340 : 'auto' }}
+            >
+              {timelineChatOpen ? (
+                <div className="bg-[#1C1C1E]/95 backdrop-blur-md border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl flex flex-col" style={{ height: 380 }}>
+                  {/* Header */}
+                  <div className="shrink-0 px-3 py-2 flex items-center justify-between border-b border-[rgba(84,84,88,0.35)]">
+                    <div className="flex items-center gap-2">
+                      <Bot size={14} className="text-[#AF52DE]" />
+                      <span className="text-[12px] font-semibold text-white">Timeline Analyst</span>
+                      <Globe size={10} className="text-[#30D158]" title="Web search enabled" />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {timelineChatMessages.length > 0 && (
+                        <button
+                          onClick={() => setTimelineChatMessages([])}
+                          className="p-1 hover:bg-[#2C2C2E] rounded-lg text-[rgba(235,235,245,0.3)] hover:text-white transition-colors"
+                          title="Clear chat"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                      <button onClick={() => setTimelineChatOpen(false)} className="p-1 hover:bg-[#2C2C2E] rounded-lg">
+                        <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Messages */}
+                  <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+                    {timelineChatMessages.length === 0 && (
+                      <div className="flex flex-col items-center justify-center h-full text-center gap-2 opacity-50">
+                        <Bot size={24} className="text-[#AF52DE]" />
+                        <p className="text-[11px] text-[rgba(235,235,245,0.4)] max-w-[200px]">
+                          Ask about patterns, suspicious timing, gaps in the timeline, or leads worth investigating.
+                        </p>
+                      </div>
+                    )}
+                    {timelineChatMessages.map((msg, i) => (
+                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[85%] rounded-2xl px-3 py-2 ${
+                          msg.role === 'user'
+                            ? 'bg-[#AF52DE] text-white'
+                            : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.6)]'
+                        }`}>
+                          <p className="text-[12px] whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                          {msg.webSources && msg.webSources.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-[rgba(84,84,88,0.35)] flex flex-col gap-1">
+                              {msg.webSources.map((source, idx) => (
+                                <a
+                                  key={idx}
+                                  href={source.uri}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[11px] text-[#BF5AF2] hover:underline flex items-center gap-2 truncate"
+                                >
+                                  <span className="shrink-0 text-[10px] bg-[#BF5AF2]/10 px-1.5 py-0.5 rounded text-[#BF5AF2] font-mono">{idx + 1}</span>
+                                  <span className="truncate">{source.title || source.domain}</span>
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {isTimelineChatting && (
+                      <div className="flex justify-start">
+                        <div className="bg-[#2C2C2E] rounded-2xl px-3 py-2">
+                          <Loader2 size={14} className="text-[#AF52DE] animate-spin" />
+                        </div>
+                      </div>
+                    )}
+                    <div ref={timelineChatEndRef} />
+                  </div>
+
+                  {/* Input */}
+                  <div className="shrink-0 px-2.5 py-2 border-t border-[rgba(84,84,88,0.35)]">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={timelineChatInput}
+                        onChange={e => setTimelineChatInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTimelineChatMessage(); } }}
+                        placeholder="Ask about this timeline..."
+                        disabled={isTimelineChatting}
+                        className="flex-1 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-xl px-3 py-1.5 text-[12px] text-white focus:outline-none focus:border-[#AF52DE] transition-colors placeholder:text-[rgba(235,235,245,0.2)] disabled:opacity-50"
+                      />
+                      <button
+                        onClick={sendTimelineChatMessage}
+                        disabled={!timelineChatInput.trim() || isTimelineChatting}
+                        className="w-8 h-8 rounded-xl bg-[#AF52DE] hover:bg-[#9B45C4] disabled:opacity-30 flex items-center justify-center transition-colors shrink-0"
+                      >
+                        <Send size={12} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setTimelineChatOpen(true)}
+                  className="w-9 h-9 rounded-xl bg-[#1C1C1E]/90 backdrop-blur-sm border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E] flex items-center justify-center transition-colors group"
+                  title="Timeline Analyst"
+                >
+                  <Bot size={16} className="text-[#AF52DE] group-hover:scale-110 transition-transform" />
+                </button>
+              )}
+            </div>
 
             {/* Context menu for event editing */}
             {contextEvent && !readOnly && (
