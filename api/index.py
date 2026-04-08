@@ -4849,9 +4849,9 @@ async def timeline_chat(case_id: str, request: TimelineChatRequest, user = Depen
         case_res = supabase.table("cases").select("title, summary, category").eq("id", case_id).execute()
         case_data = case_res.data[0] if case_res.data else {}
 
-        # Load all timeline events
-        events_res = supabase.table("case_timeline_events").select("title, description, event_date, category, track_ids").eq("case_id", case_id).order("event_date").execute()
-        events = events_res.data or []
+        # Load all timeline events (include id for edge lookup)
+        events_res = supabase.table("case_timeline_events").select("id, title, description, event_date, category").eq("case_id", case_id).execute()
+        events = sorted(events_res.data or [], key=lambda e: e.get("event_date") or "9999")
 
         event_lines = []
         for e in events:
@@ -4864,32 +4864,35 @@ async def timeline_chat(case_id: str, request: TimelineChatRequest, user = Depen
             event_lines.append(line)
 
         # Load timeline tracks (entity-based lanes)
-        tracks_res = supabase.table("case_timeline_tracks").select("id, label, entity_node_id, color").eq("case_id", case_id).execute()
-        tracks = tracks_res.data or []
-
         track_lines = []
-        for t in tracks:
-            # Count events in this track
-            count = sum(1 for e in events if t["id"] in (e.get("track_ids") or []))
-            track_lines.append(f"- {t['label']} ({count} events)")
+        try:
+            tracks_res = supabase.table("case_timeline_tracks").select("id, label, entity_node_id, color").eq("case_id", case_id).execute()
+            tracks = tracks_res.data or []
+            # Count events per track via junction table
+            track_event_counts: Dict[str, int] = {}
+            if tracks:
+                junc_res = supabase.table("case_timeline_event_tracks").select("track_id").in_("track_id", [t["id"] for t in tracks]).execute()
+                for j in (junc_res.data or []):
+                    track_event_counts[j["track_id"]] = track_event_counts.get(j["track_id"], 0) + 1
+            for t in tracks:
+                count = track_event_counts.get(t["id"], 0)
+                track_lines.append(f"- {t['label']} ({count} events)")
+        except Exception:
+            pass
 
         # Load timeline edges (connections between events)
-        edges_res = supabase.table("case_timeline_edges").select("source_event_id, target_event_id, label").eq("case_id", case_id).execute()
-        edge_data = edges_res.data or []
-
-        # Build event title lookup for edge display
-        event_titles = {e.get("id", ""): e["title"] for e in events if e.get("id")}
-        # Fallback: also try to map by title if id isn't in the select
-        events_by_id_res = supabase.table("case_timeline_events").select("id, title").eq("case_id", case_id).execute()
-        for e in (events_by_id_res.data or []):
-            event_titles[e["id"]] = e["title"]
-
         edge_lines = []
-        for ed in edge_data:
-            src = event_titles.get(ed["source_event_id"], ed["source_event_id"][:8])
-            tgt = event_titles.get(ed["target_event_id"], ed["target_event_id"][:8])
-            lbl = ed.get("label") or "related"
-            edge_lines.append(f"- {src} → {lbl} → {tgt}")
+        try:
+            edges_res = supabase.table("case_timeline_edges").select("source_event_id, target_event_id, label").eq("case_id", case_id).execute()
+            edge_data = edges_res.data or []
+            event_titles = {e["id"]: e["title"] for e in events}
+            for ed in edge_data:
+                src = event_titles.get(ed["source_event_id"], ed["source_event_id"][:8])
+                tgt = event_titles.get(ed["target_event_id"], ed["target_event_id"][:8])
+                lbl = ed.get("label") or "related"
+                edge_lines.append(f"- {src} → {lbl} → {tgt}")
+        except Exception:
+            pass
 
         system_context = f"""You are a seasoned investigative journalist and timeline analyst with decades of experience uncovering patterns in criminal cases — following the money, identifying when key players met, and spotting gaps in official narratives. You're having a conversation with a researcher about their case timeline.
 
