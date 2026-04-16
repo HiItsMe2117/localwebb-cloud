@@ -27,6 +27,7 @@ import {
   SlidersHorizontal,
   Crosshair,
   X,
+  Activity,
 } from 'lucide-react';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
@@ -42,8 +43,9 @@ import AccountPanel from './components/AccountPanel';
 import { useAuth } from './contexts/AuthContext';
 import type { ChatMessage, Community, Case, ScanFinding, TheoryResult, TheorySession, TheoryFollowUpMessage, TheoryEntitySuggestion, InvestigationStep, Source, WebSource } from './types';
 import TheoryInvestigation from './components/TheoryInvestigation';
+import MissionControl from './components/MissionControl';
 
-type View = 'chat' | 'graph' | 'docs' | 'data' | 'cases' | 'account' | 'urls';
+type View = 'mission' | 'chat' | 'graph' | 'docs' | 'data' | 'cases' | 'account' | 'urls';
 
 function AppContent() {
   const { isAdmin, hasAIPrivileges, isRecovering, setIsRecovering, user, refreshSession } = useAuth();
@@ -51,7 +53,7 @@ function AppContent() {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const readOnly = !hasAIPrivileges;
 
-  const [activeView, setActiveView] = useState<View>('chat');
+  const [activeView, setActiveView] = useState<View>('mission');
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -1128,6 +1130,7 @@ function AppContent() {
   }, [activeView]);
 
   const tabs: { id: View; label: string; icon: typeof MessageSquare }[] = [
+    { id: 'mission', label: 'Mission', icon: Activity },
     { id: 'chat', label: 'Chat', icon: MessageSquare },
     { id: 'cases', label: 'Cases', icon: Shield },
     { id: 'graph', label: 'Graph', icon: Network },
@@ -1157,6 +1160,20 @@ function AppContent() {
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col relative overflow-hidden">
+
+        {activeView === 'mission' && (
+          <>
+            <header className="shrink-0 px-5 pt-4 pb-2 bg-black">
+              <h1 className="text-[28px] font-bold tracking-tight text-white">Mission Control</h1>
+            </header>
+            <MissionControl
+              onNavigateToCase={(caseId) => {
+                setActiveCaseId(caseId);
+                setActiveView('cases');
+              }}
+            />
+          </>
+        )}
 
         {activeView === 'chat' && (
           <>
@@ -1854,7 +1871,7 @@ function AppContent() {
           ) : activeCaseId ? (
             <CaseDetail
               caseId={activeCaseId}
-              onBack={() => setActiveCaseId(null)}
+              onBack={(navigateToCaseId?: string) => setActiveCaseId(navigateToCaseId || null)}
               onStatusChange={updateCaseStatus}
               onUpdate={updateCaseFields}
               onDelete={deleteCase}
@@ -1880,6 +1897,7 @@ function AppContent() {
               theoryResult={theoryResult}
               onAcceptTheory={acceptTheory}
               onDismissTheory={dismissTheory}
+              onRefresh={loadCases}
               readOnly={readOnly}
             />
           )

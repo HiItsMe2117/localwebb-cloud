@@ -48,9 +48,9 @@ _MODEL_MAP = {
 # Rate-limit detection
 # ---------------------------------------------------------------------------
 def _is_rate_limit(exc):
-    """Return True if the exception looks like a Gemini 429 / RESOURCE_EXHAUSTED."""
+    """Return True if the exception looks like a Gemini 429 / RESOURCE_EXHAUSTED / 503."""
     msg = f"{type(exc).__name__}: {exc}".lower()
-    return any(kw in msg for kw in ("429", "resource_exhausted", "rate limit", "quota"))
+    return any(kw in msg for kw in ("429", "resource_exhausted", "rate limit", "quota", "503", "unavailable", "overloaded"))
 
 # ---------------------------------------------------------------------------
 # Gemini contents → OpenAI-style messages

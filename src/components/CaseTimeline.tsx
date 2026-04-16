@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow, useViewport } from 'reactflow';
 import type { Node, Edge, NodeChange } from 'reactflow';
-import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare, Users, Bot, Globe } from 'lucide-react';
+import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare, Users, Bot, Globe, FileText } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import EventNode, { EVENT_CATEGORIES, formatEventDate } from './EventNode';
 import { TRACK_COLOR_PALETTE, type TimelineTrack } from '../types';
+import { getFileUrl } from '../utils/files';
 import axios from 'axios';
 
 // ── Timeline auto-layout ────────────────────────────────────────────────────
@@ -400,6 +401,14 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const [isTimelineChatting, setIsTimelineChatting] = useState(false);
   const timelineChatEndRef = useRef<HTMLDivElement>(null);
 
+  // Multi-case overlay
+  const [showChildTimelines, setShowChildTimelines] = useState(false);
+  const [childCases, setChildCases] = useState<{ id: string; title: string }[]>([]);
+  const [isLoadingChildren, setIsLoadingChildren] = useState(false);
+  const [baseNodes, setBaseNodes] = useState<Node[]>([]);
+  const [baseEdges, setBaseEdges] = useState<Edge[]>([]);
+  const [baseTracks, setBaseTracks] = useState<TimelineTrack[]>([]);
+
   // UI
   const [showMiniMap, setShowMiniMap] = useState(() => window.innerWidth >= 768);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -423,6 +432,47 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const hasSavedViewport = useRef(false);
   const viewportSaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const { getViewport, setViewport, fitView } = useReactFlow();
+
+  const toggleChildTimelines = useCallback(async () => {
+    if (showChildTimelines) {
+      setShowChildTimelines(false);
+      setNodes(baseNodes);
+      setEdges(baseEdges);
+      setTracks(baseTracks);
+      setChildCases([]);
+      return;
+    }
+    setIsLoadingChildren(true);
+    try {
+      setBaseNodes([...nodes]);
+      setBaseEdges([...edges]);
+      setBaseTracks([...tracks]);
+      const res = await axios.get(`/api/cases/${caseId}/children/timeline`);
+      if (!res.data.child_cases?.length) {
+        toast('No child cases found');
+        setIsLoadingChildren(false);
+        return;
+      }
+      setChildCases(res.data.child_cases);
+      const allNodes = res.data.nodes || [];
+      setNodes(allNodes);
+      setEdges(res.data.edges || []);
+      setTracks(res.data.tracks || []);
+      setShowChildTimelines(true);
+      // Auto-layout the merged timeline
+      const { positions, yearMarkers: markers } = computeTimelineLayout(allNodes);
+      setYearMarkers(markers);
+      setIsAnimatingLayout(true);
+      setNodes(allNodes.map((n: Node) => ({ ...n, position: positions[n.id] || n.position })));
+      setTimeout(() => setIsAnimatingLayout(false), 600);
+      setTimeout(() => fitView({ padding: 0.3, duration: 500 }), 50);
+    } catch (err) {
+      console.error('Failed to load child timelines:', err);
+      toast.error('Failed to load child case timelines');
+    } finally {
+      setIsLoadingChildren(false);
+    }
+  }, [showChildTimelines, caseId, nodes, edges, tracks, baseNodes, baseEdges, baseTracks, setNodes, setEdges, fitView]);
 
   // ── Load timeline ──────────────────────────────────────────────────────────
 
@@ -917,7 +967,11 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     }
   }, [caseId, researchQuery, isResearching, researchMessages, selectedNodeIds, nodes]);
 
-  const addResearchEvent = useCallback(async (event: { title: string; date: string | null; description: string; category: string }, key: string) => {
+  const addResearchEvent = useCallback(async (
+    event: { title: string; date: string | null; description: string; category: string },
+    key: string,
+    webSources?: { title: string; uri: string; domain: string }[],
+  ) => {
     setAddingEventIndex(key);
     try {
       const vp = getViewport();
@@ -932,6 +986,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         category: event.category || 'general',
         position_x: centerX + offset,
         position_y: centerY + offset,
+        sources: webSources && webSources.length > 0 ? webSources : undefined,
       });
       shouldAutoLayoutAfterLoad.current = true;
       await loadTimeline();
@@ -1069,7 +1124,11 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     }
   }, [caseId, generateTrack, trackQuery, isGeneratingTrack, trackMessages]);
 
-  const addTrackEvent = useCallback(async (event: { title: string; date: string | null; description: string; category: string }, key: string) => {
+  const addTrackEvent = useCallback(async (
+    event: { title: string; date: string | null; description: string; category: string },
+    key: string,
+    webSources?: { title: string; uri: string; domain: string }[],
+  ) => {
     if (!generateTrack) return;
     setAddingTrackEventIndex(key);
     try {
@@ -1085,6 +1144,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         position_x: centerX + offset,
         position_y: centerY + offset,
         track_ids: [generateTrack.id],
+        sources: webSources && webSources.length > 0 ? webSources : undefined,
       });
       shouldAutoLayoutAfterLoad.current = true;
       await loadTimeline();
@@ -1299,7 +1359,33 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               <Users size={14} />
               Generate Track
             </button>
+            <button
+              onClick={toggleChildTimelines}
+              disabled={isLoadingChildren}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-semibold transition-colors ${
+                showChildTimelines
+                  ? 'bg-[#30D158] text-black'
+                  : 'bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)] hover:border-[#30D158]'
+              }`}
+              title={showChildTimelines ? 'Hide child case timelines' : 'Show all child case timelines'}
+            >
+              {isLoadingChildren ? <Loader2 size={14} className="animate-spin" /> : <Globe size={14} />}
+              {showChildTimelines ? 'Hide Children' : 'Show Children'}
+            </button>
           </div>
+
+          {/* Child cases legend */}
+          {showChildTimelines && childCases.length > 0 && (
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-[rgba(235,235,245,0.4)] font-medium">Merged from:</span>
+              <span className="text-[11px] bg-[#30D158]/20 text-[#30D158] px-2 py-0.5 rounded-full font-semibold">This case</span>
+              {childCases.map(cc => (
+                <span key={cc.id} className="text-[11px] bg-[#007AFF]/15 text-[#007AFF] px-2 py-0.5 rounded-full">
+                  {cc.title.length > 25 ? cc.title.slice(0, 25) + '...' : cc.title}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Track pills row */}
           {tracks.length > 0 && (
@@ -1618,66 +1704,160 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               )}
             </div>
 
-            {/* Context menu for event editing */}
-            {contextEvent && !readOnly && (
+            {/* Event detail / edit panel */}
+            {contextEvent && (
               <div
                 ref={contextRef}
-                className="absolute top-4 right-4 z-30 w-72 bg-[#1C1C1E]/95 backdrop-blur-xl border border-[rgba(84,84,88,0.65)] rounded-2xl shadow-2xl overflow-hidden"
+                className="absolute top-4 right-4 z-30 w-80 max-h-[calc(100%-32px)] bg-[#1C1C1E]/95 backdrop-blur-xl border border-[rgba(84,84,88,0.65)] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
               >
-                <div className="p-3 space-y-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">Edit Event</span>
-                    <button onClick={() => setContextEvent(null)} className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors">
-                      <X size={12} className="text-[rgba(235,235,245,0.4)]" />
-                    </button>
+                {/* Header */}
+                <div className="shrink-0 px-4 pt-3 pb-2 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {(() => {
+                      const cat = EVENT_CATEGORIES[contextEvent.data?.category] || EVENT_CATEGORIES.general;
+                      const CatIcon = cat.icon;
+                      return (
+                        <>
+                          <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${cat.color}20` }}>
+                            <CatIcon size={12} style={{ color: cat.color }} />
+                          </div>
+                          <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: cat.color }}>{cat.label}</span>
+                        </>
+                      );
+                    })()}
                   </div>
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={e => setEditTitle(e.target.value)}
-                    placeholder="Title"
-                    className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
-                  />
-                  <input
-                    type="text"
-                    value={editDate}
-                    onChange={e => setEditDate(e.target.value)}
-                    placeholder="Date (YYYY-MM-DD)"
-                    className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors font-mono"
-                  />
-                  <textarea
-                    value={editDescription}
-                    onChange={e => setEditDescription(e.target.value)}
-                    placeholder="Description"
-                    rows={3}
-                    className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors resize-none"
-                  />
-                  <select
-                    value={editCategory}
-                    onChange={e => setEditCategory(e.target.value)}
-                    className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none transition-colors"
-                  >
-                    {Object.entries(EVENT_CATEGORIES).map(([key, { label }]) => (
-                      <option key={key} value={key}>{label}</option>
-                    ))}
-                  </select>
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      onClick={updateEvent}
-                      disabled={isSavingEdit || !editTitle.trim()}
-                      className="flex-1 flex items-center justify-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-3 py-2 rounded-xl text-[12px] font-semibold text-white transition-colors"
-                    >
-                      {isSavingEdit ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                      Save
-                    </button>
-                    <button
-                      onClick={() => deleteEvent(contextEvent.id)}
-                      className="flex items-center justify-center gap-1.5 bg-[#FF453A]/20 hover:bg-[#FF453A]/30 px-3 py-2 rounded-xl text-[12px] font-semibold text-[#FF453A] transition-colors"
-                    >
-                      <Trash2 size={12} />
-                      Delete
-                    </button>
-                  </div>
+                  <button onClick={() => setContextEvent(null)} className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors">
+                    <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+                  </button>
+                </div>
+
+                {/* Scrollable content */}
+                <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+                  {/* Date */}
+                  {contextEvent.data?.event_date && (
+                    <p className="text-[12px] font-mono text-[rgba(235,235,245,0.5)]">
+                      {formatEventDate(contextEvent.data.event_date)}
+                    </p>
+                  )}
+
+                  {/* Title */}
+                  <h3 className="text-[15px] font-bold text-white leading-snug">
+                    {contextEvent.data?.title}
+                  </h3>
+
+                  {/* Description */}
+                  {contextEvent.data?.description ? (
+                    <p className="text-[13px] text-[rgba(235,235,245,0.7)] leading-relaxed whitespace-pre-wrap">
+                      {contextEvent.data.description}
+                    </p>
+                  ) : (
+                    <p className="text-[13px] text-[rgba(235,235,245,0.3)] italic">No description</p>
+                  )}
+
+                  {/* Track dots */}
+                  {contextEvent.data?.trackDots?.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                      {contextEvent.data.trackDots.map((t: { id: string; color: string; label: string }) => (
+                        <span key={t.id} className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${t.color}20`, color: t.color }}>
+                          {t.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Source receipts */}
+                  {contextEvent.data?.sources?.length > 0 && (
+                    <div className="pt-2 border-t border-[rgba(84,84,88,0.35)]">
+                      <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider flex items-center gap-1">
+                        <FileText size={10} /> Sources
+                      </span>
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {contextEvent.data.sources.map((s: { filename?: string; page?: string | number; score?: number; uri?: string; title?: string; domain?: string }, idx: number) => {
+                          if (s.uri) {
+                            return (
+                              <a
+                                key={idx}
+                                href={s.uri}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[11px] bg-[#30D158]/10 hover:bg-[#30D158]/20 text-[#30D158] px-2 py-0.5 rounded-lg transition-colors hover:underline inline-flex items-center gap-1 border border-[#30D158]/20 max-w-full"
+                                title={s.title || s.uri}
+                              >
+                                <Globe size={9} className="shrink-0" />
+                                <span className="truncate">{s.domain || s.title || s.uri}</span>
+                              </a>
+                            );
+                          }
+                          return (
+                            <a
+                              key={idx}
+                              href={getFileUrl(s.filename!, s.page!)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] bg-[#007AFF]/10 hover:bg-[#007AFF]/20 text-[#007AFF] px-2 py-0.5 rounded-lg transition-colors hover:underline inline-flex items-center gap-1 border border-[#007AFF]/20"
+                            >
+                              <Database size={9} />
+                              {s.filename} (p.{s.page})
+                            </a>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Edit section */}
+                  {!readOnly && (
+                    <div className="pt-2 border-t border-[rgba(84,84,88,0.35)] space-y-2">
+                      <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider">Edit</span>
+                      <input
+                        type="text"
+                        value={editTitle}
+                        onChange={e => setEditTitle(e.target.value)}
+                        placeholder="Title"
+                        className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+                      />
+                      <input
+                        type="text"
+                        value={editDate}
+                        onChange={e => setEditDate(e.target.value)}
+                        placeholder="Date (YYYY-MM-DD)"
+                        className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors font-mono"
+                      />
+                      <textarea
+                        value={editDescription}
+                        onChange={e => setEditDescription(e.target.value)}
+                        placeholder="Description"
+                        rows={3}
+                        className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors resize-none"
+                      />
+                      <select
+                        value={editCategory}
+                        onChange={e => setEditCategory(e.target.value)}
+                        className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none transition-colors"
+                      >
+                        {Object.entries(EVENT_CATEGORIES).map(([key, { label }]) => (
+                          <option key={key} value={key}>{label}</option>
+                        ))}
+                      </select>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={updateEvent}
+                          disabled={isSavingEdit || !editTitle.trim()}
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-3 py-2 rounded-xl text-[12px] font-semibold text-white transition-colors"
+                        >
+                          {isSavingEdit ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                          Save
+                        </button>
+                        <button
+                          onClick={() => deleteEvent(contextEvent.id)}
+                          className="flex items-center justify-center gap-1.5 bg-[#FF453A]/20 hover:bg-[#FF453A]/30 px-3 py-2 rounded-xl text-[12px] font-semibold text-[#FF453A] transition-colors"
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -2045,47 +2225,95 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
             )}
 
             {/* Inline edit panel for list view */}
-            {contextEvent && !readOnly && viewMode === 'list' && (
-              <div className="sticky bottom-0 bg-[#1C1C1E]/95 backdrop-blur-xl border-t border-[rgba(84,84,88,0.65)] p-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={e => setEditTitle(e.target.value)}
-                    placeholder="Title"
-                    className="flex-1 min-w-[200px] bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
-                  />
-                  <input
-                    type="text"
-                    value={editDate}
-                    onChange={e => setEditDate(e.target.value)}
-                    placeholder="YYYY-MM-DD"
-                    className="w-32 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors font-mono"
-                  />
-                  <select
-                    value={editCategory}
-                    onChange={e => setEditCategory(e.target.value)}
-                    className="bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none transition-colors"
-                  >
-                    {Object.entries(EVENT_CATEGORIES).map(([key, { label }]) => (
-                      <option key={key} value={key}>{label}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={updateEvent}
-                    disabled={isSavingEdit || !editTitle.trim()}
-                    className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-3 py-2 rounded-xl text-[12px] font-semibold text-white transition-colors"
-                  >
-                    {isSavingEdit ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                    Save
-                  </button>
-                  <button
-                    onClick={() => setContextEvent(null)}
-                    className="p-2 hover:bg-[#2C2C2E] rounded-xl transition-colors"
-                  >
+            {contextEvent && viewMode === 'list' && (
+              <div className="sticky bottom-0 bg-[#1C1C1E]/95 backdrop-blur-xl border-t border-[rgba(84,84,88,0.65)] p-3 space-y-2">
+                {/* Detail view */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[14px] font-bold text-white leading-snug">{contextEvent.data?.title}</p>
+                    {contextEvent.data?.event_date && (
+                      <p className="text-[11px] font-mono text-[rgba(235,235,245,0.4)] mt-0.5">{formatEventDate(contextEvent.data.event_date)}</p>
+                    )}
+                  </div>
+                  <button onClick={() => setContextEvent(null)} className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors shrink-0">
                     <X size={14} className="text-[rgba(235,235,245,0.4)]" />
                   </button>
                 </div>
+                {contextEvent.data?.description && (
+                  <p className="text-[13px] text-[rgba(235,235,245,0.7)] leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto">
+                    {contextEvent.data.description}
+                  </p>
+                )}
+                {/* Source receipts */}
+                {contextEvent.data?.sources?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {contextEvent.data.sources.map((s: { filename?: string; page?: string | number; uri?: string; title?: string; domain?: string }, idx: number) => {
+                      if (s.uri) {
+                        return (
+                          <a
+                            key={idx}
+                            href={s.uri}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] bg-[#30D158]/10 hover:bg-[#30D158]/20 text-[#30D158] px-2 py-0.5 rounded-lg transition-colors hover:underline inline-flex items-center gap-1 border border-[#30D158]/20 max-w-full"
+                            title={s.title || s.uri}
+                          >
+                            <Globe size={9} className="shrink-0" />
+                            <span className="truncate">{s.domain || s.title || s.uri}</span>
+                          </a>
+                        );
+                      }
+                      return (
+                        <a
+                          key={idx}
+                          href={getFileUrl(s.filename!, s.page!)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] bg-[#007AFF]/10 hover:bg-[#007AFF]/20 text-[#007AFF] px-2 py-0.5 rounded-lg transition-colors hover:underline inline-flex items-center gap-1 border border-[#007AFF]/20"
+                        >
+                          <Database size={9} />
+                          {s.filename} (p.{s.page})
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+                {/* Edit controls */}
+                {!readOnly && (
+                  <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-[rgba(84,84,88,0.35)]">
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={e => setEditTitle(e.target.value)}
+                      placeholder="Title"
+                      className="flex-1 min-w-[200px] bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+                    />
+                    <input
+                      type="text"
+                      value={editDate}
+                      onChange={e => setEditDate(e.target.value)}
+                      placeholder="YYYY-MM-DD"
+                      className="w-32 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors font-mono"
+                    />
+                    <select
+                      value={editCategory}
+                      onChange={e => setEditCategory(e.target.value)}
+                      className="bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white focus:outline-none transition-colors"
+                    >
+                      {Object.entries(EVENT_CATEGORIES).map(([key, { label }]) => (
+                        <option key={key} value={key}>{label}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={updateEvent}
+                      disabled={isSavingEdit || !editTitle.trim()}
+                      className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-3 py-2 rounded-xl text-[12px] font-semibold text-white transition-colors"
+                    >
+                      {isSavingEdit ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      Save
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2184,7 +2412,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                               onClick={async () => {
                                 for (let ei = 0; ei < (msg.events || []).length; ei++) {
                                   const ev = msg.events![ei];
-                                  await addTrackEvent(ev, `${i}-${ei}`);
+                                  await addTrackEvent(ev, `${i}-${ei}`, msg.webSources);
                                 }
                               }}
                               className="text-[10px] font-semibold transition-colors"
@@ -2214,7 +2442,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                       )}
                                     </div>
                                     <button
-                                      onClick={() => addTrackEvent(ev, key)}
+                                      onClick={() => addTrackEvent(ev, key, msg.webSources)}
                                       disabled={addingTrackEventIndex === key}
                                       className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors disabled:opacity-50"
                                       style={{ background: `${generateTrack.color}30`, color: generateTrack.color }}
@@ -2371,7 +2599,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                       )}
                                     </div>
                                     <button
-                                      onClick={() => addResearchEvent(ev, key)}
+                                      onClick={() => addResearchEvent(ev, key, msg.webSources)}
                                       disabled={addingEventIndex === key}
                                       className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-[#FF9F0A]/20 hover:bg-[#FF9F0A]/30 text-[#FF9F0A] text-[10px] font-semibold transition-colors disabled:opacity-50"
                                     >

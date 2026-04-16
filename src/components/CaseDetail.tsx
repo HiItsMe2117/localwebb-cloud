@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical, Globe, Network, Calendar } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical, Globe, Network, Calendar, ChevronRight, FolderOpen } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
 import CaseTimeline from './CaseTimeline';
@@ -9,9 +9,26 @@ import { CASE_CATEGORIES } from '../types';
 import axios from 'axios';
 import { getFileUrl } from '../utils/files';
 
+interface BreadcrumbItem {
+  id: string;
+  title: string;
+}
+
+interface CaseChild {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  status: string;
+  depth: number;
+  entity_count: number;
+  evidence_count: number;
+  timeline_count: number;
+}
+
 interface CaseDetailProps {
   caseId: string;
-  onBack: () => void;
+  onBack: (navigateToCaseId?: string) => void;
   onStatusChange: (caseId: string, status: string) => void;
   onUpdate: (caseId: string, fields: Partial<Pick<Case, 'title' | 'category' | 'summary' | 'is_public'>>) => Promise<void>;
   onDelete: (caseId: string) => void;
@@ -92,6 +109,9 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
   const [theoryText, setTheoryText] = useState('');
   const [theoryMode, setTheoryMode] = useState<'files_only' | 'files_web'>('files_only');
   const [discoveredHubs, setDiscoveredHubs] = useState<any[]>([]);
+  const [breadcrumb, setBreadcrumb] = useState<BreadcrumbItem[]>([]);
+  const [children, setChildren] = useState<CaseChild[]>([]);
+  const [evidenceLimit, setEvidenceLimit] = useState(10);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const autoResize = useCallback((el: HTMLTextAreaElement | null) => {
@@ -116,6 +136,9 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
       const res = await axios.get(`/api/cases/${caseId}`);
       setCaseData(res.data.case);
       setEvidence(res.data.evidence || []);
+      setBreadcrumb(res.data.breadcrumb || []);
+      setChildren(res.data.children || []);
+      setEvidenceLimit(10);
     } catch (err) {
       console.error('Failed to load case:', err);
     } finally {
@@ -314,7 +337,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
     return (
       <div className="flex-1 flex flex-col items-center justify-center">
         <p className="text-[rgba(235,235,245,0.6)]">Case not found</p>
-        <button onClick={onBack} className="mt-4 text-[#007AFF]">Go back</button>
+        <button onClick={() => onBack()} className="mt-4 text-[#007AFF]">Go back</button>
       </div>
     );
   }
@@ -329,7 +352,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
       <header className="shrink-0 px-5 pt-4 pb-3 bg-black border-b border-[rgba(84,84,88,0.65)]">
         <div className="flex items-center gap-3 mb-3">
           <button
-            onClick={onBack}
+            onClick={() => onBack()}
             className="w-8 h-8 rounded-full bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] flex items-center justify-center hover:bg-[#2C2C2E] transition-colors"
           >
             <ArrowLeft size={16} className="text-[rgba(235,235,245,0.6)]" />
@@ -395,6 +418,25 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
                     </button>
                   )}
                 </div>
+                {breadcrumb.length > 1 && (
+                  <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                    {breadcrumb.slice(0, -1).map((crumb) => (
+                      <span key={crumb.id} className="flex items-center gap-1">
+                        <button
+                          onClick={() => onBack(crumb.id)}
+                          className="text-[11px] text-[#007AFF] hover:underline truncate max-w-[120px]"
+                          title={crumb.title}
+                        >
+                          {crumb.title}
+                        </button>
+                        <ChevronRight size={10} className="text-[rgba(235,235,245,0.2)]" />
+                      </span>
+                    ))}
+                    <span className="text-[11px] text-[rgba(235,235,245,0.3)] truncate max-w-[120px]">
+                      {breadcrumb[breadcrumb.length - 1].title}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 mt-1">
                   <span
                     className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
@@ -575,6 +617,49 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
             )}
           </div>
 
+          {/* Sub-cases */}
+          {children.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-[11px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider flex items-center gap-1.5">
+                <FolderOpen size={12} />
+                Sub-cases ({children.length})
+              </h3>
+              <div className="grid gap-2">
+                {children.map((child) => {
+                  const childConfig = CASE_CATEGORIES[child.category] || CASE_CATEGORIES.other;
+                  return (
+                    <button
+                      key={child.id}
+                      onClick={() => onBack(child.id)}
+                      className="w-full text-left bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-xl p-3 hover:bg-[#2C2C2E] hover:border-[rgba(84,84,88,0.9)] transition-all group"
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <span
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                          style={{ backgroundColor: childConfig.color + '20', color: childConfig.color }}
+                        >
+                          {childConfig.label}
+                        </span>
+                        <span className="text-[13px] font-semibold text-white group-hover:text-[#007AFF] transition-colors truncate">
+                          {child.title}
+                        </span>
+                        <ChevronRight size={14} className="ml-auto shrink-0 text-[rgba(235,235,245,0.2)] group-hover:text-[#007AFF] transition-colors" />
+                      </div>
+                      {child.summary && (
+                        <p className="text-[11px] text-[rgba(235,235,245,0.4)] line-clamp-2 mb-1.5">{child.summary}</p>
+                      )}
+                      <div className="flex items-center gap-3 text-[10px] text-[rgba(235,235,245,0.3)]">
+                        <span>{child.entity_count} entities</span>
+                        <span>{child.evidence_count} evidence</span>
+                        <span>{child.timeline_count} events</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Active investigation stream */}
           {isInvestigating && (
             <div className="bg-[#1C1C1E] border border-[#007AFF]/30 rounded-2xl p-4 space-y-3">
@@ -732,8 +817,8 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
             </div>
           )}
 
-          {/* Evidence entries */}
-          {evidence.map((ev) => {
+          {/* Evidence entries (paginated) */}
+          {evidence.slice(0, evidenceLimit).map((ev) => {
             const isSelected = selectedCards.has(ev.id);
             return (
               <div
@@ -815,9 +900,54 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
                   <EvidenceText content={ev.content} />
                 </div>
                 )}
+                {ev.sources && ev.sources.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-[rgba(84,84,88,0.35)]">
+                    <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.3)] uppercase tracking-wider flex items-center gap-1 w-full mb-0.5">
+                      <FileText size={10} /> Sources
+                    </span>
+                    {ev.sources.map((s: { filename?: string; page?: number | string; score?: number; uri?: string; title?: string; domain?: string }, idx: number) => {
+                      if (s.uri) {
+                        return (
+                          <a
+                            key={idx}
+                            href={s.uri}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] bg-[#30D158]/10 hover:bg-[#30D158]/20 text-[#30D158] px-2 py-0.5 rounded-lg transition-colors hover:underline inline-flex items-center gap-1 border border-[#30D158]/20 max-w-full"
+                            title={s.title || s.uri}
+                          >
+                            <Globe size={9} className="shrink-0" />
+                            <span className="truncate max-w-[220px]">{s.domain || s.title || s.uri}</span>
+                          </a>
+                        );
+                      }
+                      return (
+                        <a
+                          key={idx}
+                          href={getFileUrl(s.filename!, s.page!)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] bg-[#007AFF]/10 hover:bg-[#007AFF]/20 text-[#007AFF] px-2 py-0.5 rounded-lg transition-colors hover:underline inline-flex items-center gap-1 border border-[#007AFF]/20"
+                        >
+                          <Database size={9} />
+                          {s.filename} (p.{s.page})
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
+
+          {evidence.length > evidenceLimit && (
+            <button
+              onClick={() => setEvidenceLimit(prev => prev + 10)}
+              className="w-full py-2.5 rounded-xl border border-[rgba(84,84,88,0.65)] text-[13px] text-[#007AFF] font-medium hover:bg-[#1C1C1E] transition-colors"
+            >
+              Show more ({evidence.length - evidenceLimit} remaining)
+            </button>
+          )}
 
           {evidence.length === 0 && !isInvestigating && (
             <div className="text-center py-10">

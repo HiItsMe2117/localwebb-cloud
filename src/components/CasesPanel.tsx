@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
-import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus, FlaskConical, ChevronDown, AlertTriangle, HelpCircle, Heart, Globe } from 'lucide-react';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus, FlaskConical, ChevronDown, AlertTriangle, HelpCircle, Heart, Globe, FolderOpen, Folder, Merge, Trash2, CheckSquare, Square, CornerDownRight } from 'lucide-react';
+import { toast } from 'sonner';
 import type { Case, ScanFinding, TheoryResult } from '../types';
 import { CASE_CATEGORIES } from '../types';
 import InvestigationSteps from './InvestigationSteps';
@@ -20,6 +21,7 @@ interface CasesPanelProps {
   theoryResult: TheoryResult | null;
   onAcceptTheory: () => void;
   onDismissTheory: () => void;
+  onRefresh?: () => void;
   readOnly?: boolean;
 }
 
@@ -283,10 +285,125 @@ function CaseCard({ caseData, onOpen }: {
   );
 }
 
+interface CaseTreeNode {
+  case: Case & { liked?: boolean; likes_count?: number; owner_username?: string };
+  children: CaseTreeNode[];
+}
+
+function buildCaseTree(cases: Case[]): CaseTreeNode[] {
+  const map = new Map<string, CaseTreeNode>();
+  for (const c of cases) {
+    map.set(c.id, { case: c, children: [] });
+  }
+  const roots: CaseTreeNode[] = [];
+  for (const c of cases) {
+    const node = map.get(c.id)!;
+    if (c.parent_case_id && map.has(c.parent_case_id)) {
+      map.get(c.parent_case_id)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  return roots;
+}
+
+function CaseTreeItem({ node, depth = 0, onOpen, selectedIds, onToggleSelect, selectMode }: {
+  node: CaseTreeNode;
+  depth?: number;
+  onOpen: (id: string) => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  selectMode: boolean;
+}) {
+  const selected = selectedIds.has(node.case.id);
+  const [expanded, setExpanded] = useState(depth === 0 && node.children.length > 0);
+  const hasChildren = node.children.length > 0;
+  const c = node.case;
+  const config = CASE_CATEGORIES[c.category] || CASE_CATEGORIES.other;
+
+  return (
+    <div>
+      <div
+        className={`flex items-center gap-2 group transition-colors rounded-xl px-2 py-2 ${
+          selected ? 'bg-[#007AFF]/10 border border-[#007AFF]/30' : 'hover:bg-[#1C1C1E]'
+        }`}
+        style={{ paddingLeft: `${depth * 20 + 8}px` }}
+      >
+        {selectMode && (
+          <button onClick={() => onToggleSelect(c.id)} className="shrink-0">
+            {selected ? (
+              <CheckSquare size={16} className="text-[#007AFF]" />
+            ) : (
+              <Square size={16} className="text-[rgba(235,235,245,0.3)]" />
+            )}
+          </button>
+        )}
+
+        {hasChildren ? (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md hover:bg-[#2C2C2E] transition-colors"
+          >
+            {expanded ? (
+              <FolderOpen size={14} className="text-[#FF9F0A]" />
+            ) : (
+              <Folder size={14} className="text-[#FF9F0A]" />
+            )}
+          </button>
+        ) : (
+          <div className="shrink-0 w-6 h-6 flex items-center justify-center">
+            {depth > 0 ? (
+              <CornerDownRight size={12} className="text-[rgba(235,235,245,0.15)]" />
+            ) : (
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: config.color + '60' }} />
+            )}
+          </div>
+        )}
+
+        <button
+          onClick={() => onOpen(c.id)}
+          className="flex-1 min-w-0 text-left flex items-center gap-2"
+        >
+          <span className="text-[14px] font-medium text-white truncate">{c.title}</span>
+          <CategoryBadge category={c.category} />
+          {c.status === 'closed' && (
+            <span className="text-[10px] text-[rgba(235,235,245,0.3)] font-mono">CLOSED</span>
+          )}
+        </button>
+
+        {hasChildren && (
+          <span className="text-[11px] text-[rgba(235,235,245,0.25)] font-mono shrink-0">
+            {node.children.length}
+          </span>
+        )}
+
+        <ChevronRight size={14} className="text-[rgba(235,235,245,0.15)] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
+
+      {expanded && hasChildren && (
+        <div>
+          {node.children.map(child => (
+            <CaseTreeItem
+              key={child.case.id}
+              node={child}
+              depth={depth + 1}
+              onOpen={onOpen}
+              selectedIds={selectedIds}
+              onToggleSelect={onToggleSelect}
+              selectMode={selectMode}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CasesPanel({
   cases, scanFindings, isScanning,
   onScan, onAccept, onDismiss, onAcceptAll, onOpenCase, onCreateCase,
   onTheoryInvestigate, isTestingTheory, theoryResult, onAcceptTheory, onDismissTheory,
+  onRefresh,
   readOnly = false,
 }: CasesPanelProps) {
   const [activeTab, setActiveTab] = useState<'my-cases' | 'explore'>('my-cases');
@@ -302,6 +419,49 @@ export default function CasesPanel({
   const [theoryMode, setTheoryMode] = useState<'files_only' | 'files_web'>('files_only');
   const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
   const theoryTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // ── Merge / select mode ──
+  const [selectMode, setSelectMode] = useState(false);
+  const [mergeSelection, setMergeSelection] = useState<Set<string>>(new Set());
+  const [isMerging, setIsMerging] = useState(false);
+  const [mergeTarget, setMergeTarget] = useState<string | null>(null);
+
+  const toggleMergeSelect = (id: string) => {
+    setMergeSelection(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleMerge = async () => {
+    if (!mergeTarget || mergeSelection.size < 1) return;
+    const sourceIds = Array.from(mergeSelection).filter(id => id !== mergeTarget);
+    if (sourceIds.length === 0) {
+      toast.error('Select at least one case to merge into the target');
+      return;
+    }
+    if (!window.confirm(`Merge ${sourceIds.length} case(s) into "${cases.find(c => c.id === mergeTarget)?.title}"? Source cases will be deleted.`)) return;
+    setIsMerging(true);
+    try {
+      await axios.post(`/api/cases/${mergeTarget}/merge`, { source_case_ids: sourceIds });
+      toast.success(`Merged ${sourceIds.length} case(s) successfully`);
+      setSelectMode(false);
+      setMergeSelection(new Set());
+      setMergeTarget(null);
+      // Trigger refresh via parent — cases prop will update
+      onRefresh?.();
+    } catch (err) {
+      console.error('Merge failed:', err);
+      toast.error('Merge failed');
+    } finally {
+      setIsMerging(false);
+    }
+  };
+
+  // ── Build tree from flat case list ──
+  const caseTree = useMemo(() => buildCaseTree(cases), [cases]);
 
   const loadExploreCases = async (query = '') => {
     setIsExploreLoading(true);
@@ -321,8 +481,6 @@ export default function CasesPanel({
     }
   }, [activeTab, searchQuery]);
 
-  const activeCases = cases.filter(c => c.status === 'active');
-  const closedCases = cases.filter(c => c.status === 'closed');
   const hasFindings = scanFindings.length > 0;
   const hasCases = cases.length > 0;
 
@@ -342,6 +500,20 @@ export default function CasesPanel({
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-[28px] font-bold tracking-tight text-white">Cases</h1>
           {!readOnly && <div className="flex items-center gap-2">
+            {hasCases && (
+              <button
+                onClick={() => {
+                  setSelectMode(v => !v);
+                  if (selectMode) { setMergeSelection(new Set()); setMergeTarget(null); }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
+                  selectMode ? 'bg-[#FF9F0A] text-black' : 'bg-[#1C1C1E] text-[rgba(235,235,245,0.6)] border border-[rgba(84,84,88,0.65)] hover:bg-[#2C2C2E]'
+                }`}
+              >
+                <Merge size={14} />
+                {selectMode ? 'Cancel' : 'Manage'}
+              </button>
+            )}
             <button
               onClick={() => { setShowTheoryForm(v => !v); setShowCreateForm(false); }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
@@ -627,24 +799,85 @@ export default function CasesPanel({
                   </div>
                 )}
 
-                {activeCases.length > 0 && (
-                  <div className="space-y-3">
-                    <h2 className="text-[13px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">
-                      Active ({activeCases.length})
-                    </h2>
-                    {activeCases.map(c => (
-                      <CaseCard key={c.id} caseData={c} onOpen={() => onOpenCase(c.id)} />
-                    ))}
+                {/* Merge toolbar */}
+                {selectMode && mergeSelection.size > 0 && (
+                  <div className="bg-[#1C1C1E] border border-[#FF9F0A]/30 rounded-2xl p-4 space-y-3 mb-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[13px] font-semibold text-white">
+                        {mergeSelection.size} case{mergeSelection.size !== 1 ? 's' : ''} selected
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            const ids = Array.from(mergeSelection);
+                            if (ids.length < 1) return;
+                            if (window.confirm(`Delete ${ids.length} selected case(s)? This cannot be undone.`)) {
+                              Promise.all(ids.map(id => axios.delete(`/api/cases/${id}`))).then(() => {
+                                toast.success(`Deleted ${ids.length} case(s)`);
+                                setSelectMode(false);
+                                setMergeSelection(new Set());
+                                onRefresh?.();
+                              }).catch(() => toast.error('Delete failed'));
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-semibold bg-[#FF453A]/20 text-[#FF453A] hover:bg-[#FF453A]/30 transition-colors"
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+
+                    {mergeSelection.size >= 2 && (
+                      <div className="space-y-2 border-t border-[rgba(84,84,88,0.35)] pt-3">
+                        <p className="text-[11px] text-[rgba(235,235,245,0.4)]">Merge into:</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {Array.from(mergeSelection).map(id => {
+                            const c = cases.find(cc => cc.id === id);
+                            if (!c) return null;
+                            return (
+                              <button
+                                key={id}
+                                onClick={() => setMergeTarget(id)}
+                                className={`text-[12px] px-3 py-1 rounded-full transition-colors ${
+                                  mergeTarget === id
+                                    ? 'bg-[#30D158]/20 text-[#30D158] ring-1 ring-[#30D158]/50'
+                                    : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white'
+                                }`}
+                              >
+                                {c.title.length > 35 ? c.title.slice(0, 35) + '...' : c.title}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {mergeTarget && (
+                          <button
+                            onClick={handleMerge}
+                            disabled={isMerging}
+                            className="w-full flex items-center justify-center gap-2 bg-[#FF9F0A] hover:bg-[#FF9F0A]/80 text-black px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors disabled:opacity-50"
+                          >
+                            {isMerging ? <Loader2 size={14} className="animate-spin" /> : <Merge size={14} />}
+                            Merge {mergeSelection.size - 1} case{mergeSelection.size - 1 !== 1 ? 's' : ''} into selected
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {closedCases.length > 0 && (
-                  <div className="space-y-3">
-                    <h2 className="text-[13px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">
-                      Closed ({closedCases.length})
-                    </h2>
-                    {closedCases.map(c => (
-                      <CaseCard key={c.id} caseData={c} onOpen={() => onOpenCase(c.id)} />
+                {/* Case tree */}
+                {hasCases && (
+                  <div className="space-y-1">
+                    {caseTree.map(node => (
+                      <CaseTreeItem
+                        key={node.case.id}
+                        node={node}
+                        depth={0}
+                        onOpen={onOpenCase}
+                        selectedIds={mergeSelection}
+                        onToggleSelect={toggleMergeSelect}
+                        selectMode={selectMode}
+                      />
                     ))}
                   </div>
                 )}

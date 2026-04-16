@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow } from 'reactflow';
 import type { Node, Edge, Connection } from 'reactflow';
-import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, AlertTriangle, Globe, Database, StickyNote, Paperclip, ExternalLink } from 'lucide-react';
+import { Search, Plus, Minus, X, Expand, Trash2, Loader2, Share2, Copy, Sparkles, Send, Link2, MessageCircle, FileText, Check, MousePointerClick, Map as MapIcon, ChevronDown, ChevronUp, Circle, Lasso, RotateCw, RotateCcw, Maximize2, Minimize2, Bot, AlertTriangle, Globe, Database, StickyNote, Paperclip, ExternalLink, Network } from 'lucide-react';
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide } from 'd3-force';
 import NexusCanvas from './NexusCanvas';
 import EdgeEvidencePanel from './EdgeEvidencePanel';
@@ -151,6 +151,45 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const [layoutMode, setLayoutMode] = useState<'manual' | 'semantic'>('manual');
   const [isComputingLayout, setIsComputingLayout] = useState(false);
   const savedPositions = useRef<Record<string, { x: number; y: number }>>({});
+
+  // Multi-case overlay: load child cases' graphs merged together
+  const [showChildGraphs, setShowChildGraphs] = useState(false);
+  const [childCases, setChildCases] = useState<{ id: string; title: string }[]>([]);
+  const [isLoadingChildren, setIsLoadingChildren] = useState(false);
+  const [baseNodes, setBaseNodes] = useState<Node[]>([]);
+  const [baseEdges, setBaseEdges] = useState<Edge[]>([]);
+
+  const toggleChildGraphs = useCallback(async () => {
+    if (showChildGraphs) {
+      // Revert to base graph
+      setShowChildGraphs(false);
+      setNodes(baseNodes);
+      setEdges(baseEdges);
+      setChildCases([]);
+      return;
+    }
+    setIsLoadingChildren(true);
+    try {
+      // Save current state as base
+      setBaseNodes([...nodes]);
+      setBaseEdges([...edges]);
+      const res = await axios.get(`/api/cases/${caseId}/children/graph`);
+      if (!res.data.child_cases?.length) {
+        toast('No child cases found');
+        setIsLoadingChildren(false);
+        return;
+      }
+      setChildCases(res.data.child_cases);
+      setNodes(res.data.nodes || []);
+      setEdges(res.data.edges || []);
+      setShowChildGraphs(true);
+    } catch (err) {
+      console.error('Failed to load child graphs:', err);
+      toast.error('Failed to load child case graphs');
+    } finally {
+      setIsLoadingChildren(false);
+    }
+  }, [showChildGraphs, caseId, nodes, edges, baseNodes, baseEdges, setNodes, setEdges]);
 
   // Track pinned node IDs for quick lookups
   const pinnedIds = useMemo(() => new Set(nodes.map(n => n.id)), [nodes]);
@@ -1451,7 +1490,29 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             >
               <Sparkles size={16} />
             </button>
+            <button
+              onClick={toggleChildGraphs}
+              disabled={isLoadingChildren}
+              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
+                showChildGraphs ? 'bg-[#30D158] text-black' : 'bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.4)] hover:border-[#30D158]'
+              }`}
+              title={showChildGraphs ? 'Hide child case graphs' : 'Show all child case graphs'}
+            >
+              {isLoadingChildren ? <Loader2 size={16} className="animate-spin" /> : <Network size={16} />}
+            </button>
           </div>
+
+          {showChildGraphs && childCases.length > 0 && (
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-[rgba(235,235,245,0.4)] font-medium">Showing:</span>
+              <span className="text-[11px] bg-[#30D158]/20 text-[#30D158] px-2 py-0.5 rounded-full font-semibold">This case</span>
+              {childCases.map(cc => (
+                <span key={cc.id} className="text-[11px] bg-[#007AFF]/15 text-[#007AFF] px-2 py-0.5 rounded-full">
+                  {cc.title.length > 25 ? cc.title.slice(0, 25) + '...' : cc.title}
+                </span>
+              ))}
+            </div>
+          )}
 
           {showCreateForm && (
             <div className="mt-2 flex items-center gap-2">

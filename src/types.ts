@@ -58,6 +58,9 @@ export interface Case {
   entities: string[];
   suggested_questions: string[];
   is_public: boolean;
+  parent_case_id: string | null;
+  depth: number;
+  operational_question: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -1456,7 +1456,8 @@ async def verify_case_ownership(case_id: str, user, write: bool = True):
     is_owner = user is not None and case.get("user_id") == str(user.id)
     is_public = case.get("is_public", False)
 
-    if write and not is_owner:
+    is_unowned_public = is_public and case.get("user_id") is None
+    if write and not is_owner and not is_unowned_public:
         raise HTTPException(status_code=403, detail="You do not have permission to modify this case")
     
     if not write and not (is_owner or is_public):
@@ -1523,11 +1524,41 @@ async def get_case(case_id: str, user = Depends(optional_user)):
         if not case_res.data:
             return JSONResponse(status_code=404, content={"error": "Case not found"})
 
+        case_data = case_res.data[0]
         evidence_res = supabase.table("case_evidence").select("*").eq("case_id", case_id).order("created_at", desc=True).execute()
 
+        # Build breadcrumb trail (walk up parent_case_id, max 3 hops)
+        breadcrumb = [{"id": case_data["id"], "title": case_data["title"]}]
+        current = case_data
+        for _ in range(3):
+            pid = current.get("parent_case_id")
+            if not pid:
+                break
+            parent_res = supabase.table("cases").select("id, title, parent_case_id").eq("id", pid).execute()
+            if not parent_res.data:
+                break
+            current = parent_res.data[0]
+            breadcrumb.insert(0, {"id": current["id"], "title": current["title"]})
+
+        # Fetch child cases with counts
+        children_res = supabase.table("cases").select("id, title, category, summary, status, depth").eq("parent_case_id", case_id).order("created_at").execute()
+        children = []
+        for child in (children_res.data or []):
+            entity_count = supabase.table("case_graph_entities").select("id", count="exact").eq("case_id", child["id"]).execute()
+            evidence_count = supabase.table("case_evidence").select("id", count="exact").eq("case_id", child["id"]).execute()
+            timeline_count = supabase.table("case_timeline_events").select("id", count="exact").eq("case_id", child["id"]).execute()
+            children.append({
+                **child,
+                "entity_count": entity_count.count or 0,
+                "evidence_count": evidence_count.count or 0,
+                "timeline_count": timeline_count.count or 0,
+            })
+
         return {
-            "case": case_res.data[0],
+            "case": case_data,
             "evidence": evidence_res.data or [],
+            "breadcrumb": breadcrumb,
+            "children": children,
         }
     except HTTPException:
         raise
@@ -1606,7 +1637,11 @@ async def investigate_case(case_id: str, user = Depends(require_paid)):
                     if data.get("type") == "text":
                         full_text += data.get("text", "")
                     elif data.get("type") == "sources":
-                        all_sources = data.get("sources", [])
+                        # File-document sources (shape: {filename, page, score}) — merge into unified array
+                        all_sources = all_sources + (data.get("sources", []) or [])
+                    elif data.get("type") == "web_sources":
+                        # Web sources (shape: {title, uri, domain}) — merge into unified array
+                        all_sources = all_sources + (data.get("web_sources", []) or [])
                     elif data.get("type") == "usage":
                         # Log usage from stream
                         usage_dict = data.get("usage", {})
@@ -1806,6 +1841,305 @@ async def delete_case(case_id: str, user = Depends(require_user)):
 
         supabase.table("cases").delete().eq("id", case_id).execute()
         return {"status": "deleted"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/merge")
+async def merge_cases(case_id: str, request: Request, user = Depends(require_user)):
+    """Merge one or more source cases INTO the target case_id.
+
+    Copies all entities, edges, timeline events, timeline edges, tracks,
+    evidence, and sticky notes from each source into the target.
+    Source cases are then deleted.
+    """
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        body = await request.json()
+        source_ids: list = body.get("source_case_ids", [])
+        if not source_ids:
+            return JSONResponse(status_code=400, content={"error": "source_case_ids required"})
+
+        # Verify ownership of target + all sources
+        await verify_case_ownership(case_id, user, write=True)
+        for sid in source_ids:
+            await verify_case_ownership(sid, user, write=True)
+
+        # ── Merge graph entities ──
+        for sid in source_ids:
+            rows = supabase.table("case_graph_entities").select("*").eq("case_id", sid).execute().data or []
+            for r in rows:
+                entry = {"case_id": case_id, "node_id": r["node_id"]}
+                if r.get("position_x") is not None:
+                    entry["position_x"] = r["position_x"]
+                if r.get("position_y") is not None:
+                    entry["position_y"] = r["position_y"]
+                supabase.table("case_graph_entities").upsert(entry, on_conflict="case_id,node_id").execute()
+
+        # ── Merge graph edges ──
+        for sid in source_ids:
+            rows = supabase.table("case_graph_edges").select("*").eq("case_id", sid).execute().data or []
+            for r in rows:
+                entry = {
+                    "case_id": case_id,
+                    "source_node_id": r["source_node_id"],
+                    "target_node_id": r["target_node_id"],
+                    "label": r.get("label", ""),
+                }
+                supabase.table("case_graph_edges").upsert(entry, on_conflict="case_id,source_node_id,target_node_id").execute()
+
+        # ── Merge timeline tracks (create new ones in target) ──
+        track_id_map: dict = {}  # old_track_id → new_track_id
+        for sid in source_ids:
+            tracks = supabase.table("case_timeline_tracks").select("*").eq("case_id", sid).execute().data or []
+            for t in tracks:
+                new_track = {
+                    "case_id": case_id,
+                    "label": t["label"],
+                    "color": t.get("color", "#60a5fa"),
+                }
+                res = supabase.table("case_timeline_tracks").insert(new_track).execute()
+                if res.data:
+                    track_id_map[t["id"]] = res.data[0]["id"]
+
+        # ── Merge timeline events ──
+        event_id_map: dict = {}  # old_event_id → new_event_id
+        for sid in source_ids:
+            events = supabase.table("case_timeline_events").select("*").eq("case_id", sid).execute().data or []
+            for ev in events:
+                new_ev = {
+                    "case_id": case_id,
+                    "title": ev["title"],
+                    "event_date": ev.get("event_date"),
+                    "description": ev.get("description", ""),
+                    "category": ev.get("category", "general"),
+                    "source_graph_node_id": ev.get("source_graph_node_id"),
+                    "position_x": ev.get("position_x", 0),
+                    "position_y": ev.get("position_y", 0),
+                    "sources": ev.get("sources"),
+                }
+                res = supabase.table("case_timeline_events").insert(new_ev).execute()
+                if res.data:
+                    event_id_map[ev["id"]] = res.data[0]["id"]
+                    # Remap track assignments
+                    old_mappings = supabase.table("case_timeline_event_tracks").select("track_id").eq("event_id", ev["id"]).execute().data or []
+                    for m in old_mappings:
+                        new_tid = track_id_map.get(m["track_id"])
+                        if new_tid:
+                            supabase.table("case_timeline_event_tracks").insert({"event_id": res.data[0]["id"], "track_id": new_tid}).execute()
+
+        # ── Merge timeline edges ──
+        for sid in source_ids:
+            edges = supabase.table("case_timeline_edges").select("*").eq("case_id", sid).execute().data or []
+            for ed in edges:
+                new_src = event_id_map.get(ed["source_event_id"])
+                new_tgt = event_id_map.get(ed["target_event_id"])
+                if new_src and new_tgt:
+                    supabase.table("case_timeline_edges").insert({
+                        "case_id": case_id,
+                        "source_event_id": new_src,
+                        "target_event_id": new_tgt,
+                        "label": ed.get("label", ""),
+                    }).execute()
+
+        # ── Merge evidence ──
+        for sid in source_ids:
+            rows = supabase.table("case_evidence").select("*").eq("case_id", sid).execute().data or []
+            for r in rows:
+                supabase.table("case_evidence").insert({
+                    "case_id": case_id,
+                    "type": r.get("type", "investigation"),
+                    "content": r["content"],
+                    "sources": r.get("sources"),
+                }).execute()
+
+        # ── Merge sticky notes ──
+        try:
+            for sid in source_ids:
+                rows = supabase.table("case_graph_sticky_notes").select("*").eq("case_id", sid).execute().data or []
+                for r in rows:
+                    supabase.table("case_graph_sticky_notes").insert({
+                        "case_id": case_id,
+                        "content": r.get("content", ""),
+                        "color": r.get("color", "#FFD60A"),
+                        "position_x": r.get("position_x", 0),
+                        "position_y": r.get("position_y", 0),
+                        "width": r.get("width", 200),
+                        "height": r.get("height", 150),
+                    }).execute()
+        except Exception:
+            pass  # table may not exist
+
+        # ── Re-parent child cases: point source children → target ──
+        for sid in source_ids:
+            supabase.table("cases").update({"parent_case_id": case_id}).eq("parent_case_id", sid).execute()
+
+        # ── Delete source cases ──
+        for sid in source_ids:
+            supabase.table("cases").delete().eq("id", sid).execute()
+
+        return {"status": "merged", "merged_count": len(source_ids)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/{case_id}/parent")
+async def set_case_parent(case_id: str, request: Request, user = Depends(require_user)):
+    """Move a case under a new parent (or to root by passing null)."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        body = await request.json()
+        parent_id = body.get("parent_case_id")  # null = root
+
+        await verify_case_ownership(case_id, user, write=True)
+        if parent_id:
+            await verify_case_ownership(parent_id, user, write=True)
+            # Calculate new depth
+            parent = supabase.table("cases").select("depth").eq("id", parent_id).execute()
+            depth = ((parent.data[0].get("depth") or 0) + 1) if parent.data else 0
+        else:
+            depth = 0
+
+        supabase.table("cases").update({"parent_case_id": parent_id, "depth": depth}).eq("id", case_id).execute()
+        return {"status": "updated", "parent_case_id": parent_id, "depth": depth}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/cases/{case_id}/children/graph")
+async def get_aggregated_child_graph(case_id: str, user = Depends(optional_user)):
+    """Return the merged graph of the parent case + all direct child cases.
+
+    Nodes from different child cases are tagged with source_case_id so the UI
+    can color-code them.
+    """
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=False)
+
+        # Get child case ids
+        children = supabase.table("cases").select("id, title").eq("parent_case_id", case_id).execute().data or []
+        all_case_ids = [case_id] + [c["id"] for c in children]
+        case_titles = {case_id: "(parent)"}
+        for c in children:
+            case_titles[c["id"]] = c["title"]
+
+        all_nodes = []
+        all_edges = []
+        seen_node_ids: set = set()
+
+        for cid in all_case_ids:
+            pinned = supabase.table("case_graph_entities").select("*").eq("case_id", cid).execute().data or []
+            node_ids = [r["node_id"] for r in pinned]
+            position_map = {r["node_id"]: {"x": r.get("position_x"), "y": r.get("position_y")} for r in pinned}
+
+            if node_ids:
+                nodes_res = supabase.table("nodes").select("*").in_("id", node_ids).execute()
+                for n in (nodes_res.data or []):
+                    if n["id"] not in seen_node_ids:
+                        meta = n.get("metadata") or {}
+                        pos = position_map.get(n["id"], {})
+                        all_nodes.append({
+                            "id": n["id"],
+                            "type": "entityNode",
+                            "data": {
+                                "label": n.get("label", n["id"]),
+                                "entityType": n.get("type", "UNKNOWN"),
+                                "description": n.get("description", ""),
+                                "aliases": n.get("aliases", []),
+                                "degree": meta.get("degree", 0),
+                                "source_case_id": cid,
+                                "source_case_title": case_titles.get(cid, ""),
+                            },
+                            "position": {"x": pos.get("x") or 0, "y": pos.get("y") or 0},
+                        })
+                        seen_node_ids.add(n["id"])
+
+            edges_res = supabase.table("case_graph_edges").select("*").eq("case_id", cid).execute().data or []
+            for e in edges_res:
+                if e["source_node_id"] in seen_node_ids and e["target_node_id"] in seen_node_ids:
+                    all_edges.append({
+                        "id": e["id"],
+                        "source": e["source_node_id"],
+                        "target": e["target_node_id"],
+                        "data": {
+                            "label": e.get("label", ""),
+                            "source_case_id": cid,
+                            "source_case_title": case_titles.get(cid, ""),
+                        },
+                    })
+
+        return {"nodes": all_nodes, "edges": all_edges, "child_cases": children}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/cases/{case_id}/children/timeline")
+async def get_aggregated_child_timeline(case_id: str, user = Depends(optional_user)):
+    """Return the merged timeline of the parent case + all direct child cases.
+
+    Each child case's events are tagged with source_case_id for color-coding.
+    """
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=False)
+
+        children = supabase.table("cases").select("id, title").eq("parent_case_id", case_id).execute().data or []
+        all_case_ids = [case_id] + [c["id"] for c in children]
+        case_titles = {case_id: "(parent)"}
+        for c in children:
+            case_titles[c["id"]] = c["title"]
+
+        all_nodes = []
+        all_edges = []
+        all_tracks = []
+
+        for cid in all_case_ids:
+            events = supabase.table("case_timeline_events").select("*").eq("case_id", cid).order("created_at").execute().data or []
+            for ev in events:
+                all_nodes.append({
+                    "id": ev["id"],
+                    "type": "eventNode",
+                    "position": {"x": ev.get("position_x", 0), "y": ev.get("position_y", 0)},
+                    "data": {
+                        "title": ev["title"],
+                        "event_date": ev.get("event_date"),
+                        "description": ev.get("description", ""),
+                        "category": ev.get("category", "general"),
+                        "source_case_id": cid,
+                        "source_case_title": case_titles.get(cid, ""),
+                        "track_ids": [],
+                        "sources": ev.get("sources"),
+                    },
+                })
+
+            edges = supabase.table("case_timeline_edges").select("*").eq("case_id", cid).execute().data or []
+            for ed in edges:
+                all_edges.append({
+                    "id": ed["id"],
+                    "source": ed["source_event_id"],
+                    "target": ed["target_event_id"],
+                    "type": "draggable",
+                    "data": {"label": ed.get("label", ""), "isCaseLocal": True},
+                })
+
+            tracks = supabase.table("case_timeline_tracks").select("*").eq("case_id", cid).execute().data or []
+            for t in tracks:
+                all_tracks.append({**t, "source_case_id": cid, "source_case_title": case_titles.get(cid, "")})
+
+        return {"nodes": all_nodes, "edges": all_edges, "tracks": all_tracks, "child_cases": children}
+    except HTTPException:
+        raise
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -2271,6 +2605,7 @@ class CreateTimelineEventRequest(BaseModel):
     position_x: float = 0
     position_y: float = 0
     track_ids: List[str] = []
+    sources: Optional[List[dict]] = None
 
 class UpdateTimelineEventRequest(BaseModel):
     title: Optional[str] = None
@@ -4206,6 +4541,7 @@ async def get_case_timeline(case_id: str, user = Depends(optional_user)):
                     "category": ev.get("category", "general"),
                     "sourceGraphNodeId": ev.get("source_graph_node_id"),
                     "track_ids": event_tracks.get(ev["id"], []),
+                    "sources": ev.get("sources"),
                 },
             })
 
@@ -4244,6 +4580,7 @@ async def create_timeline_event(case_id: str, request: CreateTimelineEventReques
             "category": request.category,
             "position_x": request.position_x,
             "position_y": request.position_y,
+            "sources": request.sources,
         }
         result = supabase.table("case_timeline_events").insert(record).execute()
         ev = result.data[0] if result.data else None
@@ -5289,6 +5626,149 @@ async def deduplicate_graph(user = Depends(require_admin)):
         print(f"Deduplication failed: {e}")
         import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": f"Deduplication failed: {str(e)}"})
+
+
+# ---------------------------------------------------------------------------
+# Agent endpoints — Mission Control
+# ---------------------------------------------------------------------------
+
+@app.get("/api/agent/status")
+async def get_agent_status(user=Depends(optional_user)):
+    """Get current agent status (running state, stats, current task)."""
+    status = supabase.table("agent_status").select("*").eq("id", 1).execute()
+    if not status.data:
+        return {"is_running": False, "tasks_completed": 0, "theories_tested": 0,
+                "entities_added": 0, "cases_created": 0}
+
+    row = status.data[0]
+
+    # Get current task info if running
+    current_task = None
+    if row.get("current_task_id"):
+        task_res = supabase.table("agent_tasks").select("*").eq("id", row["current_task_id"]).execute()
+        if task_res.data:
+            current_task = task_res.data[0]
+
+    # Queue stats
+    queued = supabase.table("agent_tasks").select("id", count="exact").eq("status", "queued").execute()
+    completed = supabase.table("agent_tasks").select("id", count="exact").eq("status", "completed").execute()
+    failed = supabase.table("agent_tasks").select("id", count="exact").eq("status", "failed").execute()
+
+    return {
+        **row,
+        "current_task": current_task,
+        "queue_stats": {
+            "queued": queued.count or 0,
+            "completed": completed.count or 0,
+            "failed": failed.count or 0,
+        },
+    }
+
+
+@app.get("/api/agent/activity")
+async def get_agent_activity(user=Depends(optional_user), limit: int = 50, offset: int = 0):
+    """Get agent activity feed for mission control."""
+    res = (
+        supabase.table("agent_activity")
+        .select("*")
+        .order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
+    )
+    total = supabase.table("agent_activity").select("id", count="exact").execute()
+    return {"items": res.data or [], "total": total.count or 0}
+
+
+@app.get("/api/agent/queue")
+async def get_agent_queue(user=Depends(optional_user), status: str = "queued", limit: int = 50):
+    """Get agent task queue."""
+    query = supabase.table("agent_tasks").select("*").eq("status", status)
+    if status == "queued":
+        query = query.order("priority", desc=False).order("created_at", desc=False)
+    else:
+        query = query.order("completed_at", desc=True)
+    res = query.limit(limit).execute()
+    return {"items": res.data or []}
+
+
+@app.post("/api/agent/directive")
+async def submit_agent_directive(request: Request, user=Depends(optional_user)):
+    """Submit a user directive to the agent's priority queue."""
+    body = await request.json()
+    directive = body.get("directive", "").strip()
+    if not directive:
+        return JSONResponse(status_code=400, content={"error": "directive is required"})
+
+    # Tag user directives as "deep" research_depth so strategies pick the
+    # PRIMARY_MODEL, enable web search, and run one follow-up round. Depth is
+    # encoded as a `[depth=X] ` prefix on the description — no schema change.
+    task = {
+        "type": "user_directive",
+        "description": f"[depth=deep] {directive}",
+        "priority": 1,  # highest priority
+        "status": "queued",
+    }
+    res = supabase.table("agent_tasks").insert(task).execute()
+
+    # Log it
+    supabase.table("agent_activity").insert({
+        "action": "user_directive",
+        "description": f"User directive: {directive[:200]}",
+        "metadata": {"user_id": user.id if user else None},
+    }).execute()
+
+    return {"task": res.data[0] if res.data else task}
+
+
+@app.get("/api/agent/cases/tree")
+async def get_case_tree(user=Depends(optional_user)):
+    """Get hierarchical case tree for mission control."""
+    # Get all cases with parent info
+    cases = (
+        supabase.table("cases")
+        .select("id, title, category, status, summary, parent_case_id, depth, operational_question, created_at, updated_at")
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    # Get evidence counts per case
+    all_cases = cases.data or []
+    for case in all_cases:
+        ev = supabase.table("case_evidence").select("id", count="exact").eq("case_id", case["id"]).execute()
+        entity_count = supabase.table("case_graph_entities").select("node_id", count="exact").eq("case_id", case["id"]).execute()
+        timeline_count = supabase.table("case_timeline_events").select("id", count="exact").eq("case_id", case["id"]).execute()
+        case["evidence_count"] = ev.count or 0
+        case["entity_count"] = entity_count.count or 0
+        case["timeline_event_count"] = timeline_count.count or 0
+
+    return {"cases": all_cases}
+
+
+@app.get("/api/agent/findings")
+async def get_recent_findings(user=Depends(optional_user), limit: int = 10):
+    """Get recent notable findings (theory verdicts, high-significance discoveries)."""
+    # Get recent theory tests
+    theories = (
+        supabase.table("agent_activity")
+        .select("*")
+        .eq("action", "tested_theory")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    # Get recent evidence additions
+    evidence = (
+        supabase.table("agent_activity")
+        .select("*")
+        .in_("action", ["explored_connection", "entity_deep_dive", "validated_entity"])
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return {
+        "theories": theories.data or [],
+        "discoveries": evidence.data or [],
+    }
 
 
 if __name__ == "__main__":

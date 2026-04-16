@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
-import { Scale, Gavel, DollarSign, Link, AlertTriangle, Landmark, Briefcase, Building2, Calendar } from 'lucide-react';
+import { Scale, Gavel, DollarSign, Link, AlertTriangle, Landmark, Briefcase, Building2, Calendar, FileText, Globe } from 'lucide-react';
 
 export const EVENT_CATEGORIES: Record<string, { label: string; color: string; icon: typeof Scale }> = {
   general:      { label: 'General',      color: '#8E8E93', icon: Calendar },
@@ -106,8 +106,8 @@ function EventNode({ data, selected }: NodeProps) {
         )}
       </div>
 
-      {/* Track dots */}
-      {trackDots.length > 0 && (
+      {/* Footer: track dots + receipt indicator */}
+      {(trackDots.length > 0 || data.sources?.length > 0) && (
         <div
           className="flex items-center gap-1 px-3 py-1.5 border-t"
           style={{ borderColor: `${category.color}20`, background: 'rgba(0,0,0,0.25)' }}
@@ -125,6 +125,29 @@ function EventNode({ data, selected }: NodeProps) {
               +{trackDots.length - 8}
             </span>
           )}
+          {data.sources?.length > 0 && (() => {
+            const fileCount = data.sources.filter((s: { filename?: string; uri?: string }) => s.filename && !s.uri).length;
+            const webCount = data.sources.filter((s: { uri?: string }) => s.uri).length;
+            return (
+              <span
+                className="ml-auto flex items-center gap-1 text-[9px] text-[rgba(235,235,245,0.35)]"
+                title={`${fileCount} document source${fileCount !== 1 ? 's' : ''}, ${webCount} web source${webCount !== 1 ? 's' : ''}`}
+              >
+                {fileCount > 0 && (
+                  <span className="flex items-center gap-0.5">
+                    <FileText size={9} />
+                    {fileCount}
+                  </span>
+                )}
+                {webCount > 0 && (
+                  <span className="flex items-center gap-0.5">
+                    <Globe size={9} />
+                    {webCount}
+                  </span>
+                )}
+              </span>
+            );
+          })()}
         </div>
       )}
     </div>

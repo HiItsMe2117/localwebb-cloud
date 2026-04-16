@@ -14,10 +14,6 @@ import {
   X,
   Pause,
   Play,
-  Globe,
-  ExternalLink,
-  Copy,
-  Check,
 } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -58,51 +54,6 @@ interface PipelineStatus {
     size_mb: number;
   };
   last_updated: string | null;
-}
-
-function UrlRow({ item }: { item: { url: string; count: number; junk?: boolean; sources: { filename: string; page: number | null }[] } }) {
-  const [copied, setCopied] = useState(false);
-  const domain = (() => {
-    try { return new URL(item.url).hostname.replace('www.', ''); } catch { return ''; }
-  })();
-
-  return (
-    <div className="flex items-start gap-2 px-2.5 py-2 bg-[#2C2C2E]/50 rounded-lg group hover:bg-[#2C2C2E] transition-colors">
-      <ExternalLink size={12} className="text-[#5AC8FA] mt-0.5 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <a
-          href={item.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[12px] text-[#5AC8FA] hover:underline break-all leading-snug"
-        >
-          {item.url.length > 90 ? item.url.slice(0, 87) + '...' : item.url}
-        </a>
-        <div className="flex items-center gap-2 mt-0.5">
-          {domain && <span className="text-[10px] text-[rgba(235,235,245,0.3)]">{domain}</span>}
-          <span className="text-[10px] text-[rgba(235,235,245,0.2)]">·</span>
-          <span className="text-[10px] text-[rgba(235,235,245,0.3)]">
-            {item.count} {item.count === 1 ? 'mention' : 'mentions'}
-          </span>
-          {item.sources[0]?.filename && (
-            <>
-              <span className="text-[10px] text-[rgba(235,235,245,0.2)]">·</span>
-              <span className="text-[10px] text-[rgba(235,235,245,0.3)] truncate max-w-[150px]">
-                {item.sources[0].filename}
-              </span>
-            </>
-          )}
-        </div>
-      </div>
-      <button
-        onClick={() => { navigator.clipboard.writeText(item.url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-        className="p-1 opacity-0 group-hover:opacity-100 transition-opacity text-[rgba(235,235,245,0.3)] hover:text-white"
-        title="Copy URL"
-      >
-        {copied ? <Check size={12} className="text-[#30D158]" /> : <Copy size={12} />}
-      </button>
-    </div>
-  );
 }
 
 function StatusDot({ scraped, vectorized, discovered }: { scraped: number; vectorized: number; discovered: number }) {
@@ -1034,33 +985,6 @@ export default function DataPanel() {
   });
   const bulkAbortRef = useRef(false);
 
-  // Extracted URLs state
-  const [urls, setUrls] = useState<{ url: string; count: number; junk?: boolean; sources: { filename: string; page: number | null }[] }[]>([]);
-  const [urlsLoading, setUrlsLoading] = useState(false);
-  const [urlsLoaded, setUrlsLoaded] = useState(false);
-  const [urlsTotal, setUrlsTotal] = useState(0);
-  const [urlsJunkCount, setUrlsJunkCount] = useState(0);
-  const [urlsCleanCount, setUrlsCleanCount] = useState(0);
-  const [urlsExpanded, setUrlsExpanded] = useState(false);
-  const [urlsTab, setUrlsTab] = useState<'clean' | 'junk'>('clean');
-
-  const fetchUrls = useCallback(async () => {
-    setUrlsLoading(true);
-    try {
-      const res = await axios.get('/api/urls');
-      setUrls(res.data.urls || []);
-      setUrlsTotal(res.data.total || 0);
-      setUrlsJunkCount(res.data.junk_count || 0);
-      setUrlsCleanCount(res.data.clean_count || 0);
-      setUrlsLoaded(true);
-      setUrlsExpanded(false);
-    } catch (err) {
-      console.error('Failed to fetch URLs:', err);
-    } finally {
-      setUrlsLoading(false);
-    }
-  }, []);
-
   // Persist bulk extraction state to localStorage on every change
   useEffect(() => {
     localStorage.setItem('bulkExtractState', JSON.stringify(bulkExtract));
@@ -1283,98 +1207,6 @@ export default function DataPanel() {
           />
 
           <InfrastructureCard />
-
-          {/* Extracted URLs Card */}
-          <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Globe size={14} className="text-[#5AC8FA]" />
-                <span className="text-[13px] font-semibold text-white">URLs Found in Documents</span>
-                {urlsLoaded && (
-                  <span className="text-[11px] text-[rgba(235,235,245,0.4)] bg-[#2C2C2E] px-2 py-0.5 rounded-full">
-                    {urlsTotal.toLocaleString()}
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={fetchUrls}
-                disabled={urlsLoading}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] rounded-lg text-[12px] text-[rgba(235,235,245,0.6)] hover:border-[#5AC8FA]/50 transition-colors disabled:opacity-50"
-              >
-                {urlsLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                {urlsLoaded ? 'Refresh' : 'Extract URLs'}
-              </button>
-            </div>
-
-            {!urlsLoaded && !urlsLoading && (
-              <p className="text-[12px] text-[rgba(235,235,245,0.3)]">
-                Scan all document chunks for embedded URLs. Click Extract to start.
-              </p>
-            )}
-
-            {urlsLoaded && urls.length === 0 && (
-              <p className="text-[12px] text-[rgba(235,235,245,0.3)]">No URLs found in documents.</p>
-            )}
-
-            {urlsLoaded && urls.length > 0 && (() => {
-              const filtered = urls.filter(u => urlsTab === 'clean' ? !u.junk : u.junk);
-              const tabCount = urlsTab === 'clean' ? urlsCleanCount : urlsJunkCount;
-              return (
-                <div>
-                  {/* Tabs */}
-                  <div className="flex gap-1 mb-3">
-                    <button
-                      onClick={() => { setUrlsTab('clean'); setUrlsExpanded(false); }}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all ${
-                        urlsTab === 'clean'
-                          ? 'bg-[#5AC8FA]/20 text-[#5AC8FA] border border-[#5AC8FA]/30'
-                          : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.4)] border border-transparent hover:text-[rgba(235,235,245,0.6)]'
-                      }`}
-                    >
-                      Relevant
-                      <span className="text-[10px] opacity-70">{urlsCleanCount.toLocaleString()}</span>
-                    </button>
-                    <button
-                      onClick={() => { setUrlsTab('junk'); setUrlsExpanded(false); }}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all ${
-                        urlsTab === 'junk'
-                          ? 'bg-[#FF9F0A]/20 text-[#FF9F0A] border border-[#FF9F0A]/30'
-                          : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.4)] border border-transparent hover:text-[rgba(235,235,245,0.6)]'
-                      }`}
-                    >
-                      Possible Junk
-                      <span className="text-[10px] opacity-70">{urlsJunkCount.toLocaleString()}</span>
-                    </button>
-                  </div>
-
-                  {urlsTab === 'junk' && (
-                    <p className="text-[11px] text-[#FF9F0A]/60 mb-2">
-                      OCR artifacts, internal systems, email wrappers — review in case something important is hiding here.
-                    </p>
-                  )}
-
-                  <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
-                    {(urlsExpanded ? filtered : filtered.slice(0, 20)).map((item, i) => (
-                      <UrlRow key={i} item={item} />
-                    ))}
-                  </div>
-                  {filtered.length > 20 && (
-                    <button
-                      onClick={() => setUrlsExpanded(!urlsExpanded)}
-                      className="mt-2 text-[12px] text-[#5AC8FA] hover:underline"
-                    >
-                      {urlsExpanded ? 'Show less' : `Show all ${tabCount.toLocaleString()} URLs`}
-                    </button>
-                  )}
-                  {filtered.length === 0 && (
-                    <p className="text-[12px] text-[rgba(235,235,245,0.3)]">
-                      {urlsTab === 'junk' ? 'No junk URLs detected.' : 'No relevant URLs found.'}
-                    </p>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
 
           {status?.totals && (
             <div className="bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] rounded-2xl p-4 mb-4">
