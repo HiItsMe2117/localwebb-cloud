@@ -21,7 +21,30 @@ tmp_extract_4/
 .env*.local
 .env.prod
 scripts/*_progress.json
+scripts/*_progress.json.bak
 scripts/audit_results.json
 scripts/pipeline_status.json
+scripts/pinecone_filenames.json
 supabase/.temp/
 *.png
+
+# Ad-hoc audit / cleanup / one-off scripts at repo root.
+# Tracked explicitly so a new legitimate file won't be silently ignored.
+/audit_*.py
+/bulk_audit_*.py
+/check_entity.py
+/check_status_tmp.py
+/clean_sweep*.py
+/cleanup_*.py
+/create_admin.py
+/delete_garbage*.py
+/extract_*.py
+/fix_*.py
+/heal_*.py
+/inconsistency_*.py
+/inspect_*.py
+/leon_black_audit.py
+/merge_epstein.py
+/surgical_purge.py
+/update_new_york.py
+/usanys_audit.py
