@@ -1,6 +1,7 @@
 localwebb/backend/venv
 localwebb/frontend/node_modules
 localwebb/frontend/dist
+localwebb/
 node_modules
 .git
 chroma_db
@@ -8,7 +9,41 @@ data
 logs
 *.zip
 *.png
+*.log
 epsteinfiles-487701-fad3618ad671.json
+
+# Scripts are dev-only, not used at runtime
+scripts/
+
+# Supabase migrations — applied via dashboard, not runtime
+supabase/
+
+# Dev/test artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Ad-hoc root-level dev scripts
+audit_*.py
+bulk_audit_*.py
+check_entity.py
+check_status_tmp.py
+clean_sweep*.py
+cleanup_*.py
+create_admin.py
+delete_garbage*.py
+extract_*.py
+fix_*.py
+heal_*.py
+inconsistency_*.py
+inspect_*.py
+leon_black_audit.py
+merge_epstein.py
+surgical_purge.py
+update_new_york.py
+usanys_audit.py
 
 # Railway-only files — not used by Vercel, skip bundling them
 agent/
@@ -16,3 +51,4 @@ Procfile
 railway.json
 runtime.txt
 nixpacks.toml
+.railwayignore
