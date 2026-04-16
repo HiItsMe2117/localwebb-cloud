@@ -320,69 +320,120 @@ function CaseTreeItem({ node, depth = 0, onOpen, selectedIds, onToggleSelect, se
   const hasChildren = node.children.length > 0;
   const c = node.case;
   const config = CASE_CATEGORIES[c.category] || CASE_CATEGORIES.other;
+  const isRoot = depth === 0;
+
+  // Count total descendants (recursive) for better badge
+  const descendantCount = (n: CaseTreeNode): number =>
+    n.children.reduce((sum, child) => sum + 1 + descendantCount(child), 0);
+  const totalSubs = descendantCount(node);
 
   return (
-    <div>
+    <div className={isRoot ? 'mt-1.5 first:mt-0' : ''}>
       <div
-        className={`flex items-center gap-2 group transition-colors rounded-xl px-2 py-2 ${
-          selected ? 'bg-[#007AFF]/10 border border-[#007AFF]/30' : 'hover:bg-[#1C1C1E]'
+        className={`relative flex items-stretch group transition-all rounded-xl overflow-hidden ${
+          selected
+            ? 'bg-[#007AFF]/10 ring-1 ring-[#007AFF]/40'
+            : isRoot
+            ? 'bg-[#1C1C1E]/60 hover:bg-[#1C1C1E] border border-[rgba(84,84,88,0.35)] hover:border-[rgba(84,84,88,0.65)]'
+            : 'hover:bg-[#1C1C1E]/60'
         }`}
-        style={{ paddingLeft: `${depth * 20 + 8}px` }}
+        style={{ marginLeft: `${depth * 24}px` }}
       >
-        {selectMode && (
-          <button onClick={() => onToggleSelect(c.id)} className="shrink-0">
-            {selected ? (
-              <CheckSquare size={16} className="text-[#007AFF]" />
-            ) : (
-              <Square size={16} className="text-[rgba(235,235,245,0.3)]" />
-            )}
-          </button>
-        )}
+        {/* Category-colored left bar */}
+        <div
+          className="shrink-0 w-1"
+          style={{ backgroundColor: config.color, opacity: isRoot ? 0.9 : 0.5 }}
+        />
 
-        {hasChildren ? (
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md hover:bg-[#2C2C2E] transition-colors"
-          >
-            {expanded ? (
-              <FolderOpen size={14} className="text-[#FF9F0A]" />
-            ) : (
-              <Folder size={14} className="text-[#FF9F0A]" />
-            )}
-          </button>
-        ) : (
-          <div className="shrink-0 w-6 h-6 flex items-center justify-center">
-            {depth > 0 ? (
-              <CornerDownRight size={12} className="text-[rgba(235,235,245,0.15)]" />
-            ) : (
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: config.color + '60' }} />
-            )}
+        {/* Tree connector for sub-items */}
+        {!isRoot && (
+          <div className="shrink-0 flex items-center pl-2 pr-1">
+            <CornerDownRight size={12} className="text-[rgba(235,235,245,0.2)]" />
           </div>
         )}
 
-        <button
-          onClick={() => onOpen(c.id)}
-          className="flex-1 min-w-0 text-left flex items-center gap-2"
-        >
-          <span className="text-[14px] font-medium text-white truncate">{c.title}</span>
-          <CategoryBadge category={c.category} />
-          {c.status === 'closed' && (
-            <span className="text-[10px] text-[rgba(235,235,245,0.3)] font-mono">CLOSED</span>
+        <div className="flex-1 flex items-center gap-2.5 px-3 py-2.5 min-w-0">
+          {selectMode && (
+            <button onClick={() => onToggleSelect(c.id)} className="shrink-0">
+              {selected ? (
+                <CheckSquare size={16} className="text-[#007AFF]" />
+              ) : (
+                <Square size={16} className="text-[rgba(235,235,245,0.3)]" />
+              )}
+            </button>
           )}
-        </button>
 
-        {hasChildren && (
-          <span className="text-[11px] text-[rgba(235,235,245,0.25)] font-mono shrink-0">
-            {node.children.length}
-          </span>
-        )}
+          {/* Folder / dot icon — category-tinted */}
+          {hasChildren ? (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[#2C2C2E] transition-colors"
+              style={{ color: config.color }}
+            >
+              {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
+            </button>
+          ) : (
+            <div className="shrink-0 w-7 h-7 flex items-center justify-center">
+              <div
+                className="w-2 h-2 rounded-full"
+                style={{ backgroundColor: config.color, opacity: 0.7 }}
+              />
+            </div>
+          )}
 
-        <ChevronRight size={14} className="text-[rgba(235,235,245,0.15)] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+          {/* Title + summary */}
+          <button
+            onClick={() => onOpen(c.id)}
+            className="flex-1 min-w-0 text-left"
+          >
+            <div className="flex items-center gap-2 flex-wrap">
+              <span
+                className={`truncate text-white ${
+                  isRoot ? 'text-[15px] font-semibold' : 'text-[13.5px] font-medium'
+                }`}
+              >
+                {c.title}
+              </span>
+              <CategoryBadge category={c.category} />
+              {c.status === 'closed' && (
+                <span className="text-[10px] text-[rgba(235,235,245,0.35)] font-mono uppercase tracking-wide">
+                  Closed
+                </span>
+              )}
+            </div>
+            {c.summary && (
+              <div className="mt-0.5 text-[12px] text-[rgba(235,235,245,0.4)] line-clamp-1">
+                {c.summary}
+              </div>
+            )}
+          </button>
+
+          {/* Stats: sub-case count */}
+          {hasChildren && (
+            <div
+              className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#2C2C2E]/70"
+              title={`${totalSubs} sub-cases total`}
+            >
+              <Folder size={10} className="text-[rgba(235,235,245,0.4)]" />
+              <span className="text-[11px] font-mono text-[rgba(235,235,245,0.55)]">
+                {node.children.length}
+                {totalSubs !== node.children.length && (
+                  <span className="text-[rgba(235,235,245,0.3)]"> / {totalSubs}</span>
+                )}
+              </span>
+            </div>
+          )}
+
+          <ChevronRight
+            size={14}
+            className="shrink-0 text-[rgba(235,235,245,0.2)] opacity-0 group-hover:opacity-100 transition-opacity"
+          />
+        </div>
       </div>
 
       {expanded && hasChildren && (
-        <div>
-          {node.children.map(child => (
+        <div className="mt-0.5 space-y-0.5">
+          {node.children.map((child) => (
             <CaseTreeItem
               key={child.case.id}
               node={child}
@@ -569,6 +620,7 @@ export default function CasesPanel({
       </header>
 
       <div className="flex-1 overflow-y-auto px-5 pb-6">
+        <div className="max-w-4xl mx-auto">
         {/* Create case form */}
         {showCreateForm && (
           <div className="bg-[#1C1C1E] border border-[#007AFF]/30 rounded-2xl p-4 space-y-3 mt-4 max-w-2xl mx-auto">
@@ -918,6 +970,7 @@ export default function CasesPanel({
             )}
           </div>
         )}
+        </div>
       </div>
     </div>
   );
