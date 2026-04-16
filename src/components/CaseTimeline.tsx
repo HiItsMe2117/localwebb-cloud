@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNodesState, useEdgesState, ReactFlowProvider, useReactFlow, useViewport } from 'reactflow';
 import type { Node, Edge, NodeChange } from 'reactflow';
-import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare, Users, Bot, Globe, FileText } from 'lucide-react';
+import { Plus, X, Loader2, Link2, Trash2, MousePointerClick, Map as MapIcon, Maximize2, Minimize2, Database, ChevronDown, ChevronUp, Check, Send, ExternalLink, Sparkles, LayoutGrid, List, Filter, MessageSquare, Users, Bot, Globe, FileText, ShieldCheck, Calendar, Tag, Copy, CheckCircle2, XCircle, ChevronRight } from 'lucide-react';
 import NexusCanvas from './NexusCanvas';
 import EventNode, { EVENT_CATEGORIES, formatEventDate } from './EventNode';
 import { TRACK_COLOR_PALETTE, type TimelineTrack } from '../types';
@@ -400,6 +400,18 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const [timelineChatInput, setTimelineChatInput] = useState('');
   const [isTimelineChatting, setIsTimelineChatting] = useState(false);
   const timelineChatEndRef = useRef<HTMLDivElement>(null);
+
+  // Audit panel
+  const [showAudit, setShowAudit] = useState(false);
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [auditStep, setAuditStep] = useState('');
+  const [auditResults, setAuditResults] = useState<{
+    auto_applied: { categories: number; sources: number };
+    suggestions: { id: string; event_id: string; suggestion_type: string; event_title: string; current_value: any; suggested_value: any; confidence: number; ai_rationale: string; web_sources?: { title: string; uri: string; domain: string }[] }[];
+    duplicate_groups: { id: string; events: { id: string; title: string; event_date?: string; description?: string }[]; merge_target_id: string; ai_rationale: string }[];
+  } | null>(null);
+  const [applyingIds, setApplyingIds] = useState<Set<string>>(new Set());
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
 
   // Multi-case overlay
   const [showChildTimelines, setShowChildTimelines] = useState(false);
@@ -999,6 +1011,83 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     }
   }, [caseId, loadTimeline, getViewport]);
 
+  // ── Audit ─────────────────────────────────────────────────────────────────
+
+  const runAudit = useCallback(async () => {
+    if (isAuditing) return;
+    setIsAuditing(true);
+    setShowAudit(true);
+    setAuditResults(null);
+    setDismissedIds(new Set());
+    setApplyingIds(new Set());
+    setAuditStep('Running audit — categorizing, finding dates, detecting duplicates, finding sources...');
+    try {
+      const res = await axios.post(`/api/cases/${caseId}/timeline/audit`);
+      setAuditResults(res.data);
+      setAuditStep('');
+      const autoCount = (res.data.auto_applied?.categories || 0) + (res.data.auto_applied?.sources || 0);
+      const reviewCount = (res.data.suggestions?.length || 0) + (res.data.duplicate_groups?.length || 0);
+      if (autoCount > 0) {
+        shouldAutoLayoutAfterLoad.current = true;
+        await loadTimeline();
+      }
+      toast.success(`Audit complete — ${autoCount} auto-applied, ${reviewCount} to review`);
+    } catch (err) {
+      console.error('Audit failed:', err);
+      toast.error('Audit failed');
+      setAuditStep('');
+    } finally {
+      setIsAuditing(false);
+    }
+  }, [caseId, isAuditing, loadTimeline]);
+
+  const applySuggestion = useCallback(async (suggestionId: string) => {
+    setApplyingIds(prev => new Set(prev).add(suggestionId));
+    try {
+      await axios.post(`/api/cases/${caseId}/timeline/audit/apply`, { suggestion_ids: [suggestionId] });
+      setDismissedIds(prev => new Set(prev).add(suggestionId));
+      shouldAutoLayoutAfterLoad.current = true;
+      await loadTimeline();
+      toast.success('Applied');
+    } catch (err) {
+      console.error('Failed to apply suggestion:', err);
+      toast.error('Failed to apply');
+    } finally {
+      setApplyingIds(prev => { const n = new Set(prev); n.delete(suggestionId); return n; });
+    }
+  }, [caseId, loadTimeline]);
+
+  const dismissSuggestion = useCallback(async (suggestionId: string) => {
+    try {
+      await axios.post(`/api/cases/${caseId}/timeline/audit/dismiss`, { suggestion_ids: [suggestionId] });
+      setDismissedIds(prev => new Set(prev).add(suggestionId));
+    } catch (err) {
+      console.error('Failed to dismiss:', err);
+    }
+  }, [caseId]);
+
+  const applyAllSuggestions = useCallback(async () => {
+    if (!auditResults) return;
+    const allIds = [
+      ...auditResults.suggestions.map(s => s.id),
+      ...auditResults.duplicate_groups.map(g => g.id),
+    ].filter(id => !dismissedIds.has(id));
+    if (!allIds.length) return;
+    setApplyingIds(new Set(allIds));
+    try {
+      await axios.post(`/api/cases/${caseId}/timeline/audit/apply`, { suggestion_ids: allIds });
+      setDismissedIds(prev => { const n = new Set(prev); allIds.forEach(id => n.add(id)); return n; });
+      shouldAutoLayoutAfterLoad.current = true;
+      await loadTimeline();
+      toast.success(`Applied ${allIds.length} suggestions`);
+    } catch (err) {
+      console.error('Bulk apply failed:', err);
+      toast.error('Failed to apply');
+    } finally {
+      setApplyingIds(new Set());
+    }
+  }, [caseId, auditResults, dismissedIds, loadTimeline]);
+
   // ── Tracks: load case entities for picker ─────────────────────────────────
 
   const loadCaseEntities = useCallback(async () => {
@@ -1342,7 +1431,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
               Import from Graph
             </button>
             <button
-              onClick={() => { setShowResearch(prev => !prev); setShowCreateForm(false); setShowImport(false); }}
+              onClick={() => { setShowResearch(prev => !prev); setShowCreateForm(false); setShowImport(false); setShowAudit(false); }}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-semibold transition-colors ${
                 showResearch
                   ? 'bg-[#FF9F0A] text-black'
@@ -1351,6 +1440,17 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
             >
               <Sparkles size={14} />
               Research
+            </button>
+            <button
+              onClick={() => { if (!showAudit) { setShowAudit(true); setShowResearch(false); setShowCreateForm(false); setShowImport(false); } else { setShowAudit(false); } }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-semibold transition-colors ${
+                showAudit
+                  ? 'bg-[#5E5CE6] text-white'
+                  : 'bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] text-[rgba(235,235,245,0.6)] hover:border-[#5E5CE6]'
+              }`}
+            >
+              <ShieldCheck size={14} />
+              Audit
             </button>
             <button
               onClick={() => { setShowTrackModal(true); loadCaseEntities(); }}
@@ -2651,6 +2751,273 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                   <Send size={12} className="text-black" />
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Audit side panel */}
+        {showAudit && (
+          <div className="w-96 shrink-0 flex flex-col bg-[#0A0A0A] border-l border-[rgba(84,84,88,0.65)]">
+            {/* Header */}
+            <div className="shrink-0 px-3 py-2.5 border-b border-[rgba(84,84,88,0.35)]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={14} className="text-[#5E5CE6]" />
+                  <span className="text-[13px] font-semibold text-white">Timeline Audit</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {!isAuditing && (
+                    <button
+                      onClick={runAudit}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#5E5CE6] hover:bg-[#4E4CD6] text-white text-[11px] font-semibold transition-colors"
+                    >
+                      <ShieldCheck size={11} />
+                      {auditResults ? 'Re-run' : 'Run Audit'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowAudit(false)}
+                    className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
+                  >
+                    <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto">
+              {isAuditing && (
+                <div className="flex flex-col items-center justify-center gap-3 py-12 px-4">
+                  <Loader2 size={28} className="animate-spin text-[#5E5CE6]" />
+                  <p className="text-[12px] text-[rgba(235,235,245,0.5)] text-center leading-relaxed">{auditStep}</p>
+                  <p className="text-[10px] text-[rgba(235,235,245,0.3)]">This may take 30–60 seconds for large timelines</p>
+                </div>
+              )}
+
+              {!isAuditing && !auditResults && (
+                <div className="flex flex-col items-center justify-center gap-3 py-12 px-4">
+                  <ShieldCheck size={32} className="text-[rgba(235,235,245,0.15)]" />
+                  <p className="text-[12px] text-[rgba(235,235,245,0.4)] text-center leading-relaxed">
+                    AI audit will categorize events, find missing dates, detect duplicates, and find source citations.
+                  </p>
+                  <button
+                    onClick={runAudit}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#5E5CE6] hover:bg-[#4E4CD6] text-white text-[13px] font-semibold transition-colors"
+                  >
+                    <ShieldCheck size={14} />
+                    Run Audit
+                  </button>
+                </div>
+              )}
+
+              {!isAuditing && auditResults && (() => {
+                const { auto_applied, suggestions, duplicate_groups } = auditResults;
+                const pendingSuggestions = suggestions.filter(s => !dismissedIds.has(s.id));
+                const pendingDups = duplicate_groups.filter(g => !dismissedIds.has(g.id));
+                const dateSuggestions = pendingSuggestions.filter(s => s.suggestion_type === 'missing_date');
+                const catSuggestions = pendingSuggestions.filter(s => s.suggestion_type === 'missing_category');
+                const totalPending = pendingSuggestions.length + pendingDups.length;
+
+                return (
+                  <div className="divide-y divide-[rgba(84,84,88,0.2)]">
+                    {/* Summary */}
+                    <div className="px-3 py-3 space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        {auto_applied.categories > 0 && (
+                          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#30D158]/15 text-[#30D158] text-[10px] font-semibold">
+                            <CheckCircle2 size={10} />
+                            {auto_applied.categories} categorized
+                          </span>
+                        )}
+                        {auto_applied.sources > 0 && (
+                          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#30D158]/15 text-[#30D158] text-[10px] font-semibold">
+                            <CheckCircle2 size={10} />
+                            {auto_applied.sources} sourced
+                          </span>
+                        )}
+                        {totalPending > 0 && (
+                          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#FF9F0A]/15 text-[#FF9F0A] text-[10px] font-semibold">
+                            {totalPending} to review
+                          </span>
+                        )}
+                        {auto_applied.categories === 0 && auto_applied.sources === 0 && totalPending === 0 && (
+                          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#30D158]/15 text-[#30D158] text-[10px] font-semibold">
+                            <CheckCircle2 size={10} />
+                            All clean — no issues found
+                          </span>
+                        )}
+                      </div>
+                      {totalPending > 0 && (
+                        <button
+                          onClick={applyAllSuggestions}
+                          disabled={applyingIds.size > 0}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#5E5CE6]/15 hover:bg-[#5E5CE6]/25 text-[#5E5CE6] text-[11px] font-semibold transition-colors w-full justify-center disabled:opacity-50"
+                        >
+                          {applyingIds.size > 0 ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
+                          Accept All ({totalPending})
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Date suggestions */}
+                    {dateSuggestions.length > 0 && (
+                      <div className="px-3 py-2">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <Calendar size={11} className="text-[#FF9F0A]" />
+                          <span className="text-[11px] font-semibold text-[rgba(235,235,245,0.6)]">Missing Dates ({dateSuggestions.length})</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {dateSuggestions.map(s => (
+                            <div key={s.id} className="group rounded-lg border border-[rgba(84,84,88,0.3)] bg-[#1C1C1E]/60 p-2">
+                              <p className="text-[11px] font-semibold text-white leading-tight mb-0.5">{s.event_title}</p>
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <span className="text-[10px] text-[rgba(235,235,245,0.35)]">No date</span>
+                                <ChevronRight size={8} className="text-[rgba(235,235,245,0.25)]" />
+                                <span className="text-[10px] font-mono font-semibold text-[#FF9F0A]">{s.suggested_value}</span>
+                                <span className="ml-auto text-[9px] text-[rgba(235,235,245,0.25)]">{Math.round(s.confidence * 100)}%</span>
+                              </div>
+                              <p className="text-[9px] text-[rgba(235,235,245,0.3)] leading-snug mb-1.5">{s.ai_rationale}</p>
+                              {s.web_sources && s.web_sources.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mb-1.5">
+                                  {s.web_sources.slice(0, 2).map((ws, i) => (
+                                    <a key={i} href={ws.uri} target="_blank" rel="noreferrer" className="flex items-center gap-0.5 text-[8px] text-[#007AFF] hover:underline">
+                                      <Globe size={7} />{ws.domain || ws.title}
+                                    </a>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => applySuggestion(s.id)}
+                                  disabled={applyingIds.has(s.id)}
+                                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#30D158]/15 hover:bg-[#30D158]/25 text-[#30D158] text-[9px] font-semibold transition-colors disabled:opacity-50"
+                                >
+                                  {applyingIds.has(s.id) ? <Loader2 size={8} className="animate-spin" /> : <Check size={8} />}
+                                  Accept
+                                </button>
+                                <button
+                                  onClick={() => dismissSuggestion(s.id)}
+                                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-[rgba(235,235,245,0.05)] hover:bg-[rgba(235,235,245,0.1)] text-[rgba(235,235,245,0.4)] text-[9px] font-semibold transition-colors"
+                                >
+                                  <XCircle size={8} />
+                                  Dismiss
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Category suggestions */}
+                    {catSuggestions.length > 0 && (
+                      <div className="px-3 py-2">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <Tag size={11} className="text-[#5AC8FA]" />
+                          <span className="text-[11px] font-semibold text-[rgba(235,235,245,0.6)]">Categories ({catSuggestions.length})</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {catSuggestions.map(s => {
+                            const catInfo = EVENT_CATEGORIES[s.suggested_value] || EVENT_CATEGORIES.general;
+                            return (
+                              <div key={s.id} className="group rounded-lg border border-[rgba(84,84,88,0.3)] bg-[#1C1C1E]/60 p-2">
+                                <p className="text-[11px] font-semibold text-white leading-tight mb-0.5">{s.event_title}</p>
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <span className="text-[10px] text-[rgba(235,235,245,0.35)]">general</span>
+                                  <ChevronRight size={8} className="text-[rgba(235,235,245,0.25)]" />
+                                  <span className="text-[10px] font-semibold" style={{ color: catInfo.color }}>{catInfo.label}</span>
+                                  <span className="ml-auto text-[9px] text-[rgba(235,235,245,0.25)]">{Math.round(s.confidence * 100)}%</span>
+                                </div>
+                                <p className="text-[9px] text-[rgba(235,235,245,0.3)] leading-snug mb-1.5">{s.ai_rationale}</p>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => applySuggestion(s.id)}
+                                    disabled={applyingIds.has(s.id)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#30D158]/15 hover:bg-[#30D158]/25 text-[#30D158] text-[9px] font-semibold transition-colors disabled:opacity-50"
+                                  >
+                                    {applyingIds.has(s.id) ? <Loader2 size={8} className="animate-spin" /> : <Check size={8} />}
+                                    Accept
+                                  </button>
+                                  <button
+                                    onClick={() => dismissSuggestion(s.id)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-[rgba(235,235,245,0.05)] hover:bg-[rgba(235,235,245,0.1)] text-[rgba(235,235,245,0.4)] text-[9px] font-semibold transition-colors"
+                                  >
+                                    <XCircle size={8} />
+                                    Dismiss
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Duplicate groups */}
+                    {pendingDups.length > 0 && (
+                      <div className="px-3 py-2">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <Copy size={11} className="text-[#FF453A]" />
+                          <span className="text-[11px] font-semibold text-[rgba(235,235,245,0.6)]">Duplicates ({pendingDups.length} groups)</span>
+                        </div>
+                        <div className="space-y-2">
+                          {pendingDups.map(g => {
+                            const target = g.events.find(e => e.id === g.merge_target_id);
+                            const dupes = g.events.filter(e => e.id !== g.merge_target_id);
+                            return (
+                              <div key={g.id} className="rounded-lg border border-[rgba(84,84,88,0.3)] bg-[#1C1C1E]/60 p-2">
+                                <div className="mb-1.5">
+                                  <div className="flex items-center gap-1 mb-1">
+                                    <span className="text-[9px] font-semibold text-[#30D158] uppercase tracking-wider">Keep</span>
+                                  </div>
+                                  <p className="text-[11px] font-semibold text-white leading-tight">{target?.title || 'Unknown'}</p>
+                                  {target?.event_date && <span className="text-[9px] font-mono text-[rgba(235,235,245,0.4)]">{target.event_date}</span>}
+                                </div>
+                                {dupes.map(d => (
+                                  <div key={d.id} className="mt-1 pl-2 border-l-2 border-[#FF453A]/30">
+                                    <div className="flex items-center gap-1 mb-0.5">
+                                      <span className="text-[9px] font-semibold text-[#FF453A] uppercase tracking-wider">Merge</span>
+                                    </div>
+                                    <p className="text-[10px] text-[rgba(235,235,245,0.5)] leading-tight">{d.title}</p>
+                                    {d.event_date && <span className="text-[9px] font-mono text-[rgba(235,235,245,0.3)]">{d.event_date}</span>}
+                                  </div>
+                                ))}
+                                <p className="text-[9px] text-[rgba(235,235,245,0.3)] leading-snug mt-1.5 mb-1.5">{g.ai_rationale}</p>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => applySuggestion(g.id)}
+                                    disabled={applyingIds.has(g.id)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#30D158]/15 hover:bg-[#30D158]/25 text-[#30D158] text-[9px] font-semibold transition-colors disabled:opacity-50"
+                                  >
+                                    {applyingIds.has(g.id) ? <Loader2 size={8} className="animate-spin" /> : <Check size={8} />}
+                                    Merge
+                                  </button>
+                                  <button
+                                    onClick={() => dismissSuggestion(g.id)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-[rgba(235,235,245,0.05)] hover:bg-[rgba(235,235,245,0.1)] text-[rgba(235,235,245,0.4)] text-[9px] font-semibold transition-colors"
+                                  >
+                                    <XCircle size={8} />
+                                    Keep All
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Nothing to review */}
+                    {totalPending === 0 && (auto_applied.categories > 0 || auto_applied.sources > 0) && (
+                      <div className="px-3 py-6 text-center">
+                        <CheckCircle2 size={20} className="text-[#30D158] mx-auto mb-2" />
+                        <p className="text-[11px] text-[rgba(235,235,245,0.5)]">All suggestions handled — nothing left to review.</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}

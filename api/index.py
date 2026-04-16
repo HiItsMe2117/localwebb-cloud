@@ -2649,6 +2649,12 @@ class TimelineResearchRequest(BaseModel):
     messages: List[Dict[str, str]] = []
     focused_events: List[Dict[str, str]] = []
 
+class AuditApplyRequest(BaseModel):
+    suggestion_ids: List[str]
+
+class AuditDismissRequest(BaseModel):
+    suggestion_ids: List[str]
+
 class GraphResearchRequest(BaseModel):
     query: str
     messages: List[Dict[str, str]] = []
@@ -5796,6 +5802,464 @@ async def get_recent_findings(user=Depends(optional_user), limit: int = 10):
         "theories": theories.data or [],
         "discoveries": evidence.data or [],
     }
+
+
+# ── Timeline Audit endpoints ──────────────────────────────────────────────────
+
+def _extract_web_sources(res) -> list:
+    """Pull grounding web sources from a Gemini response."""
+    web_sources = []
+    candidates = getattr(res, 'candidates', None)
+    if candidates and len(candidates) > 0:
+        gm = getattr(candidates[0], 'grounding_metadata', None)
+        if gm and getattr(gm, 'grounding_chunks', None):
+            import urllib.parse
+            for gc in gm.grounding_chunks:
+                if gc.web:
+                    uri = gc.web.uri or ""
+                    if uri:
+                        domain = urllib.parse.urlparse(uri).netloc.removeprefix('www.')
+                        web_sources.append({"title": gc.web.title or "", "uri": uri, "domain": domain})
+    return web_sources
+
+
+@app.post("/api/cases/{case_id}/timeline/audit")
+async def timeline_audit(case_id: str, user = Depends(require_paid)):
+    """Run AI audit on timeline events: categorize, find dates, detect duplicates, find sources."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    if not client:
+        return JSONResponse(status_code=503, content={"error": "GenAI client not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        # Load case context
+        case_res = supabase.table("cases").select("title, summary, category").eq("id", case_id).execute()
+        case_data = case_res.data[0] if case_res.data else {}
+
+        # Load all events
+        events_res = supabase.table("case_timeline_events").select("*").eq("case_id", case_id).execute()
+        all_events = events_res.data or []
+
+        if not all_events:
+            return {"auto_applied": {"categories": 0, "sources": 0}, "suggestions": [], "duplicate_groups": []}
+
+        # Clear any previous pending suggestions for this case
+        supabase.table("case_timeline_audit_suggestions").delete().eq("case_id", case_id).eq("status", "pending").execute()
+
+        auto_applied_categories = 0
+        auto_applied_sources = 0
+        suggestions = []
+        duplicate_groups = []
+
+        case_context = f"Case: {case_data.get('title', 'Untitled')} — {case_data.get('category', 'Unknown')}\nSummary: {case_data.get('summary', 'No summary.')}"
+
+        # ─── Step 1: Categorize uncategorized events ───────────────────────
+        uncategorized = [e for e in all_events if (e.get("category") or "general") == "general"]
+        if uncategorized:
+            event_list = json.dumps([{"id": e["id"], "title": e["title"], "description": (e.get("description") or "")[:200], "event_date": e.get("event_date")} for e in uncategorized], indent=2)
+            cat_prompt = f"""You are an investigative researcher categorizing timeline events.
+
+{case_context}
+
+AVAILABLE CATEGORIES:
+- property: Real estate transactions, property records, building permits
+- epstein-link: Connections to Jeffrey Epstein or associates
+- regulatory: Government oversight, regulatory actions, inspections
+- political: Political activities, campaigns, government positions
+- corporate: Business dealings, corporate filings, mergers
+- financial: Financial transactions, investments, banking
+- legal: Court cases, lawsuits, legal filings, depositions
+- crime: Criminal activity, arrests, indictments, convictions
+- general: Only if none of the above fit at all
+
+EVENTS TO CATEGORIZE:
+{event_list}
+
+For each event, determine the most appropriate category based on the title and description.
+Return a JSON array:
+[{{"id": "event-uuid", "category": "legal", "confidence": 0.95, "rationale": "Event describes a court filing..."}}]
+
+Be specific. Choose the most fitting category — avoid "general" unless nothing else applies."""
+
+            try:
+                res = generate(
+                    client,
+                    model="gemini-2.0-flash",
+                    contents=cat_prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
+                )
+                log_usage(user, "/api/cases/timeline/audit/categorize", "gemini-2.0-flash", res.usage_metadata)
+                cat_results = json.loads(res.text)
+
+                for cr in cat_results:
+                    if not isinstance(cr, dict) or "id" not in cr:
+                        continue
+                    conf = cr.get("confidence", 0)
+                    cat = cr.get("category", "general")
+                    if cat == "general":
+                        continue
+
+                    if conf >= 0.9:
+                        # Auto-apply high-confidence
+                        supabase.table("case_timeline_events").update({"category": cat}).eq("id", cr["id"]).eq("case_id", case_id).execute()
+                        auto_applied_categories += 1
+                        supabase.table("case_timeline_audit_suggestions").insert({
+                            "case_id": case_id, "event_id": cr["id"],
+                            "suggestion_type": "missing_category",
+                            "current_value": json.dumps("general"),
+                            "suggested_value": json.dumps(cat),
+                            "confidence": conf,
+                            "ai_rationale": cr.get("rationale", ""),
+                            "status": "auto_applied",
+                        }).execute()
+                    else:
+                        # Queue for review
+                        result = supabase.table("case_timeline_audit_suggestions").insert({
+                            "case_id": case_id, "event_id": cr["id"],
+                            "suggestion_type": "missing_category",
+                            "current_value": json.dumps("general"),
+                            "suggested_value": json.dumps(cat),
+                            "confidence": conf,
+                            "ai_rationale": cr.get("rationale", ""),
+                            "status": "pending",
+                        }).execute()
+                        ev = next((e for e in all_events if e["id"] == cr["id"]), None)
+                        if result.data and ev:
+                            suggestions.append({
+                                "id": result.data[0]["id"],
+                                "event_id": cr["id"],
+                                "suggestion_type": "missing_category",
+                                "event_title": ev["title"],
+                                "current_value": "general",
+                                "suggested_value": cat,
+                                "confidence": conf,
+                                "ai_rationale": cr.get("rationale", ""),
+                            })
+            except Exception as e:
+                print(f"Audit categorize step failed: {e}")
+
+        # ─── Step 2: Find missing dates ────────────────────────────────────
+        undated = [e for e in all_events if not e.get("event_date")]
+        if undated:
+            BATCH_SIZE = 25
+            for i in range(0, len(undated), BATCH_SIZE):
+                batch = undated[i:i + BATCH_SIZE]
+                event_list = json.dumps([{"id": e["id"], "title": e["title"], "description": (e.get("description") or "")[:300]} for e in batch], indent=2)
+                date_prompt = f"""You are an investigative researcher. Use web search to find accurate dates for timeline events that are currently missing dates.
+
+{case_context}
+
+EVENTS MISSING DATES:
+{event_list}
+
+Search the web for each event. Return a JSON array with your findings:
+[{{"id": "event-uuid", "date": "YYYY-MM-DD or YYYY-MM or YYYY or null", "confidence": 0.8, "rationale": "Found court record dated March 12, 2015..."}}]
+
+Guidelines:
+- Use YYYY-MM-DD when an exact date is confirmed.
+- Use YYYY-MM or YYYY for partial dates.
+- Return null for date if you truly cannot find any date reference.
+- Set confidence based on source reliability (court records = high, news articles = medium, inference = low).
+- Skip events where no date can be reasonably determined (don't include them in the response).
+- Never invent dates — only report what you can verify."""
+
+                try:
+                    res = generate(
+                        client,
+                        model="gemini-2.0-flash",
+                        contents=date_prompt,
+                        config=types.GenerateContentConfig(
+                            tools=[types.Tool(google_search=types.GoogleSearch())],
+                            response_mime_type="application/json",
+                        ),
+                    )
+                    log_usage(user, "/api/cases/timeline/audit/dates", "gemini-2.0-flash", res.usage_metadata)
+                    web_sources = _extract_web_sources(res)
+                    date_results = json.loads(res.text)
+
+                    for dr in date_results:
+                        if not isinstance(dr, dict) or "id" not in dr or not dr.get("date"):
+                            continue
+                        result = supabase.table("case_timeline_audit_suggestions").insert({
+                            "case_id": case_id, "event_id": dr["id"],
+                            "suggestion_type": "missing_date",
+                            "current_value": None,
+                            "suggested_value": json.dumps(dr["date"]),
+                            "confidence": dr.get("confidence", 0.5),
+                            "ai_rationale": dr.get("rationale", ""),
+                            "status": "pending",
+                            "web_sources": web_sources,
+                        }).execute()
+                        ev = next((e for e in all_events if e["id"] == dr["id"]), None)
+                        if result.data and ev:
+                            suggestions.append({
+                                "id": result.data[0]["id"],
+                                "event_id": dr["id"],
+                                "suggestion_type": "missing_date",
+                                "event_title": ev["title"],
+                                "current_value": None,
+                                "suggested_value": dr["date"],
+                                "confidence": dr.get("confidence", 0.5),
+                                "ai_rationale": dr.get("rationale", ""),
+                                "web_sources": web_sources,
+                            })
+                except Exception as e:
+                    print(f"Audit date batch {i // BATCH_SIZE + 1} failed: {e}")
+
+        # ─── Step 3: Detect duplicates ─────────────────────────────────────
+        if len(all_events) >= 2:
+            event_summary = json.dumps([{
+                "id": e["id"],
+                "title": e["title"],
+                "date": e.get("event_date"),
+                "description": (e.get("description") or "")[:150],
+                "category": e.get("category", "general"),
+            } for e in all_events], indent=2)
+
+            dedup_prompt = f"""You are deduplicating timeline events for an investigation. Below is a list of events. Identify groups of events that describe the SAME real-world occurrence but are worded differently.
+
+{case_context}
+
+EVENTS:
+{event_summary}
+
+Rules:
+- Only group events that clearly describe the same occurrence (same date/timeframe, same key actors, same outcome).
+- Do NOT merge events that are merely related or similar in topic.
+- For each group, pick the best event to keep as the "target" (longest description, most accurate date, best title).
+
+Return a JSON array of duplicate groups:
+[{{"target_id": "best-event-uuid", "duplicate_ids": ["dup-uuid-1", "dup-uuid-2"], "rationale": "Both describe the same property transfer on 2015-03-12..."}}]
+
+If no duplicates found, return an empty array: []"""
+
+            try:
+                res = generate(
+                    client,
+                    model="gemini-2.0-flash",
+                    contents=dedup_prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
+                )
+                log_usage(user, "/api/cases/timeline/audit/duplicates", "gemini-2.0-flash", res.usage_metadata)
+                dedup_results = json.loads(res.text)
+
+                for group in dedup_results:
+                    if not isinstance(group, dict) or "target_id" not in group:
+                        continue
+                    dup_ids = group.get("duplicate_ids", [])
+                    if not dup_ids:
+                        continue
+                    all_ids = [group["target_id"]] + dup_ids
+                    result = supabase.table("case_timeline_audit_suggestions").insert({
+                        "case_id": case_id,
+                        "event_id": None,
+                        "suggestion_type": "duplicate",
+                        "current_value": None,
+                        "suggested_value": None,
+                        "confidence": group.get("confidence", 0.8),
+                        "ai_rationale": group.get("rationale", ""),
+                        "status": "pending",
+                        "merge_target_id": group["target_id"],
+                        "related_event_ids": all_ids,
+                    }).execute()
+                    if result.data:
+                        events_in_group = [{"id": e["id"], "title": e["title"], "event_date": e.get("event_date"), "description": (e.get("description") or "")[:200]} for e in all_events if e["id"] in all_ids]
+                        duplicate_groups.append({
+                            "id": result.data[0]["id"],
+                            "events": events_in_group,
+                            "merge_target_id": group["target_id"],
+                            "ai_rationale": group.get("rationale", ""),
+                        })
+            except Exception as e:
+                print(f"Audit duplicate detection failed: {e}")
+
+        # ─── Step 4: Find missing sources ──────────────────────────────────
+        unsourced = [e for e in all_events if not e.get("sources")]
+        if unsourced:
+            BATCH_SIZE = 25
+            for i in range(0, len(unsourced), BATCH_SIZE):
+                batch = unsourced[i:i + BATCH_SIZE]
+                event_list = json.dumps([{"id": e["id"], "title": e["title"], "description": (e.get("description") or "")[:200], "event_date": e.get("event_date")} for e in batch], indent=2)
+                source_prompt = f"""You are an investigative researcher finding source citations for timeline events.
+
+{case_context}
+
+EVENTS NEEDING SOURCES:
+{event_list}
+
+For each event, search the web to find authoritative sources that corroborate it (news articles, court records, government filings, corporate records, etc.).
+
+Return a JSON array:
+[{{"id": "event-uuid", "sources": [{{"uri": "https://...", "title": "Article or document title", "domain": "example.com"}}]}}]
+
+Guidelines:
+- Only include real, verifiable URLs.
+- Prefer primary sources (court records, SEC filings) over secondary (news).
+- Include 1-3 sources per event when available.
+- Skip events where no sources can be found (don't include them)."""
+
+                try:
+                    res = generate(
+                        client,
+                        model="gemini-2.0-flash",
+                        contents=source_prompt,
+                        config=types.GenerateContentConfig(
+                            tools=[types.Tool(google_search=types.GoogleSearch())],
+                            response_mime_type="application/json",
+                        ),
+                    )
+                    log_usage(user, "/api/cases/timeline/audit/sources", "gemini-2.0-flash", res.usage_metadata)
+                    source_results = json.loads(res.text)
+
+                    for sr in source_results:
+                        if not isinstance(sr, dict) or "id" not in sr:
+                            continue
+                        sources = sr.get("sources", [])
+                        if not sources:
+                            continue
+                        # Auto-apply sources (additive, low risk)
+                        supabase.table("case_timeline_events").update({"sources": sources}).eq("id", sr["id"]).eq("case_id", case_id).execute()
+                        auto_applied_sources += 1
+                        supabase.table("case_timeline_audit_suggestions").insert({
+                            "case_id": case_id, "event_id": sr["id"],
+                            "suggestion_type": "missing_source",
+                            "current_value": None,
+                            "suggested_value": json.dumps(sources),
+                            "confidence": 0.9,
+                            "ai_rationale": f"Found {len(sources)} source(s) via web search",
+                            "status": "auto_applied",
+                            "web_sources": sources,
+                        }).execute()
+                except Exception as e:
+                    print(f"Audit source batch {i // BATCH_SIZE + 1} failed: {e}")
+
+        return {
+            "auto_applied": {"categories": auto_applied_categories, "sources": auto_applied_sources},
+            "suggestions": suggestions,
+            "duplicate_groups": duplicate_groups,
+        }
+    except Exception as e:
+        print(f"Timeline audit failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/audit/apply")
+async def timeline_audit_apply(case_id: str, request: AuditApplyRequest, user = Depends(require_paid)):
+    """Apply accepted audit suggestions — updates events, merges duplicates."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        applied = 0
+        for sid in request.suggestion_ids:
+            sug_res = supabase.table("case_timeline_audit_suggestions").select("*").eq("id", sid).eq("case_id", case_id).execute()
+            sug = sug_res.data[0] if sug_res.data else None
+            if not sug or sug["status"] != "pending":
+                continue
+
+            stype = sug["suggestion_type"]
+
+            if stype == "missing_date" and sug.get("event_id"):
+                date_val = json.loads(sug["suggested_value"]) if sug.get("suggested_value") else None
+                if date_val:
+                    supabase.table("case_timeline_events").update({"event_date": date_val}).eq("id", sug["event_id"]).eq("case_id", case_id).execute()
+
+            elif stype == "missing_category" and sug.get("event_id"):
+                cat_val = json.loads(sug["suggested_value"]) if sug.get("suggested_value") else None
+                if cat_val:
+                    supabase.table("case_timeline_events").update({"category": cat_val}).eq("id", sug["event_id"]).eq("case_id", case_id).execute()
+
+            elif stype == "duplicate":
+                target_id = sug.get("merge_target_id")
+                related = sug.get("related_event_ids") or []
+                losers = [eid for eid in related if eid != target_id]
+
+                if target_id and losers:
+                    # Load target to merge descriptions
+                    target_res = supabase.table("case_timeline_events").select("*").eq("id", target_id).execute()
+                    target_ev = target_res.data[0] if target_res.data else None
+
+                    if target_ev:
+                        # Merge: keep longest description, union sources
+                        best_desc = target_ev.get("description") or ""
+                        merged_sources = list(target_ev.get("sources") or [])
+
+                        for lid in losers:
+                            loser_res = supabase.table("case_timeline_events").select("*").eq("id", lid).execute()
+                            loser_ev = loser_res.data[0] if loser_res.data else None
+                            if loser_ev:
+                                if len(loser_ev.get("description") or "") > len(best_desc):
+                                    best_desc = loser_ev["description"]
+                                merged_sources.extend(loser_ev.get("sources") or [])
+                                # If target has no date but loser does, take it
+                                if not target_ev.get("event_date") and loser_ev.get("event_date"):
+                                    supabase.table("case_timeline_events").update({"event_date": loser_ev["event_date"]}).eq("id", target_id).execute()
+
+                        # Update target
+                        update_data: Dict[str, Any] = {"description": best_desc}
+                        if merged_sources:
+                            # Deduplicate sources by URI
+                            seen_uris: set = set()
+                            unique_sources = []
+                            for s in merged_sources:
+                                uri = s.get("uri", "")
+                                if uri and uri not in seen_uris:
+                                    seen_uris.add(uri)
+                                    unique_sources.append(s)
+                                elif not uri:
+                                    unique_sources.append(s)
+                            update_data["sources"] = unique_sources
+                        supabase.table("case_timeline_events").update(update_data).eq("id", target_id).execute()
+
+                        # Rewire edges from losers to target
+                        for lid in losers:
+                            supabase.table("case_timeline_edges").update({"source_event_id": target_id}).eq("source_event_id", lid).eq("case_id", case_id).execute()
+                            supabase.table("case_timeline_edges").update({"target_event_id": target_id}).eq("target_event_id", lid).eq("case_id", case_id).execute()
+
+                        # Rewire track associations
+                        for lid in losers:
+                            existing_tracks = supabase.table("case_timeline_event_tracks").select("track_id").eq("event_id", lid).execute()
+                            target_tracks = supabase.table("case_timeline_event_tracks").select("track_id").eq("event_id", target_id).execute()
+                            target_track_ids = {t["track_id"] for t in (target_tracks.data or [])}
+                            for et in (existing_tracks.data or []):
+                                if et["track_id"] not in target_track_ids:
+                                    supabase.table("case_timeline_event_tracks").insert({"event_id": target_id, "track_id": et["track_id"]}).execute()
+                            supabase.table("case_timeline_event_tracks").delete().eq("event_id", lid).execute()
+
+                        # Delete loser events (edges cascade)
+                        for lid in losers:
+                            supabase.table("case_timeline_events").delete().eq("id", lid).eq("case_id", case_id).execute()
+
+            # Mark accepted
+            supabase.table("case_timeline_audit_suggestions").update({"status": "accepted"}).eq("id", sid).execute()
+            applied += 1
+
+        return {"applied": applied}
+    except Exception as e:
+        print(f"Audit apply failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/{case_id}/timeline/audit/dismiss")
+async def timeline_audit_dismiss(case_id: str, request: AuditDismissRequest, user = Depends(require_paid)):
+    """Dismiss (reject) audit suggestions."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
+    try:
+        await verify_case_ownership(case_id, user, write=True)
+
+        dismissed = 0
+        for sid in request.suggestion_ids:
+            supabase.table("case_timeline_audit_suggestions").update({"status": "rejected"}).eq("id", sid).eq("case_id", case_id).execute()
+            dismissed += 1
+
+        return {"dismissed": dismissed}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 if __name__ == "__main__":
