@@ -5768,7 +5768,7 @@ async def get_case_tree(user=Depends(optional_user)):
         case["entity_count"] = entity_counts.get(cid, 0)
         case["timeline_event_count"] = timeline_counts.get(cid, 0)
 
-    return {"cases": all_cases}
+    return {"cases": all_cases, "_version": "tree-v2-batched"}
 
 
 @app.get("/api/agent/findings")
