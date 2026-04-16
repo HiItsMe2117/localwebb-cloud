@@ -5720,26 +5720,53 @@ async def submit_agent_directive(request: Request, user=Depends(optional_user)):
     return {"task": res.data[0] if res.data else task}
 
 
+def _fetch_all_case_ids(table: str, chunk: int = 1000) -> list[str]:
+    """Fetch case_id column from a table with pagination (handles >1000 rows)."""
+    out: list[str] = []
+    offset = 0
+    while True:
+        resp = (
+            supabase.table(table)
+            .select("case_id")
+            .range(offset, offset + chunk - 1)
+            .execute()
+        )
+        rows = resp.data or []
+        out.extend(r["case_id"] for r in rows if r.get("case_id"))
+        if len(rows) < chunk:
+            break
+        offset += chunk
+    return out
+
+
 @app.get("/api/agent/cases/tree")
 async def get_case_tree(user=Depends(optional_user)):
-    """Get hierarchical case tree for mission control."""
-    # Get all cases with parent info
+    """Get hierarchical case tree for mission control.
+
+    Optimized: 4 queries total (cases + 3 count aggregations), regardless of case count.
+    Previous implementation did 1 + N*3 queries, which timed out at scale.
+    """
+    from collections import Counter
+
+    # 1 query: all cases
     cases = (
         supabase.table("cases")
         .select("id, title, category, status, summary, parent_case_id, depth, operational_question, created_at, updated_at")
         .order("created_at", desc=False)
         .execute()
     )
-
-    # Get evidence counts per case
     all_cases = cases.data or []
+
+    # 3 queries: case_id columns from related tables, count client-side
+    ev_counts = Counter(_fetch_all_case_ids("case_evidence"))
+    entity_counts = Counter(_fetch_all_case_ids("case_graph_entities"))
+    timeline_counts = Counter(_fetch_all_case_ids("case_timeline_events"))
+
     for case in all_cases:
-        ev = supabase.table("case_evidence").select("id", count="exact").eq("case_id", case["id"]).execute()
-        entity_count = supabase.table("case_graph_entities").select("node_id", count="exact").eq("case_id", case["id"]).execute()
-        timeline_count = supabase.table("case_timeline_events").select("id", count="exact").eq("case_id", case["id"]).execute()
-        case["evidence_count"] = ev.count or 0
-        case["entity_count"] = entity_count.count or 0
-        case["timeline_event_count"] = timeline_count.count or 0
+        cid = case["id"]
+        case["evidence_count"] = ev_counts.get(cid, 0)
+        case["entity_count"] = entity_counts.get(cid, 0)
+        case["timeline_event_count"] = timeline_counts.get(cid, 0)
 
     return {"cases": all_cases}
 
