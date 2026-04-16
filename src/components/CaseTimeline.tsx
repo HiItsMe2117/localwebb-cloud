@@ -412,6 +412,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   } | null>(null);
   const [applyingIds, setApplyingIds] = useState<Set<string>>(new Set());
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+  const [dupExclusions, setDupExclusions] = useState<Record<string, Set<string>>>({}); // group_id -> set of excluded event IDs
 
   // Multi-case overlay
   const [showChildTimelines, setShowChildTimelines] = useState(false);
@@ -1020,6 +1021,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     setAuditResults(null);
     setDismissedIds(new Set());
     setApplyingIds(new Set());
+    setDupExclusions({});
     setAuditStep('Running audit — categorizing, finding dates, detecting duplicates, finding sources...');
     try {
       const res = await axios.post(`/api/cases/${caseId}/timeline/audit`);
@@ -1044,7 +1046,12 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const applySuggestion = useCallback(async (suggestionId: string) => {
     setApplyingIds(prev => new Set(prev).add(suggestionId));
     try {
-      await axios.post(`/api/cases/${caseId}/timeline/audit/apply`, { suggestion_ids: [suggestionId] });
+      const excluded = dupExclusions[suggestionId];
+      const payload: any = { suggestion_ids: [suggestionId] };
+      if (excluded && excluded.size > 0) {
+        payload.exclusions = { [suggestionId]: Array.from(excluded) };
+      }
+      await axios.post(`/api/cases/${caseId}/timeline/audit/apply`, payload);
       setDismissedIds(prev => new Set(prev).add(suggestionId));
       shouldAutoLayoutAfterLoad.current = true;
       await loadTimeline();
@@ -1055,7 +1062,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     } finally {
       setApplyingIds(prev => { const n = new Set(prev); n.delete(suggestionId); return n; });
     }
-  }, [caseId, loadTimeline]);
+  }, [caseId, loadTimeline, dupExclusions]);
 
   const dismissSuggestion = useCallback(async (suggestionId: string) => {
     try {
@@ -2965,6 +2972,16 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                           {pendingDups.map(g => {
                             const target = g.events.find(e => e.id === g.merge_target_id);
                             const dupes = g.events.filter(e => e.id !== g.merge_target_id);
+                            const excluded = dupExclusions[g.id] || new Set<string>();
+                            const activeDupes = dupes.filter(d => !excluded.has(d.id));
+                            const toggleExclude = (eventId: string) => {
+                              setDupExclusions(prev => {
+                                const current = new Set(prev[g.id] || []);
+                                if (current.has(eventId)) current.delete(eventId);
+                                else current.add(eventId);
+                                return { ...prev, [g.id]: current };
+                              });
+                            };
                             return (
                               <div key={g.id} className="rounded-lg border border-[rgba(84,84,88,0.3)] bg-[#1C1C1E]/60 p-2">
                                 <div className="mb-1.5">
@@ -2974,24 +2991,43 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                   <p className="text-[11px] font-semibold text-white leading-tight">{target?.title || 'Unknown'}</p>
                                   {target?.event_date && <span className="text-[9px] font-mono text-[rgba(235,235,245,0.4)]">{target.event_date}</span>}
                                 </div>
-                                {dupes.map(d => (
-                                  <div key={d.id} className="mt-1 pl-2 border-l-2 border-[#FF453A]/30">
-                                    <div className="flex items-center gap-1 mb-0.5">
-                                      <span className="text-[9px] font-semibold text-[#FF453A] uppercase tracking-wider">Merge</span>
+                                {dupes.map(d => {
+                                  const isExcluded = excluded.has(d.id);
+                                  return (
+                                    <div
+                                      key={d.id}
+                                      className={`mt-1 pl-2 border-l-2 transition-opacity ${isExcluded ? 'border-[rgba(84,84,88,0.3)] opacity-40' : 'border-[#FF453A]/30'}`}
+                                    >
+                                      <div className="flex items-center gap-1.5 mb-0.5">
+                                        <button
+                                          onClick={() => toggleExclude(d.id)}
+                                          className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                            isExcluded
+                                              ? 'border-[rgba(84,84,88,0.5)] bg-transparent'
+                                              : 'border-[#FF453A]/50 bg-[#FF453A]/15'
+                                          }`}
+                                          title={isExcluded ? 'Include in merge' : 'Exclude from merge'}
+                                        >
+                                          {!isExcluded && <Check size={7} className="text-[#FF453A]" />}
+                                        </button>
+                                        <span className={`text-[9px] font-semibold uppercase tracking-wider ${isExcluded ? 'text-[rgba(235,235,245,0.25)]' : 'text-[#FF453A]'}`}>
+                                          {isExcluded ? 'Skip' : 'Merge'}
+                                        </span>
+                                      </div>
+                                      <p className="text-[10px] text-[rgba(235,235,245,0.5)] leading-tight ml-5">{d.title}</p>
+                                      {d.event_date && <span className="text-[9px] font-mono text-[rgba(235,235,245,0.3)] ml-5">{d.event_date}</span>}
                                     </div>
-                                    <p className="text-[10px] text-[rgba(235,235,245,0.5)] leading-tight">{d.title}</p>
-                                    {d.event_date && <span className="text-[9px] font-mono text-[rgba(235,235,245,0.3)]">{d.event_date}</span>}
-                                  </div>
-                                ))}
+                                  );
+                                })}
                                 <p className="text-[9px] text-[rgba(235,235,245,0.3)] leading-snug mt-1.5 mb-1.5">{g.ai_rationale}</p>
                                 <div className="flex items-center gap-1">
                                   <button
                                     onClick={() => applySuggestion(g.id)}
-                                    disabled={applyingIds.has(g.id)}
+                                    disabled={applyingIds.has(g.id) || activeDupes.length === 0}
                                     className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#30D158]/15 hover:bg-[#30D158]/25 text-[#30D158] text-[9px] font-semibold transition-colors disabled:opacity-50"
                                   >
                                     {applyingIds.has(g.id) ? <Loader2 size={8} className="animate-spin" /> : <Check size={8} />}
-                                    Merge
+                                    Merge{activeDupes.length < dupes.length ? ` (${activeDupes.length})` : ''}
                                   </button>
                                   <button
                                     onClick={() => dismissSuggestion(g.id)}

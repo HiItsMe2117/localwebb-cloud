@@ -2651,6 +2651,7 @@ class TimelineResearchRequest(BaseModel):
 
 class AuditApplyRequest(BaseModel):
     suggestion_ids: List[str]
+    exclusions: Optional[Dict[str, List[str]]] = None  # suggestion_id -> list of event IDs to exclude from merge
 
 class AuditDismissRequest(BaseModel):
     suggestion_ids: List[str]
@@ -6175,7 +6176,9 @@ async def timeline_audit_apply(case_id: str, request: AuditApplyRequest, user = 
             elif stype == "duplicate":
                 target_id = sug.get("merge_target_id")
                 related = sug.get("related_event_ids") or []
-                losers = [eid for eid in related if eid != target_id]
+                # Filter out any events the user excluded from this merge
+                excluded_ids = set((request.exclusions or {}).get(sid, []))
+                losers = [eid for eid in related if eid != target_id and eid not in excluded_ids]
 
                 if target_id and losers:
                     # Load target to merge descriptions
