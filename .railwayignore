@@ -1,0 +1,79 @@
+node_modules/
+.git/
+dist/
+localwebb/
+chroma_db/
+data/
+logs/
+*.log
+*.zip
+*.png
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Large progress/state files not needed at runtime
+scripts/*_progress.json
+scripts/*_progress.json.bak
+scripts/pinecone_filenames.json
+scripts/__pycache__/
+
+# Dev/local only
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Frontend — agent worker doesn't need any JS/TS
+src/
+public/
+index.html
+vite.config.ts
+tsconfig*.json
+package.json
+package-lock.json
+postcss.config.js
+tailwind.config.js
+
+# Supabase SQL — worker doesn't run migrations
+supabase/
+
+# Vercel-only — keep api/llm.py (imported by agent) and requirements.txt (referenced by root requirements.txt)
+api/billing.py
+api/graph_ops.py
+api/index.py
+api/investigator.py
+api/notify.py
+api/reranker.py
+api/scanner.py
+api/theory_followup.py
+api/theory.py
+api/__pycache__/
+vercel.json
+.vercelignore
+
+# Secrets (env vars supplied by Railway)
+.env
+.env.*
+
+# Ad-hoc dev scripts at root
+/audit_*.py
+/bulk_audit_*.py
+/check_entity.py
+/check_status_tmp.py
+/clean_sweep*.py
+/cleanup_*.py
+/create_admin.py
+/delete_garbage*.py
+/extract_*.py
+/fix_*.py
+/heal_*.py
+/inconsistency_*.py
+/inspect_*.py
+/leon_black_audit.py
+/merge_epstein.py
+/surgical_purge.py
+/update_new_york.py
+/usanys_audit.py
