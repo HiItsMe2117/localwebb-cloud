@@ -6018,17 +6018,34 @@ Guidelines:
                 "category": e.get("category", "general"),
             } for e in all_events], indent=2)
 
-            dedup_prompt = f"""You are deduplicating timeline events for an investigation. Below is a list of events. Identify groups of events that describe the SAME real-world occurrence but are worded differently.
+            dedup_prompt = f"""You are deduplicating timeline events for an investigation. Below is a list of events. Identify ONLY events that are true duplicates — the exact same real-world occurrence described with different wording.
 
 {case_context}
 
 EVENTS:
 {event_summary}
 
-Rules:
-- Only group events that clearly describe the same occurrence (same date/timeframe, same key actors, same outcome).
-- Do NOT merge events that are merely related or similar in topic.
-- For each group, pick the best event to keep as the "target" (longest description, most accurate date, best title).
+STRICT RULES — read carefully:
+1. A duplicate means the EXACT SAME singular occurrence: same specific date, same specific actors, same specific action/outcome. Two events are duplicates ONLY if a historian would say "these are two records of one thing that happened once."
+2. Do NOT group events that are merely related, thematically similar, or part of the same topic/saga.
+3. Do NOT group events from different years — "FII 2017" and "FII 2018" are separate annual events, not duplicates.
+4. Do NOT group sequential events — an invitation, the event itself, and a follow-up are three separate events even if they concern the same subject.
+5. Do NOT group different financial transactions just because they involve the same account or institution.
+6. Do NOT group an arrest with unrelated transactions, legal actions, or biographical events.
+7. Keep groups small — typically 2-3 events. If you have a group larger than 4, you are almost certainly being too loose.
+8. When in doubt, do NOT merge. False negatives (missing a duplicate) are far less harmful than false positives (merging distinct events).
+
+EXAMPLES OF TRUE DUPLICATES:
+- "Haze Trust Transfer to Southern Financial LLC" (2019-02-07) and "Haze Trust Checking to Southern Financial LLC Checking" (2/7/2019) — same transfer, same date, same parties, same amount
+- "Epstein found in SHU" (7/23/2019) and "Inmate Epstein found on floor" (7/23/2019) — same incident, same date
+
+EXAMPLES OF NON-DUPLICATES (do NOT merge these):
+- "FII event in Riyadh" (Oct 2017) and "FII event in Riyadh" (Oct 2018) — different years = different events
+- "Invitation to FII" (June 2017) and "FII event in Riyadh" (Oct 2017) — invitation vs the event itself
+- "Epstein Arrested" (July 2019) and "Wire transfer" (June 2018) — completely different events
+- "Gratitude America Donations" (2016) and "Noam Chomsky Trust Distributions" (2015) — different entities, different transactions
+
+For each group, pick the best event to keep as "target" — prefer the most specific title, longest description, and most precise date.
 
 Return a JSON array of duplicate groups:
 [{{"target_id": "best-event-uuid", "duplicate_ids": ["dup-uuid-1", "dup-uuid-2"], "rationale": "Both describe the same property transfer on 2015-03-12..."}}]
