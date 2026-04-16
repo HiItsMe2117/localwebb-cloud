@@ -9,3 +9,9 @@ logs
 *.zip
 *.png
 epsteinfiles-487701-fad3618ad671.json
+
+# Railway-only files — not used by Vercel, skip bundling them
+agent/
+Procfile
+railway.json
+runtime.txt
