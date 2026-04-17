@@ -33,19 +33,79 @@ interface LaneMarker {
   height: number;
 }
 
+const MONTH_MAP: Record<string, string> = {
+  jan: '01', january: '01', feb: '02', february: '02', mar: '03', march: '03',
+  apr: '04', april: '04', may: '05', jun: '06', june: '06', jul: '07', july: '07',
+  aug: '08', august: '08', sep: '09', september: '09', oct: '10', october: '10',
+  nov: '11', november: '11', dec: '12', december: '12',
+  spring: '04', summer: '07', fall: '10', autumn: '10', winter: '01',
+  early: '01', mid: '06', late: '11',
+};
+
 function parseEventSortKey(dateStr: string | null | undefined): string {
   if (!dateStr) return '9999-99-99'; // undated → end
-  // Pad partial dates: "2024" → "2024-00-00", "2024-03" → "2024-03-00"
-  const parts = dateStr.split('-');
-  const y = parts[0] || '9999';
-  const m = parts[1] || '00';
-  const d = parts[2] || '00';
-  return `${y}-${m}-${d}`;
+
+  const s = dateStr.trim();
+
+  // Already ISO-ish: "2024", "2024-03", "2024-03-15"
+  if (/^\d{4}(-\d{2}){0,2}$/.test(s)) {
+    const parts = s.split('-');
+    return `${parts[0]}-${parts[1] || '00'}-${parts[2] || '00'}`;
+  }
+
+  // US format: "2/7/2019", "02/07/2019", "12/3/2018"
+  const usMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (usMatch) {
+    return `${usMatch[3]}-${usMatch[1].padStart(2, '0')}-${usMatch[2].padStart(2, '0')}`;
+  }
+
+  // Extract a 4-digit year from anywhere in the string
+  const yearMatch = s.match(/\b(\d{4})\b/);
+  const year = yearMatch ? yearMatch[1] : '9999';
+
+  // Try to find a month name
+  const lower = s.toLowerCase();
+  let month = '00';
+  for (const [name, num] of Object.entries(MONTH_MAP)) {
+    if (lower.includes(name)) {
+      month = num;
+      break;
+    }
+  }
+
+  // Try to find a day number (1-31) that isn't the year
+  let day = '00';
+  const dayMatch = s.match(/\b(\d{1,2})\b/g);
+  if (dayMatch) {
+    for (const d of dayMatch) {
+      const n = parseInt(d, 10);
+      if (n >= 1 && n <= 31 && d !== year) {
+        day = d.padStart(2, '0');
+        break;
+      }
+    }
+  }
+
+  // Handle decade references: "2000s", "early 2000s"
+  const decadeMatch = s.match(/(\d{4})s\b/);
+  if (decadeMatch && year === '9999') {
+    return `${decadeMatch[1]}-${month}-${day}`;
+  }
+
+  return `${year}-${month}-${day}`;
 }
 
 function extractYear(dateStr: string | null | undefined): string {
   if (!dateStr) return 'Undated';
-  return dateStr.split('-')[0] || 'Undated';
+  // ISO format
+  if (/^\d{4}/.test(dateStr)) return dateStr.split('-')[0];
+  // Find 4-digit year anywhere
+  const m = dateStr.match(/\b(\d{4})\b/);
+  if (m) return m[1];
+  // Decade: "2000s"
+  const dec = dateStr.match(/(\d{4})s\b/);
+  if (dec) return dec[1];
+  return 'Undated';
 }
 
 function computeTimelineLayout(eventNodes: Node[]): { positions: Record<string, { x: number; y: number }>; yearMarkers: YearMarker[] } {
