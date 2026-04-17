@@ -1074,17 +1074,25 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
 
   // ── Audit ─────────────────────────────────────────────────────────────────
 
-  const runAudit = useCallback(async () => {
-    if (isAuditing) return;
+  const AUDIT_CHECKS = [
+    { key: 'categorize', label: 'Categorize', icon: '🏷', description: 'Auto-categorize uncategorized events' },
+    { key: 'dates', label: 'Find Dates', icon: '📅', description: 'Research missing dates via web search' },
+    { key: 'duplicates', label: 'Duplicates', icon: '🔍', description: 'Detect and merge duplicate events' },
+    { key: 'sources', label: 'Find Sources', icon: '🔗', description: 'Find source citations for events' },
+  ];
+
+  const runAudit = useCallback(async (checks: string[]) => {
+    if (isAuditing || checks.length === 0) return;
     setIsAuditing(true);
     setShowAudit(true);
     setAuditResults(null);
     setDismissedIds(new Set());
     setApplyingIds(new Set());
     setDupExclusions({});
-    setAuditStep('Running audit — categorizing, finding dates, detecting duplicates, finding sources...');
+    const labels = checks.map(c => AUDIT_CHECKS.find(ac => ac.key === c)?.label || c).join(', ');
+    setAuditStep(`Running: ${labels}...`);
     try {
-      const res = await axios.post(`/api/cases/${caseId}/timeline/audit`);
+      const res = await axios.post(`/api/cases/${caseId}/timeline/audit`, { checks });
       setAuditResults(res.data);
       setAuditStep('');
       const autoCount = (res.data.auto_applied?.categories || 0) + (res.data.auto_applied?.sources || 0);
@@ -2849,49 +2857,50 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                   <ShieldCheck size={14} className="text-[#5E5CE6]" />
                   <span className="text-[13px] font-semibold text-white">Timeline Audit</span>
                 </div>
-                <div className="flex items-center gap-1">
-                  {!isAuditing && (
-                    <button
-                      onClick={runAudit}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#5E5CE6] hover:bg-[#4E4CD6] text-white text-[11px] font-semibold transition-colors"
-                    >
-                      <ShieldCheck size={11} />
-                      {auditResults ? 'Re-run' : 'Run Audit'}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setShowAudit(false)}
-                    className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
-                  >
-                    <X size={14} className="text-[rgba(235,235,245,0.4)]" />
-                  </button>
-                </div>
+                <button
+                  onClick={() => setShowAudit(false)}
+                  className="p-1 hover:bg-[#2C2C2E] rounded-lg transition-colors"
+                >
+                  <X size={14} className="text-[rgba(235,235,245,0.4)]" />
+                </button>
               </div>
             </div>
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto">
+              {/* Check picker — always visible when not running */}
+              {!isAuditing && (
+                <div className="px-3 py-3 border-b border-[rgba(84,84,88,0.2)]">
+                  <div className="grid grid-cols-2 gap-1.5 mb-2">
+                    {AUDIT_CHECKS.map(check => (
+                      <button
+                        key={check.key}
+                        onClick={() => runAudit([check.key])}
+                        className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-[#1C1C1E] border border-[rgba(84,84,88,0.4)] hover:border-[#5E5CE6] text-left transition-colors group"
+                      >
+                        <span className="text-[14px]">{check.icon}</span>
+                        <div>
+                          <p className="text-[11px] font-semibold text-[rgba(235,235,245,0.7)] group-hover:text-white transition-colors">{check.label}</p>
+                          <p className="text-[9px] text-[rgba(235,235,245,0.3)] leading-tight">{check.description}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => runAudit(['categorize', 'dates', 'duplicates', 'sources'])}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#5E5CE6] hover:bg-[#4E4CD6] text-white text-[11px] font-semibold transition-colors w-full justify-center"
+                  >
+                    <ShieldCheck size={11} />
+                    Run All Checks
+                  </button>
+                </div>
+              )}
+
               {isAuditing && (
                 <div className="flex flex-col items-center justify-center gap-3 py-12 px-4">
                   <Loader2 size={28} className="animate-spin text-[#5E5CE6]" />
                   <p className="text-[12px] text-[rgba(235,235,245,0.5)] text-center leading-relaxed">{auditStep}</p>
                   <p className="text-[10px] text-[rgba(235,235,245,0.3)]">This may take 30–60 seconds for large timelines</p>
-                </div>
-              )}
-
-              {!isAuditing && !auditResults && (
-                <div className="flex flex-col items-center justify-center gap-3 py-12 px-4">
-                  <ShieldCheck size={32} className="text-[rgba(235,235,245,0.15)]" />
-                  <p className="text-[12px] text-[rgba(235,235,245,0.4)] text-center leading-relaxed">
-                    AI audit will categorize events, find missing dates, detect duplicates, and find source citations.
-                  </p>
-                  <button
-                    onClick={runAudit}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#5E5CE6] hover:bg-[#4E4CD6] text-white text-[13px] font-semibold transition-colors"
-                  >
-                    <ShieldCheck size={14} />
-                    Run Audit
-                  </button>
                 </div>
               )}
 

@@ -2649,6 +2649,9 @@ class TimelineResearchRequest(BaseModel):
     messages: List[Dict[str, str]] = []
     focused_events: List[Dict[str, str]] = []
 
+class AuditRunRequest(BaseModel):
+    checks: List[str] = ["categorize", "dates", "duplicates", "sources"]  # which steps to run
+
 class AuditApplyRequest(BaseModel):
     suggestion_ids: List[str]
     exclusions: Optional[Dict[str, List[str]]] = None  # suggestion_id -> list of event IDs to exclude from merge
@@ -5825,7 +5828,7 @@ def _extract_web_sources(res) -> list:
 
 
 @app.post("/api/cases/{case_id}/timeline/audit")
-async def timeline_audit(case_id: str, user = Depends(require_paid)):
+async def timeline_audit(case_id: str, request: AuditRunRequest = AuditRunRequest(), user = Depends(require_paid)):
     """Run AI audit on timeline events: categorize, find dates, detect duplicates, find sources."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase not initialized."})
@@ -5857,7 +5860,7 @@ async def timeline_audit(case_id: str, user = Depends(require_paid)):
 
         # ─── Step 1: Categorize uncategorized events ───────────────────────
         uncategorized = [e for e in all_events if (e.get("category") or "general") == "general"]
-        if uncategorized:
+        if uncategorized and "categorize" in request.checks:
             event_list = json.dumps([{"id": e["id"], "title": e["title"], "description": (e.get("description") or "")[:200], "event_date": e.get("event_date")} for e in uncategorized], indent=2)
             cat_prompt = f"""You are an investigative researcher categorizing timeline events.
 
@@ -5942,7 +5945,7 @@ Be specific. Choose the most fitting category — avoid "general" unless nothing
 
         # ─── Step 2: Find missing dates ────────────────────────────────────
         undated = [e for e in all_events if not e.get("event_date")]
-        if undated:
+        if undated and "dates" in request.checks:
             BATCH_SIZE = 25
             for i in range(0, len(undated), BATCH_SIZE):
                 batch = undated[i:i + BATCH_SIZE]
@@ -6009,7 +6012,7 @@ Guidelines:
                     print(f"Audit date batch {i // BATCH_SIZE + 1} failed: {e}")
 
         # ─── Step 3: Detect duplicates ─────────────────────────────────────
-        if len(all_events) >= 2:
+        if len(all_events) >= 2 and "duplicates" in request.checks:
             event_summary = json.dumps([{
                 "id": e["id"],
                 "title": e["title"],
@@ -6094,7 +6097,7 @@ If no duplicates found, return an empty array: []"""
 
         # ─── Step 4: Find missing sources ──────────────────────────────────
         unsourced = [e for e in all_events if not e.get("sources")]
-        if unsourced:
+        if unsourced and "sources" in request.checks:
             BATCH_SIZE = 25
             for i in range(0, len(unsourced), BATCH_SIZE):
                 batch = unsourced[i:i + BATCH_SIZE]
