@@ -8,7 +8,6 @@ import NexusCanvas from './NexusCanvas';
 import EdgeEvidencePanel from './EdgeEvidencePanel';
 import axios from 'axios';
 import useIsMobile from '../hooks/useIsMobile';
-import { getLayoutedElements } from '../utils/layout';
 import type { WebSource } from '../types';
 
 interface CaseNetworkMapProps {
@@ -452,27 +451,33 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       setGroups(res.data.groups || []);
 
       // Auto-layout if most nodes are stacked at origin
-      if (loadedNodes.length > 0) {
-        const atOrigin = loadedNodes.filter(n => Math.abs(n.position.x) < 1 && Math.abs(n.position.y) < 1).length;
-        if (atOrigin >= loadedNodes.length * 0.3) {
-          try {
-            const { nodes: laid } = await getLayoutedElements(loadedNodes, loadedEdges);
-            const posMap = new Map(laid.map(n => [n.id, n.position]));
-            const merged = loadedNodes.map(n => posMap.has(n.id) ? { ...n, position: posMap.get(n.id)! } : n);
-            setNodes(merged);
-            setEdges(loadedEdges);
-            // Persist the computed positions
-            const updates = laid.map(n => ({ node_id: n.id, x: n.position.x, y: n.position.y }));
-            axios.post(`/api/cases/${caseId}/graph/positions`, { positions: updates }).catch(() => {});
-            return;
-          } catch (e) {
-            console.error('Auto-layout failed, using raw positions:', e);
-          }
-        }
+      const atOrigin = loadedNodes.filter(n => Math.abs(n.position.x) < 1 && Math.abs(n.position.y) < 1).length;
+      if (loadedNodes.length > 0 && atOrigin >= loadedNodes.length * 0.3) {
+        // Run D3 force simulation inline
+        const simNodes = loadedNodes.map(n => ({ id: n.id, x: Math.random() * 800 - 400, y: Math.random() * 800 - 400 }));
+        const simEdges = loadedEdges.map(e => ({ source: e.source, target: e.target }));
+        const radius = Math.sqrt(loadedNodes.length) * 80;
+        const sim = forceSimulation(simNodes as any)
+          .force('link', forceLink(simEdges as any).id((d: any) => d.id).distance(250))
+          .force('charge', forceManyBody().strength(-2000))
+          .force('center', forceCenter(0, 0).strength(0.05))
+          .force('collide', forceCollide(60))
+          .stop();
+        for (let i = 0; i < 300; i++) sim.tick();
+        const posMap = new Map(simNodes.map(n => [n.id, { x: n.x, y: n.y }]));
+        const laid = loadedNodes.map(n => {
+          const p = posMap.get(n.id);
+          return p ? { ...n, position: { x: p.x, y: p.y } } : n;
+        });
+        setNodes(laid);
+        setEdges(loadedEdges);
+        // Persist positions
+        const updates = laid.map(n => ({ node_id: n.id, x: n.position.x, y: n.position.y }));
+        axios.post(`/api/cases/${caseId}/graph/positions`, { positions: updates }).catch(() => {});
+      } else {
+        setNodes(loadedNodes);
+        setEdges(loadedEdges);
       }
-
-      setNodes(loadedNodes);
-      setEdges(loadedEdges);
     } catch (err: any) {
       console.error('Failed to load case graph:', err);
       const status = err?.response?.status;
