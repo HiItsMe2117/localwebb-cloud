@@ -1095,6 +1095,23 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     }
   }, [caseId, auditResults, dismissedIds, loadTimeline]);
 
+  const dismissAllSuggestions = useCallback(async () => {
+    if (!auditResults) return;
+    const allIds = [
+      ...auditResults.suggestions.map(s => s.id),
+      ...auditResults.duplicate_groups.map(g => g.id),
+    ].filter(id => !dismissedIds.has(id));
+    if (!allIds.length) return;
+    try {
+      await axios.post(`/api/cases/${caseId}/timeline/audit/dismiss`, { suggestion_ids: allIds });
+      setDismissedIds(prev => { const n = new Set(prev); allIds.forEach(id => n.add(id)); return n; });
+      toast.success(`Dismissed ${allIds.length} suggestions`);
+    } catch (err) {
+      console.error('Bulk dismiss failed:', err);
+      toast.error('Failed to dismiss');
+    }
+  }, [caseId, auditResults, dismissedIds]);
+
   // ── Tracks: load case entities for picker ─────────────────────────────────
 
   const loadCaseEntities = useCallback(async () => {
@@ -2856,14 +2873,24 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                         )}
                       </div>
                       {totalPending > 0 && (
-                        <button
-                          onClick={applyAllSuggestions}
-                          disabled={applyingIds.size > 0}
-                          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#5E5CE6]/15 hover:bg-[#5E5CE6]/25 text-[#5E5CE6] text-[11px] font-semibold transition-colors w-full justify-center disabled:opacity-50"
-                        >
-                          {applyingIds.size > 0 ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
-                          Accept All ({totalPending})
-                        </button>
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={applyAllSuggestions}
+                            disabled={applyingIds.size > 0}
+                            className="flex-1 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#5E5CE6]/15 hover:bg-[#5E5CE6]/25 text-[#5E5CE6] text-[11px] font-semibold transition-colors justify-center disabled:opacity-50"
+                          >
+                            {applyingIds.size > 0 ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
+                            Accept All ({totalPending})
+                          </button>
+                          <button
+                            onClick={dismissAllSuggestions}
+                            disabled={applyingIds.size > 0}
+                            className="flex-1 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[rgba(235,235,245,0.05)] hover:bg-[rgba(235,235,245,0.1)] text-[rgba(235,235,245,0.4)] text-[11px] font-semibold transition-colors justify-center disabled:opacity-50"
+                          >
+                            <XCircle size={11} />
+                            Dismiss All
+                          </button>
+                        </div>
                       )}
                     </div>
 
