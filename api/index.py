@@ -5984,6 +5984,69 @@ async def get_agent_directives(user=Depends(optional_user), limit: int = 20):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.get("/api/agent/directives/{task_id}/findings")
+async def get_directive_findings(task_id: str, user=Depends(optional_user)):
+    """Get the evidence, entities, and timeline events produced by a directive task."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        # Get the task
+        task_res = supabase.table("agent_tasks").select("*").eq("id", task_id).execute()
+        if not task_res.data:
+            return JSONResponse(status_code=404, content={"error": "Task not found"})
+        task = task_res.data[0]
+
+        case_id = task.get("case_id")
+        started_at = task.get("started_at")
+        completed_at = task.get("completed_at")
+
+        evidence = []
+        entities = []
+        timeline_events = []
+        case_title = None
+
+        if case_id:
+            # Get the case title
+            case_res = supabase.table("cases").select("title, category").eq("id", case_id).execute()
+            if case_res.data:
+                case_title = case_res.data[0].get("title")
+
+            # Get evidence created during this task's execution window
+            if started_at and completed_at:
+                ev_res = supabase.table("case_evidence").select("*") \
+                    .eq("case_id", case_id) \
+                    .gte("created_at", started_at) \
+                    .lte("created_at", completed_at) \
+                    .order("created_at", desc=True) \
+                    .execute()
+                evidence = ev_res.data or []
+
+                # Get timeline events from same window
+                tl_res = supabase.table("case_timeline_events").select("id, title, event_date, description, category") \
+                    .eq("case_id", case_id) \
+                    .gte("created_at", started_at) \
+                    .lte("created_at", completed_at) \
+                    .order("created_at", desc=True) \
+                    .execute()
+                timeline_events = tl_res.data or []
+
+            # Get entities on the case graph (these don't have timestamps, so show all)
+            ent_res = supabase.table("case_graph_entities").select("node_id") \
+                .eq("case_id", case_id).execute()
+            entities = [e["node_id"] for e in (ent_res.data or [])]
+
+        return {
+            "task": task,
+            "case_id": case_id,
+            "case_title": case_title,
+            "evidence": evidence,
+            "entities": entities,
+            "timeline_events": timeline_events,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 def _fetch_all_case_ids(table: str, chunk: int = 1000) -> list[str]:
     """Fetch case_id column from a table with pagination (handles >1000 rows)."""
     out: list[str] = []

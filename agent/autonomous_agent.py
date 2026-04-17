@@ -403,6 +403,15 @@ def _write_findings_to_case(result: dict, task: dict):
     if note:
         add_evidence(case_id, note, "investigation", global_sources)
 
+    # Tag the task with the case it was routed to (enables linking back from UI)
+    task_id = task.get("id")
+    if task_id and case_id:
+        try:
+            sb = get_supabase()
+            sb.table("agent_tasks").update({"case_id": case_id}).eq("id", task_id).execute()
+        except Exception:
+            pass  # non-critical
+
 
 def execute_task(task: dict) -> dict:
     """Route a task to the appropriate strategy and execute it."""

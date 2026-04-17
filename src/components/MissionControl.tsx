@@ -4,7 +4,7 @@ import {
   Activity, Send, ChevronRight, ChevronDown,
   Loader2, CheckCircle2, XCircle, Zap, Target,
   Clock, FolderTree, Search,
-  FileText, Link2, CircleDot, Lightbulb, Shield,
+  FileText, Link2, CircleDot, Lightbulb, Shield, ExternalLink,
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -53,6 +53,15 @@ interface DirectiveTask {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+}
+
+interface DirectiveFindings {
+  task: DirectiveTask;
+  case_id: string | null;
+  case_title: string | null;
+  evidence: { id: string; type: string; content: string; created_at: string }[];
+  entities: string[];
+  timeline_events: { id: string; title: string; event_date: string | null; description: string }[];
 }
 
 interface CaseTreeNode {
@@ -269,6 +278,210 @@ function CaseTreeItem({ node, depth = 0, onSelect }: {
           {node.children!.map((child) => (
             <CaseTreeItem key={child.id} node={child} depth={depth + 1} onSelect={onSelect} />
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DirectiveRowItem({ d, onNavigateToCase }: { d: DirectiveTask; onNavigateToCase: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [findings, setFindings] = useState<DirectiveFindings | null>(null);
+  const [loadingFindings, setLoadingFindings] = useState(false);
+
+  const statusColor =
+    d.status === 'completed' ? '#30D158' :
+    d.status === 'in_progress' ? '#007AFF' :
+    d.status === 'failed' ? '#FF453A' :
+    '#FF9F0A';
+  const StatusIcon =
+    d.status === 'completed' ? CheckCircle2 :
+    d.status === 'in_progress' ? Loader2 :
+    d.status === 'failed' ? XCircle :
+    Clock;
+  const displayDesc = d.description.replace(/^\[depth=\w+\]\s*/, '');
+  const isClickable = d.status === 'completed' || d.status === 'failed';
+
+  const toggleExpand = async () => {
+    if (!isClickable) return;
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !findings && d.status === 'completed') {
+      setLoadingFindings(true);
+      try {
+        const res = await axios.get(`/api/agent/directives/${d.id}/findings`);
+        setFindings(res.data);
+      } catch (err) {
+        console.error('Failed to fetch findings:', err);
+      } finally {
+        setLoadingFindings(false);
+      }
+    }
+  };
+
+  return (
+    <div className="px-4 py-3">
+      <button
+        onClick={toggleExpand}
+        disabled={!isClickable}
+        className={`w-full text-left flex items-start gap-3 ${isClickable ? 'cursor-pointer' : ''}`}
+      >
+        <div className="shrink-0 mt-0.5">
+          <StatusIcon
+            size={14}
+            style={{ color: statusColor }}
+            className={d.status === 'in_progress' ? 'animate-spin' : ''}
+          />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-[13px] text-[rgba(235,235,245,0.85)] leading-snug break-words flex-1">
+              {displayDesc}
+            </p>
+            {isClickable && (
+              expanded
+                ? <ChevronDown size={14} className="text-[rgba(235,235,245,0.3)] shrink-0" />
+                : <ChevronRight size={14} className="text-[rgba(235,235,245,0.3)] shrink-0" />
+            )}
+          </div>
+          <div className="flex items-center gap-3 mt-1.5">
+            <span
+              className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase"
+              style={{ backgroundColor: statusColor + '20', color: statusColor }}
+            >
+              {d.status.replace(/_/g, ' ')}
+            </span>
+            <span className="text-[11px] text-[rgba(235,235,245,0.25)] tabular-nums">
+              {formatTime(d.created_at)}
+            </span>
+            {d.completed_at && (
+              <span className="text-[11px] text-[rgba(235,235,245,0.2)] tabular-nums">
+                completed {formatTime(d.completed_at)}
+              </span>
+            )}
+          </div>
+        </div>
+      </button>
+
+      {/* Expanded findings */}
+      {expanded && (
+        <div className="mt-3 ml-[26px] space-y-3">
+          {loadingFindings && (
+            <div className="flex items-center gap-2 py-3">
+              <Loader2 size={14} className="text-[#007AFF] animate-spin" />
+              <span className="text-[12px] text-[rgba(235,235,245,0.4)]">Loading findings...</span>
+            </div>
+          )}
+
+          {/* Result summary */}
+          {d.result_summary && (
+            <div className="bg-[rgba(0,0,0,0.25)] rounded-xl px-3 py-2.5">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-[rgba(235,235,245,0.3)] block mb-1">Summary</span>
+              <p className="text-[12px] text-[rgba(235,235,245,0.7)] leading-relaxed whitespace-pre-wrap">
+                {d.result_summary}
+              </p>
+            </div>
+          )}
+
+          {findings && (
+            <>
+              {/* Case link */}
+              {findings.case_title && findings.case_id && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onNavigateToCase(findings.case_id!); }}
+                  className="flex items-center gap-2 bg-[rgba(0,122,255,0.1)] hover:bg-[rgba(0,122,255,0.2)] text-[#007AFF] rounded-xl px-3 py-2 text-[12px] font-medium transition-colors w-full text-left"
+                >
+                  <ExternalLink size={12} />
+                  Routed to: {findings.case_title}
+                </button>
+              )}
+
+              {/* Evidence entries */}
+              {findings.evidence.length > 0 && (
+                <div className="space-y-2">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-[rgba(235,235,245,0.3)]">
+                    Evidence Collected ({findings.evidence.length})
+                  </span>
+                  {findings.evidence.map((ev) => (
+                    <div key={ev.id} className="bg-[rgba(0,0,0,0.25)] rounded-xl px-3 py-2.5">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                          ev.type === 'investigation' ? 'bg-[#007AFF]/20 text-[#007AFF]' :
+                          ev.type === 'note' ? 'bg-[#FF9F0A]/20 text-[#FF9F0A]' :
+                          'bg-[#AF52DE]/20 text-[#AF52DE]'
+                        }`}>
+                          {ev.type === 'investigation' ? 'Investigation' : ev.type === 'note' ? 'Note' : 'Report'}
+                        </span>
+                        <span className="text-[10px] text-[rgba(235,235,245,0.2)] tabular-nums">
+                          {formatTime(ev.created_at)}
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-[rgba(235,235,245,0.6)] leading-relaxed whitespace-pre-wrap">
+                        {ev.content.length > 800 ? ev.content.slice(0, 800) + '...' : ev.content}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Timeline events */}
+              {findings.timeline_events.length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-[rgba(235,235,245,0.3)]">
+                    Timeline Events ({findings.timeline_events.length})
+                  </span>
+                  <div className="bg-[rgba(0,0,0,0.25)] rounded-xl px-3 py-2">
+                    {findings.timeline_events.map((te) => (
+                      <div key={te.id} className="flex items-baseline gap-2 py-1 border-b border-[rgba(84,84,88,0.12)] last:border-0">
+                        <span className="text-[11px] text-[#FFD60A] font-mono shrink-0 w-[80px]">
+                          {te.event_date || '???'}
+                        </span>
+                        <span className="text-[12px] text-[rgba(235,235,245,0.6)]">{te.title}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Entities */}
+              {findings.entities.length > 0 && (
+                <div>
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-[rgba(235,235,245,0.3)] block mb-1">
+                    Entities on Case Graph ({findings.entities.length})
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {findings.entities.slice(0, 20).map((eid) => (
+                      <span key={eid} className="text-[11px] bg-[rgba(90,200,250,0.1)] text-[#5AC8FA] px-2 py-0.5 rounded-full">
+                        {eid}
+                      </span>
+                    ))}
+                    {findings.entities.length > 20 && (
+                      <span className="text-[11px] text-[rgba(235,235,245,0.3)]">
+                        +{findings.entities.length - 20} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Empty state */}
+              {findings.evidence.length === 0 && findings.timeline_events.length === 0 && !findings.case_id && (
+                <p className="text-[12px] text-[rgba(235,235,245,0.3)] py-2">
+                  No findings were routed to a case for this directive.
+                </p>
+              )}
+            </>
+          )}
+
+          {/* Failed directive error */}
+          {d.status === 'failed' && d.result_summary && (
+            <div className="bg-[rgba(255,69,58,0.08)] rounded-xl px-3 py-2.5">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-[#FF453A] block mb-1">Error</span>
+              <p className="text-[12px] text-[rgba(255,69,58,0.8)] leading-relaxed">
+                {d.result_summary}
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -562,63 +775,9 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
                 </span>
               </div>
               <div className="divide-y divide-[rgba(84,84,88,0.18)]">
-                {directives.map((d) => {
-                  const statusColor =
-                    d.status === 'completed' ? '#30D158' :
-                    d.status === 'in_progress' ? '#007AFF' :
-                    d.status === 'failed' ? '#FF453A' :
-                    '#FF9F0A';
-                  const StatusIcon =
-                    d.status === 'completed' ? CheckCircle2 :
-                    d.status === 'in_progress' ? Loader2 :
-                    d.status === 'failed' ? XCircle :
-                    Clock;
-                  // Strip the [depth=deep] prefix for display
-                  const displayDesc = d.description.replace(/^\[depth=\w+\]\s*/, '');
-
-                  return (
-                    <div key={d.id} className="px-4 py-3">
-                      <div className="flex items-start gap-3">
-                        <div className="shrink-0 mt-0.5">
-                          <StatusIcon
-                            size={14}
-                            style={{ color: statusColor }}
-                            className={d.status === 'in_progress' ? 'animate-spin' : ''}
-                          />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[13px] text-[rgba(235,235,245,0.85)] leading-snug break-words">
-                            {displayDesc}
-                          </p>
-                          {d.result_summary && (
-                            <p className="mt-1.5 text-[12px] text-[rgba(235,235,245,0.5)] leading-snug">
-                              {d.result_summary}
-                            </p>
-                          )}
-                          <div className="flex items-center gap-3 mt-1.5">
-                            <span
-                              className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase"
-                              style={{
-                                backgroundColor: statusColor + '20',
-                                color: statusColor,
-                              }}
-                            >
-                              {d.status.replace(/_/g, ' ')}
-                            </span>
-                            <span className="text-[11px] text-[rgba(235,235,245,0.25)] tabular-nums">
-                              {formatTime(d.created_at)}
-                            </span>
-                            {d.completed_at && (
-                              <span className="text-[11px] text-[rgba(235,235,245,0.2)] tabular-nums">
-                                completed {formatTime(d.completed_at)}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {directives.map((d) => (
+                  <DirectiveRowItem key={d.id} d={d} onNavigateToCase={onNavigateToCase} />
+                ))}
               </div>
             </div>
           )}
