@@ -43,6 +43,18 @@ interface ActivityItem {
   created_at: string;
 }
 
+interface DirectiveTask {
+  id: string;
+  type: string;
+  description: string;
+  priority: number;
+  status: 'queued' | 'in_progress' | 'completed' | 'failed';
+  result_summary: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 interface CaseTreeNode {
   id: string;
   title: string;
@@ -95,6 +107,7 @@ const ACTION_ICONS: Record<string, typeof Activity> = {
   user_directive: Target,
   seeded_cases: Zap,
   seeded_tasks: Zap,
+  bigger_picture_synthesis: Lightbulb,
 };
 
 const ACTION_COLORS: Record<string, string> = {
@@ -113,6 +126,7 @@ const ACTION_COLORS: Record<string, string> = {
   user_directive: '#FF6B6B',
   seeded_cases: '#007AFF',
   seeded_tasks: '#007AFF',
+  bigger_picture_synthesis: '#FFD60A',
 };
 
 function timeAgo(dateStr: string): string {
@@ -274,6 +288,7 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [caseTree, setCaseTree] = useState<CaseTreeNode[]>([]);
   const [findings, setFindings] = useState<{ theories: Finding[]; discoveries: Finding[] }>({ theories: [], discoveries: [] });
+  const [directives, setDirectives] = useState<DirectiveTask[]>([]);
   const [directive, setDirective] = useState('');
   const [sendingDirective, setSendingDirective] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -282,16 +297,18 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
 
   const fetchAll = useCallback(async () => {
     try {
-      const [statusRes, activityRes, casesRes, findingsRes] = await Promise.all([
+      const [statusRes, activityRes, casesRes, findingsRes, directivesRes] = await Promise.all([
         axios.get('/api/agent/status'),
         axios.get('/api/agent/activity?limit=100'),
         axios.get('/api/agent/cases/tree'),
         axios.get('/api/agent/findings'),
+        axios.get('/api/agent/directives'),
       ]);
       setStatus(statusRes.data);
       setActivity(activityRes.data.items || []);
       setCaseTree(buildCaseTree(casesRes.data.cases || []));
       setFindings(findingsRes.data);
+      setDirectives(directivesRes.data.directives || []);
     } catch (err) {
       console.error('Mission control fetch error:', err);
     } finally {
@@ -529,6 +546,83 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
             </div>
 
           </div>
+
+          {/* Your Directives — below the two-column layout */}
+          {directives.length > 0 && (
+            <div className="bg-[#1C1C1E] rounded-2xl border border-[rgba(84,84,88,0.36)] overflow-hidden">
+              <div className="px-4 pt-3 pb-2 flex items-center justify-between border-b border-[rgba(84,84,88,0.18)]">
+                <div className="flex items-center gap-2">
+                  <Target size={14} className="text-[#FF6B6B]" />
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-[rgba(235,235,245,0.4)]">
+                    Your Directives
+                  </span>
+                </div>
+                <span className="text-[11px] text-[rgba(235,235,245,0.25)]">
+                  {directives.length} directive{directives.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="divide-y divide-[rgba(84,84,88,0.18)]">
+                {directives.map((d) => {
+                  const statusColor =
+                    d.status === 'completed' ? '#30D158' :
+                    d.status === 'in_progress' ? '#007AFF' :
+                    d.status === 'failed' ? '#FF453A' :
+                    '#FF9F0A';
+                  const StatusIcon =
+                    d.status === 'completed' ? CheckCircle2 :
+                    d.status === 'in_progress' ? Loader2 :
+                    d.status === 'failed' ? XCircle :
+                    Clock;
+                  // Strip the [depth=deep] prefix for display
+                  const displayDesc = d.description.replace(/^\[depth=\w+\]\s*/, '');
+
+                  return (
+                    <div key={d.id} className="px-4 py-3">
+                      <div className="flex items-start gap-3">
+                        <div className="shrink-0 mt-0.5">
+                          <StatusIcon
+                            size={14}
+                            style={{ color: statusColor }}
+                            className={d.status === 'in_progress' ? 'animate-spin' : ''}
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] text-[rgba(235,235,245,0.85)] leading-snug break-words">
+                            {displayDesc}
+                          </p>
+                          {d.result_summary && (
+                            <p className="mt-1.5 text-[12px] text-[rgba(235,235,245,0.5)] leading-snug">
+                              {d.result_summary}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-3 mt-1.5">
+                            <span
+                              className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase"
+                              style={{
+                                backgroundColor: statusColor + '20',
+                                color: statusColor,
+                              }}
+                            >
+                              {d.status.replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-[11px] text-[rgba(235,235,245,0.25)] tabular-nums">
+                              {formatTime(d.created_at)}
+                            </span>
+                            {d.completed_at && (
+                              <span className="text-[11px] text-[rgba(235,235,245,0.2)] tabular-nums">
+                                completed {formatTime(d.completed_at)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
     </div>

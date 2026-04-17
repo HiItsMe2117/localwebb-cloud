@@ -5969,6 +5969,21 @@ async def submit_agent_directive(request: Request, user=Depends(optional_user)):
     return {"task": res.data[0] if res.data else task}
 
 
+@app.get("/api/agent/directives")
+async def get_agent_directives(user=Depends(optional_user), limit: int = 20):
+    """Get user directive tasks with their status and results."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        res = supabase.table("agent_tasks").select("*") \
+            .eq("type", "user_directive") \
+            .order("created_at", desc=True) \
+            .limit(limit).execute()
+        return {"directives": res.data or []}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 def _fetch_all_case_ids(table: str, chunk: int = 1000) -> list[str]:
     """Fetch case_id column from a table with pagination (handles >1000 rows)."""
     out: list[str] = []
