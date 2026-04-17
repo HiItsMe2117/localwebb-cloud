@@ -61,7 +61,7 @@ export interface Case {
   parent_case_id: string | null;
   depth: number;
   operational_question: string | null;
-  source: 'scan' | 'manual' | 'theory';
+  source: 'scan' | 'manual' | 'theory' | 'bigger_picture';
   created_at: string;
   updated_at: string;
 }
@@ -126,6 +126,7 @@ export const CASE_CATEGORIES: Record<string, { label: string; color: string }> =
   trafficking:      { label: 'Trafficking',      color: '#AF52DE' },
   tax_evasion:      { label: 'Tax Evasion',      color: '#30D158' },
   obstruction:      { label: 'Obstruction',      color: '#5AC8FA' },
+  bigger_picture:   { label: 'Bigger Picture',    color: '#FFD60A' },
   other:            { label: 'Other',            color: '#8E8E93' },
 };
 

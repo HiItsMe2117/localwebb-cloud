@@ -91,6 +91,12 @@ OPERATIONAL_QUESTIONS = [
         "operational_question": "What geopolitical operations was the network involved in?",
         "summary": "Investigation into the network's involvement in international affairs: Iran-Contra, China-Africa deals, sovereignty claims, and other geopolitical entanglements.",
     },
+    {
+        "title": "The Bigger Picture",
+        "category": "bigger_picture",
+        "operational_question": "What patterns, connections, and narratives emerge when viewing all investigations together?",
+        "summary": "Cross-case synthesis identifying connections, contradictions, and emergent narratives across all active investigations.",
+    },
 ]
 
 

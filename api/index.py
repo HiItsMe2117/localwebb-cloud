@@ -1801,6 +1801,165 @@ Produce a professional, final investigative product."""
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+# ---------------------------------------------------------------------------
+# Bigger Picture — cross-case synthesis
+# ---------------------------------------------------------------------------
+
+@app.get("/api/cases/bigger-picture")
+async def get_bigger_picture_case(user = Depends(require_paid)):
+    """Get the user's Bigger Picture case, if it exists."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        res = supabase.table("cases").select("*") \
+            .eq("user_id", str(user.id)) \
+            .eq("category", "bigger_picture") \
+            .limit(1).execute()
+        return {"case": res.data[0] if res.data else None}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/cases/bigger-picture/synthesize")
+async def synthesize_bigger_picture(user = Depends(require_paid)):
+    """Cross-case synthesis: gather evidence from all active cases and produce a unified narrative."""
+    if not supabase or not client:
+        return JSONResponse(status_code=503, content={"error": "Cloud clients not initialized."})
+
+    try:
+        user_id = str(user.id)
+
+        # 1. Find or create the Bigger Picture case
+        bp_res = supabase.table("cases").select("*") \
+            .eq("user_id", user_id) \
+            .eq("category", "bigger_picture") \
+            .limit(1).execute()
+
+        if bp_res.data:
+            bp_case = bp_res.data[0]
+        else:
+            row = {
+                "title": "The Bigger Picture",
+                "category": "bigger_picture",
+                "summary": "Cross-case synthesis identifying connections, contradictions, and emergent narratives across all active investigations.",
+                "status": "active",
+                "confidence": 0.0,
+                "entities": [],
+                "suggested_questions": [],
+                "user_id": user_id,
+                "source": "bigger_picture",
+            }
+            bp_res = supabase.table("cases").insert(row).execute()
+            bp_case = bp_res.data[0]
+
+        bp_case_id = bp_case["id"]
+
+        # 2. Gather all user's active cases (excluding the BP case itself)
+        cases_res = supabase.table("cases").select("*") \
+            .eq("user_id", user_id) \
+            .eq("status", "active") \
+            .is_("parent_case_id", "null") \
+            .neq("category", "bigger_picture") \
+            .order("updated_at", desc=True) \
+            .limit(10).execute()
+
+        active_cases = cases_res.data or []
+        if not active_cases:
+            return JSONResponse(status_code=400, content={"error": "No active cases to synthesize."})
+
+        # 3. Build per-case briefs with recent evidence
+        case_briefs = []
+        all_entity_node_ids = set()
+        all_sources = []
+
+        for c in active_cases:
+            ev_res = supabase.table("case_evidence").select("content, type, created_at, sources") \
+                .eq("case_id", c["id"]).order("created_at", desc=True).limit(3).execute()
+
+            evidence_snippets = []
+            for e in (ev_res.data or []):
+                evidence_snippets.append(f"  [{e['type']}] {e['content'][:500]}")
+                if e.get("sources"):
+                    all_sources.extend(e["sources"])
+
+            # Collect entity IDs for graph aggregation
+            ent_res = supabase.table("case_graph_entities").select("node_id") \
+                .eq("case_id", c["id"]).execute()
+            entity_ids = [e["node_id"] for e in (ent_res.data or [])]
+            all_entity_node_ids.update(entity_ids)
+
+            brief = f"""CASE: {c['title']}
+CATEGORY: {c.get('category', 'other')}
+SUMMARY: {c.get('summary', 'No summary')}
+ENTITIES: {', '.join((c.get('entities') or [])[:10])}
+RECENT EVIDENCE ({len(ev_res.data or [])} items):
+{chr(10).join(evidence_snippets) or '  None yet'}"""
+            case_briefs.append(brief)
+
+        # 4. Build cross-case synthesis prompt
+        prompt = f"""You are a Lead Intelligence Analyst. You oversee multiple parallel investigations. Your task is to synthesize findings ACROSS all active cases into a "Bigger Picture" intelligence assessment.
+
+ACTIVE INVESTIGATIONS:
+{'=' * 60}
+{(chr(10) + '=' * 60 + chr(10)).join(case_briefs)}
+{'=' * 60}
+
+SYNTHESIS INSTRUCTIONS:
+1. CROSS-CASE CONNECTIONS: Identify entities, financial flows, or patterns that appear across multiple cases.
+2. EMERGENT NARRATIVE: What story emerges when viewing all investigations together that isn't visible from any single case?
+3. CONTRADICTIONS: Where do findings in one case contradict or complicate findings in another?
+4. KNOWLEDGE GAPS: Critical questions that span multiple cases.
+5. PRIORITY ASSESSMENT: Which cases or leads deserve the most attention based on cross-case analysis.
+
+Produce a professional cross-case intelligence assessment in Markdown with:
+- Executive Summary
+- Cross-Case Connections (entities/patterns spanning multiple cases)
+- Emergent Narrative
+- Contradictions & Anomalies
+- Knowledge Gaps
+- Priority Recommendations"""
+
+        # 5. Generate synthesis
+        res = generate(
+            client,
+            model="gemini-2.5-pro",
+            contents=prompt,
+        )
+        synthesis_text = res.text
+
+        log_usage(user, "/api/cases/bigger-picture/synthesize", "gemini-2.5-pro", res.usage_metadata)
+
+        # 6. De-duplicate sources and save as evidence
+        unique_sources = []
+        seen_src = set()
+        for s in all_sources:
+            sig = f"{s.get('filename')}:{s.get('page')}"
+            if sig not in seen_src:
+                seen_src.add(sig)
+                unique_sources.append(s)
+
+        new_ev = {
+            "case_id": bp_case_id,
+            "type": "fact_check",
+            "content": synthesis_text,
+            "sources": unique_sources[:20],
+        }
+        save_res = supabase.table("case_evidence").insert(new_ev).execute()
+
+        # 7. Aggregate entities from all cases into the BP case graph
+        for node_id in all_entity_node_ids:
+            supabase.table("case_graph_entities").upsert(
+                {"case_id": bp_case_id, "node_id": node_id},
+                on_conflict="case_id,node_id",
+            ).execute()
+
+        return {"case_id": bp_case_id, "evidence": save_res.data[0]}
+    except Exception as e:
+        print(f"CRITICAL: Bigger picture synthesis failed: {e}")
+        import traceback; traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/api/cases/{case_id}/notes")
 async def add_case_note(case_id: str, request: AddNoteRequest, user = Depends(require_user)):
     """Add a note to a case."""

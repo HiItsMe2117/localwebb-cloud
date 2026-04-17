@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus, FlaskConical, ChevronDown, AlertTriangle, HelpCircle, Heart, Globe, FolderOpen, Folder, Merge, Trash2, CheckSquare, Square, CornerDownRight } from 'lucide-react';
+import { Shield, Loader2, Check, X, Search, ChevronRight, Database, Plus, FlaskConical, ChevronDown, AlertTriangle, HelpCircle, Heart, Globe, FolderOpen, Folder, Merge, Trash2, CheckSquare, Square, CornerDownRight, Lightbulb } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Case, ScanFinding, TheoryResult } from '../types';
 import { CASE_CATEGORIES } from '../types';
@@ -467,6 +467,7 @@ export default function CasesPanel({
   const [newTitle, setNewTitle] = useState('');
   const [newCategory, setNewCategory] = useState('other');
   const [isCreating, setIsCreating] = useState(false);
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [showTheoryForm, setShowTheoryForm] = useState(false);
   const [theoryText, setTheoryText] = useState('');
   const [theoryMode, setTheoryMode] = useState<'files_only' | 'files_web'>('files_only');
@@ -559,6 +560,25 @@ export default function CasesPanel({
   const hasFindings = scanFindings.length > 0;
   const hasCases = myCases.length > 0;
 
+  const handleBiggerPicture = async () => {
+    setIsSynthesizing(true);
+    try {
+      const checkRes = await axios.get('/api/cases/bigger-picture');
+      if (checkRes.data.case) {
+        onOpenCase(checkRes.data.case.id);
+      } else {
+        const res = await axios.post('/api/cases/bigger-picture/synthesize');
+        onOpenCase(res.data.case_id);
+        onRefresh?.();
+      }
+    } catch (err) {
+      console.error('Bigger picture failed:', err);
+      toast.error('Failed to generate bigger picture');
+    } finally {
+      setIsSynthesizing(false);
+    }
+  };
+
   const handleCreate = async () => {
     if (!newTitle.trim() || isCreating) return;
     setIsCreating(true);
@@ -597,6 +617,16 @@ export default function CasesPanel({
             >
               <FlaskConical size={14} />
               Theory
+            </button>
+            <button
+              onClick={handleBiggerPicture}
+              disabled={isSynthesizing}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
+                isSynthesizing ? 'opacity-50' : ''
+              } bg-[#FFD60A]/20 text-[#FFD60A] hover:bg-[#FFD60A]/30`}
+            >
+              {isSynthesizing ? <Loader2 size={14} className="animate-spin" /> : <Lightbulb size={14} />}
+              Bigger Picture
             </button>
             <button
               onClick={() => { setShowCreateForm(v => !v); setShowTheoryForm(false); }}

@@ -23,7 +23,7 @@ from agent.config import (
 from agent.memory import has_investigated, record_investigation, get_related_memories
 from agent.queue import enqueue_task, parse_research_depth, get_research_depth
 from agent.activity import log_activity
-from agent.case_builder import find_or_create_subcase, get_child_cases
+from agent.case_builder import find_or_create_subcase, get_child_cases, get_root_cases
 from agent.web_research import (
     should_web_search, web_search, format_web_evidence, citations_as_sources,
 )
@@ -942,6 +942,10 @@ def expand_branch(task: dict) -> dict:
         return {"error": f"Case {case_id} not found"}
     case = case_res.data[0]
 
+    # Bigger Picture cases use cross-case synthesis instead of normal expansion
+    if case.get("category") == "bigger_picture":
+        return _bigger_picture_expansion(case, task)
+
     # Get existing evidence
     evidence_res = sb.table("case_evidence").select("content, type").eq("case_id", case_id).limit(20).execute()
     evidence_summaries = [e["content"][:200] for e in (evidence_res.data or [])]
@@ -1058,6 +1062,166 @@ Respond in JSON:
     log_activity(
         action="expanded_branch",
         description=f"Expanded case: {case['title']} — {len(result.get('new_subcases', []))} sub-cases, {len(result.get('gaps', []))} gaps",
+        task_id=task.get("id"),
+        case_id=case_id,
+    )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Bigger Picture: cross-case synthesis
+# ---------------------------------------------------------------------------
+
+def _bigger_picture_expansion(case: dict, task: dict) -> dict:
+    """
+    Instead of expanding a single branch, synthesize findings across ALL root
+    cases to identify cross-case patterns, connections, and contradictions.
+    Returns the same shape as expand_branch so the caller can create sub-cases
+    and enqueue follow-up tasks normally.
+    """
+    sb = get_supabase()
+    case_id = case["id"]
+
+    # Gather all root cases except The Bigger Picture itself
+    root_cases = [c for c in get_root_cases() if c["id"] != case_id]
+    if not root_cases:
+        return {"error": "No other root cases to synthesize"}
+
+    # Build per-case summaries with recent evidence
+    case_briefs = []
+    for rc in root_cases[:10]:
+        ev_res = sb.table("case_evidence").select("content, type, created_at") \
+            .eq("case_id", rc["id"]).order("created_at", desc=True).limit(5).execute()
+        evidence_snippets = []
+        for e in (ev_res.data or []):
+            evidence_snippets.append(f"  [{e['type']}] {e['content'][:400]}")
+
+        entities_res = sb.table("case_graph_entities").select("node_id") \
+            .eq("case_id", rc["id"]).execute()
+        entity_ids = [e["node_id"] for e in (entities_res.data or [])]
+
+        child_res = sb.table("cases").select("title, summary") \
+            .eq("parent_case_id", rc["id"]).execute()
+        subcases = [f"    - {c['title']}: {(c.get('summary') or '')[:100]}" for c in (child_res.data or [])]
+
+        brief = f"""CASE: {rc['title']}
+CATEGORY: {rc.get('category', 'other')}
+OPERATIONAL QUESTION: {rc.get('operational_question', 'N/A')}
+SUMMARY: {rc.get('summary', 'No summary yet')}
+ENTITIES ({len(entity_ids)}): {', '.join(entity_ids[:15])}
+SUB-CASES:
+{chr(10).join(subcases) or '  None yet'}
+RECENT EVIDENCE ({len(ev_res.data or [])} items):
+{chr(10).join(evidence_snippets) or '  None yet'}"""
+        case_briefs.append(brief)
+
+    prompt = f"""You are a Lead Intelligence Analyst overseeing multiple parallel investigations into the Epstein network. Your task is to perform a CROSS-CASE SYNTHESIS — stepping back from individual cases to identify the bigger picture.
+
+ACTIVE INVESTIGATIONS:
+{'=' * 60}
+{(chr(10) + '=' * 60 + chr(10)).join(case_briefs)}
+{'=' * 60}
+
+Analyze ALL cases together and identify:
+
+1. CROSS-CASE CONNECTIONS: Entities, financial flows, or patterns that appear across multiple cases. Which cases are converging on the same actors or mechanisms?
+2. EMERGENT NARRATIVE: What story emerges when you view all investigations together that isn't visible from any single case?
+3. CONTRADICTIONS: Where do findings in one case contradict or complicate findings in another?
+4. KNOWLEDGE GAPS: Critical questions that span multiple cases and haven't been answered yet.
+5. PRIORITY RECOMMENDATIONS: Based on the cross-case view, which leads or entities deserve the most urgent attention?
+
+Respond in JSON:
+{{
+    "intelligence_note": "A 3-5 paragraph narrative synthesis (the 'bigger picture' story)",
+    "cross_case_connections": ["entity or pattern that spans multiple cases"],
+    "contradictions": ["contradiction between cases"],
+    "gaps": ["critical unanswered questions spanning cases"],
+    "entity_investigations": ["entities that appear in multiple cases and need deeper investigation"],
+    "theories_to_test": ["cross-case theories worth testing"],
+    "new_subcases": [{{"title": "...", "summary": "why this cross-case angle merits its own sub-case"}}],
+    "priority_actions": ["top 3 most important next steps"]
+}}"""
+
+    response = _llm(prompt, json_mode=True, purpose="deep")
+    result = _extract_json_from_text(response)
+
+    # Save the narrative synthesis as evidence on the Bigger Picture case
+    intelligence_note = result.get("intelligence_note", "")
+    if intelligence_note:
+        cross_connections = result.get("cross_case_connections", [])
+        contradictions = result.get("contradictions", [])
+        gaps = result.get("gaps", [])
+
+        content = f"""# Cross-Case Intelligence Synthesis
+
+{intelligence_note}
+
+## Cross-Case Connections
+{chr(10).join(f'- {c}' for c in cross_connections) or 'None identified'}
+
+## Contradictions & Anomalies
+{chr(10).join(f'- {c}' for c in contradictions) or 'None identified'}
+
+## Knowledge Gaps
+{chr(10).join(f'- {g}' for g in gaps) or 'None identified'}
+
+## Priority Actions
+{chr(10).join(f'- {a}' for a in result.get('priority_actions', [])) or 'None'}"""
+
+        sb.table("case_evidence").insert({
+            "case_id": case_id,
+            "type": "fact_check",
+            "content": content,
+            "sources": [],
+        }).execute()
+
+    # Create sub-cases and enqueue tasks — reuse expand_branch's machinery
+    existing_children = get_child_cases(case_id)
+    slots_remaining = max(0, MAX_SUBCASES_PER_PARENT - len(existing_children))
+    for sc in result.get("new_subcases", [])[:slots_remaining]:
+        title = sc.get("title", "").strip()
+        if not title:
+            continue
+        subcase = find_or_create_subcase(
+            parent_case_id=case_id,
+            title=title,
+            category="bigger_picture",
+            summary=sc.get("summary", ""),
+        )
+        enqueue_task(
+            task_type="expand_branch",
+            description=f"Investigate cross-case angle: {title}",
+            priority=3,
+            case_id=subcase["id"],
+            parent_task_id=task.get("id"),
+        )
+
+    # Queue entity investigations
+    for entity in result.get("entity_investigations", [])[:3]:
+        if not has_investigated("investigated_entity", entity):
+            enqueue_task(
+                task_type="investigate_entity",
+                description=entity,
+                priority=3,
+                case_id=case_id,
+                parent_task_id=task.get("id"),
+            )
+
+    # Queue cross-case theories
+    for theory in result.get("theories_to_test", [])[:3]:
+        if not has_investigated("tested_theory", theory):
+            enqueue_task(
+                task_type="test_theory",
+                description=theory,
+                priority=4,
+                case_id=case_id,
+                parent_task_id=task.get("id"),
+            )
+
+    log_activity(
+        action="bigger_picture_synthesis",
+        description=f"Cross-case synthesis: {len(result.get('cross_case_connections', []))} connections, {len(result.get('contradictions', []))} contradictions, {len(result.get('gaps', []))} gaps",
         task_id=task.get("id"),
         case_id=case_id,
     )

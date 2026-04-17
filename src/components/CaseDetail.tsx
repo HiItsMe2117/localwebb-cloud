@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical, Globe, Network, Calendar, ChevronRight, FolderOpen } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Lock, Unlock, Trash2, Loader2, Database, Wand2, Share2, FileText, Copy, CheckSquare, Square, X, Pencil, Check, FlaskConical, Globe, Network, Calendar, ChevronRight, FolderOpen, Lightbulb } from 'lucide-react';
 import InvestigationSteps from './InvestigationSteps';
 import CaseNetworkMap from './CaseNetworkMap';
 import CaseTimeline from './CaseTimeline';
@@ -94,6 +94,7 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
   const [noteText, setNoteText] = useState('');
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [isConsolidating, setIsConsolidating] = useState(false);
+  const [isRefreshingBP, setIsRefreshingBP] = useState(false);
   const [detailTab, setDetailTab] = useState<'evidence' | 'timeline' | 'network'>('evidence');
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
@@ -269,6 +270,20 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
       toast.error('Report synthesis failed');
     } finally {
       setIsConsolidating(false);
+    }
+  };
+
+  const refreshBiggerPicture = async () => {
+    setIsRefreshingBP(true);
+    try {
+      const res = await axios.post('/api/cases/bigger-picture/synthesize');
+      setEvidence(prev => [res.data.evidence, ...prev]);
+      toast.success('Bigger picture updated');
+    } catch (err) {
+      console.error('Refresh failed:', err);
+      toast.error('Synthesis failed');
+    } finally {
+      setIsRefreshingBP(false);
     }
   };
 
@@ -484,6 +499,22 @@ export default function CaseDetail({ caseId, onBack, onStatusChange, onUpdate, o
               )}
               <span className="hidden sm:inline">{isConsolidating ? 'Synthesizing...' : 'Synthesize Report'}</span>
             </button>
+
+            {caseData?.category === 'bigger_picture' && (
+              <button
+                onClick={refreshBiggerPicture}
+                disabled={isRefreshingBP || isInvestigating}
+                className="flex items-center justify-center gap-2 bg-[#FFD60A] hover:bg-[#FFD60A]/80 text-black px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors disabled:opacity-30"
+                title="Re-synthesize findings from all your active cases"
+              >
+                {isRefreshingBP ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Lightbulb size={14} />
+                )}
+                <span className="hidden sm:inline">{isRefreshingBP ? 'Refreshing...' : 'Refresh Synthesis'}</span>
+              </button>
+            )}
 
             {onTheoryInvestigate && (
               <button
