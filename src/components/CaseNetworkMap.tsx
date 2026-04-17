@@ -2672,6 +2672,34 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
               {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
             </button>
           )}
+          <button
+            onClick={() => {
+              if (nodes.length === 0) return;
+              const simNodes = nodes.map(n => ({ id: n.id, x: Math.random() * 800 - 400, y: Math.random() * 800 - 400 }));
+              const simEdges = edges.map(e => ({ source: e.source, target: e.target }));
+              const sim = forceSimulation(simNodes as any)
+                .force('link', forceLink(simEdges as any).id((d: any) => d.id).distance(250))
+                .force('charge', forceManyBody().strength(-2000))
+                .force('center', forceCenter(0, 0).strength(0.05))
+                .force('collide', forceCollide(60))
+                .stop();
+              for (let i = 0; i < 300; i++) sim.tick();
+              const posMap = new Map(simNodes.map(n => [n.id, { x: n.x, y: n.y }]));
+              const laid = nodes.map(n => {
+                const p = posMap.get(n.id);
+                return p ? { ...n, position: { x: p.x, y: p.y } } : n;
+              });
+              setNodes(laid);
+              const updates = laid.map(n => ({ node_id: n.id, x: n.position.x, y: n.position.y }));
+              axios.post(`/api/cases/${caseId}/graph/positions`, { positions: updates }).catch(() => {});
+              setTimeout(() => fitView({ padding: 0.3, duration: 500 }), 50);
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white"
+            title="Force-spread all nodes"
+          >
+            <Network size={11} />
+            Spread
+          </button>
           {!isMobile && (
             <div className="flex items-center bg-[#2C2C2E] rounded-lg overflow-hidden">
               <button
