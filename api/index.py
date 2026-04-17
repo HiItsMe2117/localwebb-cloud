@@ -5944,12 +5944,17 @@ Be specific. Choose the most fitting category — avoid "general" unless nothing
                 print(f"Audit categorize step failed: {e}")
 
         # ─── Step 2: Find missing dates ────────────────────────────────────
+        # NOTE: Cannot combine response_mime_type with google_search tools.
+        # Use marker-based JSON extraction like the research endpoint.
         undated = [e for e in all_events if not e.get("event_date")]
         if undated and "dates" in request.checks:
-            BATCH_SIZE = 25
+            BATCH_SIZE = 15
             for i in range(0, len(undated), BATCH_SIZE):
                 batch = undated[i:i + BATCH_SIZE]
-                event_list = json.dumps([{"id": e["id"], "title": e["title"], "description": (e.get("description") or "")[:300]} for e in batch], indent=2)
+                event_list = "\n".join(
+                    f"- [{e['id']}] {e['title']}: {(e.get('description') or '')[:200]}"
+                    for e in batch
+                )
                 date_prompt = f"""You are an investigative researcher. Use web search to find accurate dates for timeline events that are currently missing dates.
 
 {case_context}
@@ -5957,15 +5962,19 @@ Be specific. Choose the most fitting category — avoid "general" unless nothing
 EVENTS MISSING DATES:
 {event_list}
 
-Search the web for each event. Return a JSON array with your findings:
-[{{"id": "event-uuid", "date": "YYYY-MM-DD or YYYY-MM or YYYY or null", "confidence": 0.8, "rationale": "Found court record dated March 12, 2015..."}}]
+Search the web for each event. After your research notes, you MUST include a structured section at the very end formatted EXACTLY like this:
+
+---DATES---
+[
+  {{"id": "event-uuid", "date": "YYYY-MM-DD or YYYY-MM or YYYY", "confidence": 0.8, "rationale": "Found court record dated March 12, 2015..."}}
+]
+---END---
 
 Guidelines:
 - Use YYYY-MM-DD when an exact date is confirmed.
 - Use YYYY-MM or YYYY for partial dates.
-- Return null for date if you truly cannot find any date reference.
 - Set confidence based on source reliability (court records = high, news articles = medium, inference = low).
-- Skip events where no date can be reasonably determined (don't include them in the response).
+- Only include events where you found a date. Skip the rest.
 - Never invent dates — only report what you can verify."""
 
                 try:
@@ -5975,12 +5984,24 @@ Guidelines:
                         contents=date_prompt,
                         config=types.GenerateContentConfig(
                             tools=[types.Tool(google_search=types.GoogleSearch())],
-                            response_mime_type="application/json",
                         ),
                     )
                     log_usage(user, "/api/cases/timeline/audit/dates", "gemini-2.0-flash", res.usage_metadata)
                     web_sources = _extract_web_sources(res)
-                    date_results = json.loads(res.text)
+
+                    # Parse structured dates from markers
+                    full_text = res.text or ""
+                    date_results = []
+                    if "---DATES---" in full_text and "---END---" in full_text:
+                        dates_json = full_text.split("---DATES---")[1].split("---END---")[0].strip()
+                        try:
+                            date_results = json.loads(dates_json)
+                        except json.JSONDecodeError:
+                            cleaned = dates_json.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                            try:
+                                date_results = json.loads(cleaned)
+                            except json.JSONDecodeError:
+                                pass
 
                     for dr in date_results:
                         if not isinstance(dr, dict) or "id" not in dr or not dr.get("date"):
@@ -6010,6 +6031,7 @@ Guidelines:
                             })
                 except Exception as e:
                     print(f"Audit date batch {i // BATCH_SIZE + 1} failed: {e}")
+                    import traceback; traceback.print_exc()
 
         # ─── Step 3: Detect duplicates ─────────────────────────────────────
         if len(all_events) >= 2 and "duplicates" in request.checks:
@@ -6096,29 +6118,28 @@ If no duplicates found, return an empty array: []"""
                 print(f"Audit duplicate detection failed: {e}")
 
         # ─── Step 4: Find missing sources ──────────────────────────────────
+        # Strategy: process events individually (or small batches) with Google Search
+        # grounding, then extract REAL grounded URLs from grounding_metadata — not
+        # LLM-hallucinated URLs. Cannot combine response_mime_type with google_search.
         unsourced = [e for e in all_events if not e.get("sources")]
         if unsourced and "sources" in request.checks:
-            BATCH_SIZE = 25
+            BATCH_SIZE = 10
             for i in range(0, len(unsourced), BATCH_SIZE):
                 batch = unsourced[i:i + BATCH_SIZE]
-                event_list = json.dumps([{"id": e["id"], "title": e["title"], "description": (e.get("description") or "")[:200], "event_date": e.get("event_date")} for e in batch], indent=2)
-                source_prompt = f"""You are an investigative researcher finding source citations for timeline events.
+                event_list = "\n".join(
+                    f"- [{e['id']}] {e.get('event_date') or 'undated'} — {e['title']}: {(e.get('description') or '')[:150]}"
+                    for e in batch
+                )
+                source_prompt = f"""You are an investigative researcher. Search the web to find authoritative sources for each of these timeline events.
 
 {case_context}
 
 EVENTS NEEDING SOURCES:
 {event_list}
 
-For each event, search the web to find authoritative sources that corroborate it (news articles, court records, government filings, corporate records, etc.).
-
-Return a JSON array:
-[{{"id": "event-uuid", "sources": [{{"uri": "https://...", "title": "Article or document title", "domain": "example.com"}}]}}]
-
-Guidelines:
-- Only include real, verifiable URLs.
-- Prefer primary sources (court records, SEC filings) over secondary (news).
-- Include 1-3 sources per event when available.
-- Skip events where no sources can be found (don't include them)."""
+For each event, search the web and describe what sources you found. Reference the event by its ID in brackets like [event-uuid].
+Focus on finding: court records, news articles, SEC filings, government documents, property records.
+If you cannot find a source for an event, skip it."""
 
                 try:
                     res = generate(
@@ -6127,33 +6148,36 @@ Guidelines:
                         contents=source_prompt,
                         config=types.GenerateContentConfig(
                             tools=[types.Tool(google_search=types.GoogleSearch())],
-                            response_mime_type="application/json",
                         ),
                     )
                     log_usage(user, "/api/cases/timeline/audit/sources", "gemini-2.0-flash", res.usage_metadata)
-                    source_results = json.loads(res.text)
 
-                    for sr in source_results:
-                        if not isinstance(sr, dict) or "id" not in sr:
-                            continue
-                        sources = sr.get("sources", [])
-                        if not sources:
-                            continue
-                        # Auto-apply sources (additive, low risk)
-                        supabase.table("case_timeline_events").update({"sources": sources}).eq("id", sr["id"]).eq("case_id", case_id).execute()
-                        auto_applied_sources += 1
-                        supabase.table("case_timeline_audit_suggestions").insert({
-                            "case_id": case_id, "event_id": sr["id"],
-                            "suggestion_type": "missing_source",
-                            "current_value": None,
-                            "suggested_value": json.dumps(sources),
-                            "confidence": 0.9,
-                            "ai_rationale": f"Found {len(sources)} source(s) via web search",
-                            "status": "auto_applied",
-                            "web_sources": sources,
-                        }).execute()
+                    # Extract REAL web sources from grounding metadata
+                    web_sources = _extract_web_sources(res)
+
+                    if web_sources:
+                        # Assign grounded sources to all events in this batch
+                        # The grounding sources cover the whole batch, so attach all to each event
+                        # that was mentioned in the response
+                        response_text = res.text or ""
+                        for ev in batch:
+                            # Check if this event's ID is referenced in the response
+                            if ev["id"] in response_text or ev["title"][:30] in response_text:
+                                supabase.table("case_timeline_events").update({"sources": web_sources}).eq("id", ev["id"]).eq("case_id", case_id).execute()
+                                auto_applied_sources += 1
+                                supabase.table("case_timeline_audit_suggestions").insert({
+                                    "case_id": case_id, "event_id": ev["id"],
+                                    "suggestion_type": "missing_source",
+                                    "current_value": None,
+                                    "suggested_value": json.dumps(web_sources),
+                                    "confidence": 0.9,
+                                    "ai_rationale": f"Found {len(web_sources)} grounded source(s) via web search",
+                                    "status": "auto_applied",
+                                    "web_sources": web_sources,
+                                }).execute()
                 except Exception as e:
                     print(f"Audit source batch {i // BATCH_SIZE + 1} failed: {e}")
+                    import traceback; traceback.print_exc()
 
         return {
             "auto_applied": {"categories": auto_applied_categories, "sources": auto_applied_sources},
