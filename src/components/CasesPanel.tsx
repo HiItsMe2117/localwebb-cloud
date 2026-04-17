@@ -514,7 +514,8 @@ export default function CasesPanel({
   };
 
   // ── Build tree from flat case list ──
-  const myCases = useMemo(() => cases.filter(c => c.source !== 'scan' && c.source !== 'theory'), [cases]);
+  const aiResearchIds = useMemo(() => new Set(aiResearchCases.map(c => c.id)), [aiResearchCases]);
+  const myCases = useMemo(() => cases.filter(c => !aiResearchIds.has(c.id)), [cases, aiResearchIds]);
   const caseTree = useMemo(() => buildCaseTree(myCases), [myCases]);
   const aiResearchTree = useMemo(() => buildCaseTree(aiResearchCases), [aiResearchCases]);
 
@@ -541,6 +542,11 @@ export default function CasesPanel({
       setIsAiResearchLoading(false);
     }
   };
+
+  // Load AI research cases on mount so we can filter them out of My Cases
+  useEffect(() => {
+    loadAiResearchCases();
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'explore') {

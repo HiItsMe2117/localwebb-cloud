@@ -1422,21 +1422,46 @@ async def list_ai_research_cases(user = Depends(optional_user)):
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
     try:
+        # Get top-level AI cases
         if user:
-            res = supabase.table("cases")\
+            ai_res = supabase.table("cases")\
                 .select("*")\
                 .or_(f"user_id.eq.{user.id},is_public.eq.true")\
                 .in_("source", ["scan", "theory"])\
                 .order("updated_at", desc=True)\
                 .execute()
         else:
-            res = supabase.table("cases")\
+            ai_res = supabase.table("cases")\
                 .select("*")\
                 .eq("is_public", True)\
                 .in_("source", ["scan", "theory"])\
                 .order("updated_at", desc=True)\
                 .execute()
-        return {"cases": res.data or []}
+
+        ai_cases = ai_res.data or []
+        ai_ids = [c["id"] for c in ai_cases]
+
+        # Also fetch all subcases (any depth) parented under AI cases
+        if ai_ids:
+            all_cases = {c["id"]: c for c in ai_cases}
+            # Iteratively find children until no new ones found
+            parent_ids = ai_ids
+            for _ in range(10):  # max depth guard
+                if not parent_ids:
+                    break
+                children_res = supabase.table("cases")\
+                    .select("*")\
+                    .in_("parent_case_id", parent_ids)\
+                    .execute()
+                new_children = [c for c in (children_res.data or []) if c["id"] not in all_cases]
+                if not new_children:
+                    break
+                for c in new_children:
+                    all_cases[c["id"]] = c
+                parent_ids = [c["id"] for c in new_children]
+            return {"cases": list(all_cases.values())}
+
+        return {"cases": ai_cases}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
