@@ -5827,6 +5827,24 @@ def _extract_web_sources(res) -> list:
     return web_sources
 
 
+def _safe_text(res) -> str:
+    """Safely extract text from a Gemini response, handling edge cases."""
+    try:
+        t = res.text
+        return str(t) if t else ""
+    except Exception:
+        # Fallback: manually extract text from parts
+        try:
+            parts = []
+            for candidate in (res.candidates or []):
+                for part in (candidate.content.parts or []):
+                    if hasattr(part, 'text') and isinstance(part.text, str):
+                        parts.append(part.text)
+            return "\n".join(parts)
+        except Exception:
+            return ""
+
+
 @app.post("/api/cases/{case_id}/timeline/audit")
 async def timeline_audit(case_id: str, request: AuditRunRequest = AuditRunRequest(), user = Depends(require_paid)):
     """Run AI audit on timeline events: categorize, find dates, detect duplicates, find sources."""
@@ -5894,7 +5912,7 @@ Be specific. Choose the most fitting category — avoid "general" unless nothing
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
                 log_usage(user, "/api/cases/timeline/audit/categorize", "gemini-2.0-flash", res.usage_metadata)
-                cat_results = json.loads(res.text)
+                cat_results = json.loads(_safe_text(res))
 
                 for cr in cat_results:
                     if not isinstance(cr, dict) or "id" not in cr:
@@ -5990,7 +6008,7 @@ Guidelines:
                     web_sources = _extract_web_sources(res)
 
                     # Parse structured dates from markers
-                    full_text = res.text or ""
+                    full_text = _safe_text(res)
                     date_results = []
                     if "---DATES---" in full_text and "---END---" in full_text:
                         dates_json = full_text.split("---DATES---")[1].split("---END---")[0].strip()
@@ -6085,7 +6103,7 @@ If no duplicates found, return an empty array: []"""
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
                 log_usage(user, "/api/cases/timeline/audit/duplicates", "gemini-2.0-flash", res.usage_metadata)
-                dedup_results = json.loads(res.text)
+                dedup_results = json.loads(_safe_text(res))
 
                 for group in dedup_results:
                     if not isinstance(group, dict) or "target_id" not in group:
@@ -6159,7 +6177,7 @@ If you cannot find a source for an event, skip it."""
                         # Assign grounded sources to all events in this batch
                         # The grounding sources cover the whole batch, so attach all to each event
                         # that was mentioned in the response
-                        response_text = res.text or ""
+                        response_text = _safe_text(res)
                         for ev in batch:
                             # Check if this event's ID is referenced in the response
                             if ev["id"] in response_text or ev["title"][:30] in response_text:
