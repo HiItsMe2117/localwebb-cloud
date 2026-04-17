@@ -514,7 +514,8 @@ export default function CasesPanel({
   };
 
   // ── Build tree from flat case list ──
-  const caseTree = useMemo(() => buildCaseTree(cases), [cases]);
+  const myCases = useMemo(() => cases.filter(c => c.source !== 'scan' && c.source !== 'theory'), [cases]);
+  const caseTree = useMemo(() => buildCaseTree(myCases), [myCases]);
   const aiResearchTree = useMemo(() => buildCaseTree(aiResearchCases), [aiResearchCases]);
 
   const loadExploreCases = async (query = '') => {
@@ -550,7 +551,7 @@ export default function CasesPanel({
   }, [activeTab, searchQuery]);
 
   const hasFindings = scanFindings.length > 0;
-  const hasCases = cases.length > 0;
+  const hasCases = myCases.length > 0;
 
   const handleCreate = async () => {
     if (!newTitle.trim() || isCreating) return;
