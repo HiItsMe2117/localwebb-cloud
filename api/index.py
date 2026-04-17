@@ -632,6 +632,10 @@ class UpdateCaseRequest(BaseModel):
     summary: Optional[str] = None
     is_public: Optional[bool] = None
 
+class BulkUpdateCasesRequest(BaseModel):
+    case_ids: List[str]
+    is_public: bool
+
 class AddNoteRequest(BaseModel):
     content: str
 
@@ -1793,6 +1797,30 @@ async def update_evidence(case_id: str, evidence_id: str, request: UpdateNoteReq
         supabase.table("cases").update({"updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", case_id).execute()
 
         return {"evidence": res.data[0] if res.data else {}}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.patch("/api/cases/bulk-update")
+async def bulk_update_cases(request: BulkUpdateCasesRequest, user = Depends(require_user)):
+    """Bulk update is_public for multiple cases."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        # Verify ownership of all cases
+        for case_id in request.case_ids:
+            await verify_case_ownership(case_id, user, write=True)
+
+        now = datetime.now(timezone.utc).isoformat()
+        updated = []
+        for case_id in request.case_ids:
+            res = supabase.table("cases").update({
+                "is_public": request.is_public,
+                "updated_at": now,
+            }).eq("id", case_id).execute()
+            if res.data:
+                updated.append(res.data[0])
+        return {"cases": updated, "count": len(updated)}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

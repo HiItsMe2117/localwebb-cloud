@@ -863,6 +863,22 @@ export default function CasesPanel({
                           onClick={() => {
                             const ids = Array.from(mergeSelection);
                             if (ids.length < 1) return;
+                            axios.patch('/api/cases/bulk-update', { case_ids: ids, is_public: true }).then(() => {
+                              toast.success(`Made ${ids.length} case(s) public`);
+                              setSelectMode(false);
+                              setMergeSelection(new Set());
+                              onRefresh?.();
+                            }).catch(() => toast.error('Failed to update cases'));
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-semibold bg-[#30D158]/20 text-[#30D158] hover:bg-[#30D158]/30 transition-colors"
+                        >
+                          <Globe size={12} />
+                          Make Public
+                        </button>
+                        <button
+                          onClick={() => {
+                            const ids = Array.from(mergeSelection);
+                            if (ids.length < 1) return;
                             if (window.confirm(`Delete ${ids.length} selected case(s)? This cannot be undone.`)) {
                               Promise.all(ids.map(id => axios.delete(`/api/cases/${id}`))).then(() => {
                                 toast.success(`Deleted ${ids.length} case(s)`);
