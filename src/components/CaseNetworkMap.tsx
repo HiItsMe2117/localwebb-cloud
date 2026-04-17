@@ -8,6 +8,7 @@ import NexusCanvas from './NexusCanvas';
 import EdgeEvidencePanel from './EdgeEvidencePanel';
 import axios from 'axios';
 import useIsMobile from '../hooks/useIsMobile';
+import { getLayoutedElements } from '../utils/layout';
 import type { WebSource } from '../types';
 
 interface CaseNetworkMapProps {
@@ -446,9 +447,32 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
   const loadGraph = useCallback(async () => {
     try {
       const res = await axios.get(`/api/cases/${caseId}/graph`);
-      setNodes(res.data.nodes || []);
-      setEdges(res.data.edges || []);
+      const loadedNodes: Node[] = res.data.nodes || [];
+      const loadedEdges: Edge[] = res.data.edges || [];
       setGroups(res.data.groups || []);
+
+      // Auto-layout if most nodes are stacked at origin
+      if (loadedNodes.length > 0) {
+        const atOrigin = loadedNodes.filter(n => Math.abs(n.position.x) < 1 && Math.abs(n.position.y) < 1).length;
+        if (atOrigin >= loadedNodes.length * 0.3) {
+          try {
+            const { nodes: laid } = await getLayoutedElements(loadedNodes, loadedEdges);
+            const posMap = new Map(laid.map(n => [n.id, n.position]));
+            const merged = loadedNodes.map(n => posMap.has(n.id) ? { ...n, position: posMap.get(n.id)! } : n);
+            setNodes(merged);
+            setEdges(loadedEdges);
+            // Persist the computed positions
+            const updates = laid.map(n => ({ node_id: n.id, x: n.position.x, y: n.position.y }));
+            axios.post(`/api/cases/${caseId}/graph/positions`, { positions: updates }).catch(() => {});
+            return;
+          } catch (e) {
+            console.error('Auto-layout failed, using raw positions:', e);
+          }
+        }
+      }
+
+      setNodes(loadedNodes);
+      setEdges(loadedEdges);
     } catch (err: any) {
       console.error('Failed to load case graph:', err);
       const status = err?.response?.status;
