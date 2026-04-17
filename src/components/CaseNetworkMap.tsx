@@ -455,7 +455,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
       if (loadedNodes.length > 0 && atOrigin >= loadedNodes.length * 0.3) {
         // Run D3 force simulation inline
         const simNodes = loadedNodes.map(n => ({ id: n.id, x: Math.random() * 800 - 400, y: Math.random() * 800 - 400 }));
-        const simEdges = loadedEdges.map(e => ({ source: e.source, target: e.target }));
+        const nodeIds = new Set(loadedNodes.map(n => n.id));
+        const simEdges = loadedEdges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target)).map(e => ({ source: e.source, target: e.target }));
         const sim = forceSimulation(simNodes as any)
           .force('link', forceLink(simEdges as any).id((d: any) => d.id).distance(250))
           .force('charge', forceManyBody().strength(-2000))
@@ -2675,7 +2676,8 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
             onClick={() => {
               if (nodes.length === 0) return;
               const simNodes = nodes.map(n => ({ id: n.id, x: Math.random() * 800 - 400, y: Math.random() * 800 - 400 }));
-              const simEdges = edges.map(e => ({ source: e.source, target: e.target }));
+              const nIds = new Set(nodes.map(n => n.id));
+              const simEdges = edges.filter(e => nIds.has(e.source) && nIds.has(e.target)).map(e => ({ source: e.source, target: e.target }));
               const sim = forceSimulation(simNodes as any)
                 .force('link', forceLink(simEdges as any).id((d: any) => d.id).distance(250))
                 .force('charge', forceManyBody().strength(-2000))
