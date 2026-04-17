@@ -456,7 +456,6 @@ function CaseNetworkMapInner({ caseId, caseEntities = [], readOnly = false }: Ca
         // Run D3 force simulation inline
         const simNodes = loadedNodes.map(n => ({ id: n.id, x: Math.random() * 800 - 400, y: Math.random() * 800 - 400 }));
         const simEdges = loadedEdges.map(e => ({ source: e.source, target: e.target }));
-        const radius = Math.sqrt(loadedNodes.length) * 80;
         const sim = forceSimulation(simNodes as any)
           .force('link', forceLink(simEdges as any).id((d: any) => d.id).distance(250))
           .force('charge', forceManyBody().strength(-2000))
