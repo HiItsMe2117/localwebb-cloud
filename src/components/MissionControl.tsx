@@ -464,10 +464,10 @@ function DirectiveRowItem({ d, onNavigateToCase }: { d: DirectiveTask; onNavigat
                 </div>
               )}
 
-              {/* Empty state */}
-              {findings.evidence.length === 0 && findings.timeline_events.length === 0 && !findings.case_id && (
+              {/* Empty state — only if there's truly nothing at all */}
+              {findings.evidence.length === 0 && findings.timeline_events.length === 0 && !findings.case_id && !d.result_summary && (
                 <p className="text-[12px] text-[rgba(235,235,245,0.3)] py-2">
-                  No findings were routed to a case for this directive.
+                  No findings were collected for this directive.
                 </p>
               )}
             </>

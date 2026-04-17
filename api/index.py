@@ -6000,6 +6000,22 @@ async def get_directive_findings(task_id: str, user=Depends(optional_user)):
         started_at = task.get("started_at")
         completed_at = task.get("completed_at")
 
+        # Fallback: if task has no case_id, find it from activity logs
+        if not case_id and started_at and completed_at:
+            # Look for activity entries in the task's execution window that have a case_id
+            act_res = supabase.table("agent_activity") \
+                .select("case_id") \
+                .not_.is_("case_id", "null") \
+                .gte("created_at", started_at) \
+                .lte("created_at", completed_at) \
+                .limit(20).execute()
+            if act_res.data:
+                # Pick the most common case_id (majority vote)
+                from collections import Counter
+                cid_counts = Counter(a["case_id"] for a in act_res.data if a.get("case_id"))
+                if cid_counts:
+                    case_id = cid_counts.most_common(1)[0][0]
+
         evidence = []
         entities = []
         timeline_events = []
@@ -6011,12 +6027,19 @@ async def get_directive_findings(task_id: str, user=Depends(optional_user)):
             if case_res.data:
                 case_title = case_res.data[0].get("title")
 
-            # Get evidence created during this task's execution window
+            # Get evidence created during this task's execution window (+ 2s buffer)
             if started_at and completed_at:
+                from datetime import datetime, timedelta, timezone
+                try:
+                    end_time = datetime.fromisoformat(completed_at.replace("Z", "+00:00")) + timedelta(seconds=2)
+                    end_str = end_time.isoformat()
+                except Exception:
+                    end_str = completed_at
+
                 ev_res = supabase.table("case_evidence").select("*") \
                     .eq("case_id", case_id) \
                     .gte("created_at", started_at) \
-                    .lte("created_at", completed_at) \
+                    .lte("created_at", end_str) \
                     .order("created_at", desc=True) \
                     .execute()
                 evidence = ev_res.data or []
@@ -6025,7 +6048,7 @@ async def get_directive_findings(task_id: str, user=Depends(optional_user)):
                 tl_res = supabase.table("case_timeline_events").select("id, title, event_date, description, category") \
                     .eq("case_id", case_id) \
                     .gte("created_at", started_at) \
-                    .lte("created_at", completed_at) \
+                    .lte("created_at", end_str) \
                     .order("created_at", desc=True) \
                     .execute()
                 timeline_events = tl_res.data or []
