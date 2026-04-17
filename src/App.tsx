@@ -780,6 +780,7 @@ function AppContent() {
         entities: finding.entity_ids,
         suggested_questions: finding.suggested_questions,
         evidence_sources: finding.sources || [],
+        source: 'scan',
       });
       const newCase = res.data.case;
       setCases(prev => [newCase, ...prev]);
@@ -917,6 +918,7 @@ function AppContent() {
           entities: v.entities,
           suggested_questions: v.suggested_questions,
           evidence_sources: [],
+          source: 'theory',
         });
         const newCase = res.data.case;
         setCases(prev => [newCase, ...prev]);

@@ -457,9 +457,11 @@ export default function CasesPanel({
   onRefresh,
   readOnly = false,
 }: CasesPanelProps) {
-  const [activeTab, setActiveTab] = useState<'my-cases' | 'explore'>('my-cases');
+  const [activeTab, setActiveTab] = useState<'my-cases' | 'explore' | 'ai-research'>('my-cases');
   const [exploreCases, setExploreCases] = useState<Case[]>([]);
   const [isExploreLoading, setIsExploreLoading] = useState(false);
+  const [aiResearchCases, setAiResearchCases] = useState<Case[]>([]);
+  const [isAiResearchLoading, setIsAiResearchLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -513,6 +515,7 @@ export default function CasesPanel({
 
   // ── Build tree from flat case list ──
   const caseTree = useMemo(() => buildCaseTree(cases), [cases]);
+  const aiResearchTree = useMemo(() => buildCaseTree(aiResearchCases), [aiResearchCases]);
 
   const loadExploreCases = async (query = '') => {
     setIsExploreLoading(true);
@@ -526,9 +529,23 @@ export default function CasesPanel({
     }
   };
 
+  const loadAiResearchCases = async () => {
+    setIsAiResearchLoading(true);
+    try {
+      const res = await axios.get('/api/cases/ai-research');
+      setAiResearchCases(res.data.cases || []);
+    } catch (err) {
+      console.error('Failed to load AI research cases:', err);
+    } finally {
+      setIsAiResearchLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'explore') {
       loadExploreCases(searchQuery);
+    } else if (activeTab === 'ai-research') {
+      loadAiResearchCases();
     }
   }, [activeTab, searchQuery]);
 
@@ -609,12 +626,19 @@ export default function CasesPanel({
             My Cases
             {activeTab === 'my-cases' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#007AFF] rounded-full" />}
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab('explore')}
             className={`pb-2 text-[13px] font-bold transition-colors relative ${activeTab === 'explore' ? 'text-white' : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'}`}
           >
             Explore Community
             {activeTab === 'explore' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#007AFF] rounded-full" />}
+          </button>
+          <button
+            onClick={() => setActiveTab('ai-research')}
+            className={`pb-2 text-[13px] font-bold transition-colors relative ${activeTab === 'ai-research' ? 'text-white' : 'text-[rgba(235,235,245,0.4)] hover:text-[rgba(235,235,245,0.6)]'}`}
+          >
+            AI Research
+            {activeTab === 'ai-research' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#FF9F0A] rounded-full" />}
           </button>
         </div>
       </header>
@@ -950,7 +974,7 @@ export default function CasesPanel({
                   </div>
                 )}
               </>
-            ) : (
+            ) : activeTab === 'explore' ? (
               <div className="space-y-6">
                 <div className="relative">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[rgba(235,235,245,0.3)]" size={16} />
@@ -980,6 +1004,47 @@ export default function CasesPanel({
                         <p className="text-[rgba(235,235,245,0.4)]">No public cases found matching your search.</p>
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* AI Research tab */
+              <div className="space-y-6">
+                {isAiResearchLoading ? (
+                  <div className="flex flex-col items-center justify-center py-20">
+                    <Loader2 size={32} className="text-[#FF9F0A] animate-spin mb-4" />
+                    <p className="text-[13px] text-[rgba(235,235,245,0.4)]">Loading AI research cases...</p>
+                  </div>
+                ) : aiResearchCases.length > 0 ? (
+                  <div className="space-y-1">
+                    {aiResearchTree.map(node => (
+                      <CaseTreeItem
+                        key={node.case.id}
+                        node={node}
+                        depth={0}
+                        onOpen={onOpenCase}
+                        selectedIds={new Set()}
+                        onToggleSelect={() => {}}
+                        selectMode={false}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center py-20">
+                    <div className="w-16 h-16 bg-[#1C1C1E] rounded-full flex items-center justify-center mb-6 border border-[rgba(84,84,88,0.65)]">
+                      <FlaskConical size={32} className="text-[rgba(235,235,245,0.3)]" />
+                    </div>
+                    <h2 className="text-[22px] font-bold text-white mb-2">AI Research Cases</h2>
+                    <p className="text-[rgba(235,235,245,0.6)] text-[15px] max-w-sm mx-auto text-center leading-relaxed mb-8">
+                      Cases generated by the AI scanner and theory investigations will appear here with their subcases.
+                    </p>
+                    <button
+                      onClick={() => { setActiveTab('my-cases'); onScan(); }}
+                      className="flex items-center gap-2 bg-[#FF9F0A] hover:bg-[#FF9F0A]/80 px-6 py-3 rounded-full text-[15px] font-semibold text-black transition-colors active:scale-95"
+                    >
+                      <Search size={18} />
+                      Run AI Scan
+                    </button>
                   </div>
                 )}
               </div>

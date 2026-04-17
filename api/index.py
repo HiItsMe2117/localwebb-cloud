@@ -624,6 +624,7 @@ class CreateCaseRequest(BaseModel):
     suggested_questions: List[str] = []
     evidence_sources: List[Dict[str, Any]] = []
     is_public: bool = False
+    source: str = "manual"
 
 class UpdateCaseRequest(BaseModel):
     status: Optional[str] = None
@@ -1415,6 +1416,31 @@ async def list_cases(user = Depends(optional_user)):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.get("/api/cases/ai-research")
+async def list_ai_research_cases(user = Depends(optional_user)):
+    """List AI-generated cases (from scan or theory) with their subcases."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        if user:
+            res = supabase.table("cases")\
+                .select("*")\
+                .or_(f"user_id.eq.{user.id},is_public.eq.true")\
+                .in_("source", ["scan", "theory"])\
+                .order("updated_at", desc=True)\
+                .execute()
+        else:
+            res = supabase.table("cases")\
+                .select("*")\
+                .eq("is_public", True)\
+                .in_("source", ["scan", "theory"])\
+                .order("updated_at", desc=True)\
+                .execute()
+        return {"cases": res.data or []}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/api/cases")
 async def create_case(request: CreateCaseRequest, user = Depends(require_user)):
     """Create a new case attached to the current user."""
@@ -1431,6 +1457,7 @@ async def create_case(request: CreateCaseRequest, user = Depends(require_user)):
             "entities": request.entities,
             "suggested_questions": request.suggested_questions,
             "is_public": request.is_public,
+            "source": request.source,
         }
         res = supabase.table("cases").insert(row).execute()
         

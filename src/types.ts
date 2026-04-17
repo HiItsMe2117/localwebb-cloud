@@ -61,6 +61,7 @@ export interface Case {
   parent_case_id: string | null;
   depth: number;
   operational_question: string | null;
+  source: 'scan' | 'manual' | 'theory';
   created_at: string;
   updated_at: string;
 }
