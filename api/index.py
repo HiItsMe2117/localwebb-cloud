@@ -1859,11 +1859,12 @@ async def synthesize_bigger_picture(user = Depends(require_paid)):
 
         bp_case_id = bp_case["id"]
 
-        # 2. Gather all user's active cases (excluding the BP case itself)
+        # 2. Gather AI Research cases (scan/theory source, excluding the BP case itself)
         cases_res = supabase.table("cases").select("*") \
             .eq("user_id", user_id) \
             .eq("status", "active") \
             .is_("parent_case_id", "null") \
+            .in_("source", ["scan", "theory"]) \
             .neq("category", "bigger_picture") \
             .order("updated_at", desc=True) \
             .limit(10).execute()
