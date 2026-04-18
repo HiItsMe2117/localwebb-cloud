@@ -7,6 +7,7 @@ import {
   FileText, Link2, CircleDot, Lightbulb, Shield, ExternalLink,
 } from 'lucide-react';
 import axios from 'axios';
+import { useAuth } from '../contexts/AuthContext';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -497,6 +498,9 @@ interface MissionControlProps {
 }
 
 export default function MissionControl({ onNavigateToCase }: MissionControlProps) {
+  const { isAdmin, isPro, isElite } = useAuth();
+  const canDirectAgent = isAdmin || isPro || isElite;
+
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [caseTree, setCaseTree] = useState<CaseTreeNode[]>([]);
@@ -635,25 +639,33 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
                     Direct the Agent
                   </span>
                 </div>
-                <div className="px-3 pb-3">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={directive}
-                      onChange={(e) => setDirective(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && submitDirective()}
-                      placeholder="e.g. Investigate the TerraMar Project..."
-                      className="flex-1 bg-[rgba(0,0,0,0.3)] text-[14px] text-white placeholder:text-[rgba(235,235,245,0.2)] rounded-xl px-3 py-2.5 border border-[rgba(84,84,88,0.36)] focus:border-[#007AFF] focus:outline-none transition-colors"
-                    />
-                    <button
-                      onClick={submitDirective}
-                      disabled={!directive.trim() || sendingDirective}
-                      className="bg-[#007AFF] hover:bg-[#0062CC] disabled:opacity-30 text-white rounded-xl px-3 py-2.5 transition-all active:scale-95"
-                    >
-                      {sendingDirective ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                    </button>
+                {canDirectAgent ? (
+                  <div className="px-3 pb-3">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={directive}
+                        onChange={(e) => setDirective(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && submitDirective()}
+                        placeholder="e.g. Investigate the TerraMar Project..."
+                        className="flex-1 bg-[rgba(0,0,0,0.3)] text-[14px] text-white placeholder:text-[rgba(235,235,245,0.2)] rounded-xl px-3 py-2.5 border border-[rgba(84,84,88,0.36)] focus:border-[#007AFF] focus:outline-none transition-colors"
+                      />
+                      <button
+                        onClick={submitDirective}
+                        disabled={!directive.trim() || sendingDirective}
+                        className="bg-[#007AFF] hover:bg-[#0062CC] disabled:opacity-30 text-white rounded-xl px-3 py-2.5 transition-all active:scale-95"
+                      >
+                        {sendingDirective ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="px-4 pb-3">
+                    <p className="text-[13px] text-[rgba(235,235,245,0.3)]">
+                      Upgrade your plan to direct the agent.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Case Tree */}
