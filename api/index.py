@@ -1569,6 +1569,26 @@ async def get_trending_cases(q: Optional[str] = Query(None), user = Depends(opti
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.get("/api/cases/bigger-picture")
+async def get_bigger_picture_case(user = Depends(require_user)):
+    """Get the user's Bigger Picture case, if it exists."""
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
+    try:
+        res = supabase.table("cases").select("*") \
+            .eq("user_id", str(user.id)) \
+            .eq("category", "bigger_picture") \
+            .limit(1).execute()
+        bp_case = res.data[0] if res.data else None
+        if bp_case:
+            ev_res = supabase.table("case_evidence").select("content, created_at") \
+                .eq("case_id", bp_case["id"]).order("created_at", desc=True).limit(1).execute()
+            bp_case["latest_evidence"] = ev_res.data[0] if ev_res.data else None
+        return {"case": bp_case}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.get("/api/cases/{case_id}")
 async def get_case(case_id: str, user = Depends(optional_user)):
     """Get a case with its evidence, checking permissions."""
@@ -1804,26 +1824,6 @@ Produce a professional, final investigative product."""
 # ---------------------------------------------------------------------------
 # Bigger Picture — cross-case synthesis
 # ---------------------------------------------------------------------------
-
-@app.get("/api/cases/bigger-picture")
-async def get_bigger_picture_case(user = Depends(require_user)):
-    """Get the user's Bigger Picture case, if it exists."""
-    if not supabase:
-        return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
-    try:
-        res = supabase.table("cases").select("*") \
-            .eq("user_id", str(user.id)) \
-            .eq("category", "bigger_picture") \
-            .limit(1).execute()
-        bp_case = res.data[0] if res.data else None
-        if bp_case:
-            ev_res = supabase.table("case_evidence").select("content, created_at") \
-                .eq("case_id", bp_case["id"]).order("created_at", desc=True).limit(1).execute()
-            bp_case["latest_evidence"] = ev_res.data[0] if ev_res.data else None
-        return {"case": bp_case}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
 
 @app.post("/api/cases/bigger-picture/synthesize")
 async def synthesize_bigger_picture(user = Depends(require_paid)):
