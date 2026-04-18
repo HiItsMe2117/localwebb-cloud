@@ -4,7 +4,7 @@ import {
   Activity, Send, ChevronRight, ChevronDown,
   Loader2, CheckCircle2, XCircle, Zap, Target,
   Clock, FolderTree, Search,
-  FileText, Link2, CircleDot, Lightbulb, Shield, ExternalLink,
+  FileText, Link2, CircleDot, Lightbulb, Shield, ExternalLink, RefreshCw,
 } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -509,23 +509,28 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
   const [directive, setDirective] = useState('');
   const [sendingDirective, setSendingDirective] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [biggerPicture, setBiggerPicture] = useState<{ id: string; latest_evidence: { content: string; created_at: string } | null } | null>(null);
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [bpExpanded, setBpExpanded] = useState(false);
   const activityRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [statusRes, activityRes, casesRes, findingsRes, directivesRes] = await Promise.all([
+      const [statusRes, activityRes, casesRes, findingsRes, directivesRes, bpRes] = await Promise.all([
         axios.get('/api/agent/status'),
         axios.get('/api/agent/activity?limit=100'),
         axios.get('/api/agent/cases/tree'),
         axios.get('/api/agent/findings'),
         axios.get('/api/agent/directives'),
+        axios.get('/api/cases/bigger-picture'),
       ]);
       setStatus(statusRes.data);
       setActivity(activityRes.data.items || []);
       setCaseTree(buildCaseTree(casesRes.data.cases || []));
       setFindings(findingsRes.data);
       setDirectives(directivesRes.data.directives || []);
+      setBiggerPicture(bpRes.data.case || null);
     } catch (err) {
       console.error('Mission control fetch error:', err);
     } finally {
@@ -559,6 +564,21 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
       toast.error('Failed to submit directive');
     } finally {
       setSendingDirective(false);
+    }
+  };
+
+  const triggerSynthesis = async () => {
+    if (isSynthesizing) return;
+    setIsSynthesizing(true);
+    try {
+      await axios.post('/api/cases/bigger-picture/synthesize');
+      toast.success('Bigger Picture updated');
+      await fetchAll();
+    } catch (err) {
+      console.error('Synthesis failed:', err);
+      toast.error('Failed to generate Bigger Picture');
+    } finally {
+      setIsSynthesizing(false);
     }
   };
 
@@ -624,6 +644,93 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
               <StatCard label="Theories" value={status?.theories_tested || 0} icon={Lightbulb} color="#AF52DE" />
               <StatCard label="Cases" value={status?.cases_created || 0} icon={FolderTree} color="#5AC8FA" />
             </div>
+          </div>
+
+          {/* Bigger Picture */}
+          <div className="bg-[#1C1C1E] rounded-2xl border border-[rgba(84,84,88,0.36)] overflow-hidden">
+            <div className="px-4 pt-3 pb-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Lightbulb size={14} className="text-[#FFD60A]" />
+                <span className="text-[11px] font-medium uppercase tracking-wider text-[rgba(235,235,245,0.4)]">
+                  The Bigger Picture
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {biggerPicture?.latest_evidence && (
+                  <span className="text-[11px] text-[rgba(235,235,245,0.25)] tabular-nums">
+                    {timeAgo(biggerPicture.latest_evidence.created_at)}
+                  </span>
+                )}
+                {canDirectAgent && (
+                  <button
+                    onClick={triggerSynthesis}
+                    disabled={isSynthesizing}
+                    className="flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#FFD60A]/15 text-[#FFD60A] hover:bg-[#FFD60A]/25 disabled:opacity-40 transition-colors"
+                  >
+                    {isSynthesizing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    {isSynthesizing ? 'Synthesizing...' : 'Refresh'}
+                  </button>
+                )}
+                {biggerPicture && (
+                  <button
+                    onClick={() => onNavigateToCase(biggerPicture.id)}
+                    className="flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[rgba(0,122,255,0.1)] text-[#007AFF] hover:bg-[rgba(0,122,255,0.2)] transition-colors"
+                  >
+                    <ExternalLink size={11} />
+                    Open Case
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {biggerPicture?.latest_evidence ? (
+              <div className="px-4 pb-3">
+                {/* Summary preview */}
+                <button
+                  onClick={() => setBpExpanded(!bpExpanded)}
+                  className="w-full text-left group"
+                >
+                  <p className="text-[13px] text-[rgba(235,235,245,0.6)] leading-relaxed">
+                    {bpExpanded
+                      ? null
+                      : biggerPicture.latest_evidence.content.slice(0, 250) + (biggerPicture.latest_evidence.content.length > 250 ? '...' : '')
+                    }
+                  </p>
+                  <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-medium text-[#FFD60A] group-hover:underline">
+                    {bpExpanded ? (
+                      <><ChevronDown size={12} /> Collapse</>
+                    ) : (
+                      <><ChevronRight size={12} /> View Full Synthesis</>
+                    )}
+                  </span>
+                </button>
+
+                {/* Expanded full synthesis */}
+                {bpExpanded && (
+                  <div className="mt-3 bg-[rgba(0,0,0,0.25)] rounded-xl px-4 py-3 max-h-[500px] overflow-y-auto">
+                    <p className="text-[13px] text-[rgba(235,235,245,0.7)] leading-relaxed whitespace-pre-wrap">
+                      {biggerPicture.latest_evidence.content}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="px-4 pb-4">
+                <p className="text-[13px] text-[rgba(235,235,245,0.3)] mb-3">
+                  No synthesis yet. Generate a cross-case intelligence assessment to surface patterns and connections across all your investigations.
+                </p>
+                {canDirectAgent && (
+                  <button
+                    onClick={triggerSynthesis}
+                    disabled={isSynthesizing}
+                    className="flex items-center gap-2 text-[13px] font-semibold px-4 py-2 rounded-xl bg-[#FFD60A]/15 text-[#FFD60A] hover:bg-[#FFD60A]/25 disabled:opacity-40 transition-colors"
+                  >
+                    {isSynthesizing ? <Loader2 size={14} className="animate-spin" /> : <Lightbulb size={14} />}
+                    {isSynthesizing ? 'Generating...' : 'Generate Now'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Two-column layout for desktop */}

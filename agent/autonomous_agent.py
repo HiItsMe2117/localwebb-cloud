@@ -21,7 +21,7 @@ import traceback
 from agent.config import (
     get_supabase, get_genai, CYCLE_COOLDOWN, THEORY_CONFIDENCE_COMMIT,
     MAX_CASE_ENTITIES, MAX_CASE_EVIDENCE, FAST_MODEL, EMBEDDING_MODEL,
-    content_hash,
+    content_hash, BIGGER_PICTURE_INTERVAL,
 )
 from agent.queue import next_task, complete_task, fail_task, enqueue_task, get_queue_stats
 from agent.memory import has_investigated, record_investigation
@@ -413,6 +413,39 @@ def _write_findings_to_case(result: dict, task: dict):
             pass  # non-critical
 
 
+def _maybe_enqueue_bigger_picture():
+    """Enqueue a Bigger Picture synthesis task if one isn't already queued."""
+    try:
+        sb = get_supabase()
+        # Find the BP root case
+        bp_res = sb.table("cases").select("id") \
+            .eq("category", "bigger_picture") \
+            .is_("parent_case_id", "null") \
+            .limit(1).execute()
+        if not bp_res.data:
+            return
+        bp_case_id = bp_res.data[0]["id"]
+
+        # Check if there's already a queued or in_progress expand_branch for this case
+        existing = sb.table("agent_tasks").select("id") \
+            .eq("case_id", bp_case_id) \
+            .eq("type", "expand_branch") \
+            .in_("status", ["queued", "in_progress"]) \
+            .limit(1).execute()
+        if existing.data:
+            return
+
+        enqueue_task(
+            task_type="expand_branch",
+            description="Periodic cross-case synthesis: The Bigger Picture",
+            priority=5,
+            case_id=bp_case_id,
+        )
+        print("[agent] Enqueued periodic Bigger Picture synthesis")
+    except Exception as e:
+        print(f"[agent] Failed to enqueue Bigger Picture: {e}")
+
+
 def execute_task(task: dict) -> dict:
     """Route a task to the appropriate strategy and execute it."""
     task_type = task.get("type", "")
@@ -581,6 +614,10 @@ def run():
 
             # Reset error counter on success
             consecutive_errors = 0
+
+            # Periodic Bigger Picture re-synthesis
+            if cycle % BIGGER_PICTURE_INTERVAL == 0:
+                _maybe_enqueue_bigger_picture()
 
         except KeyboardInterrupt:
             break

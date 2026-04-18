@@ -69,6 +69,9 @@ ITERATIVE_DEEPENING_CONFIDENCE_THRESHOLD = 0.7  # only deepen if confidence < th
 # Prior-investigation context injection
 PRIOR_MEMORY_LIMIT = 6  # max prior-memory entries to include in a prompt
 
+# Bigger Picture periodic re-synthesis
+BIGGER_PICTURE_INTERVAL = 20  # re-synthesize every N agent cycles
+
 # Case hierarchy limits
 MAX_CASE_ENTITIES = 30       # entities per case before it needs splitting
 MAX_CASE_EVIDENCE = 15       # evidence entries per case before it needs splitting

@@ -1815,7 +1815,12 @@ async def get_bigger_picture_case(user = Depends(require_paid)):
             .eq("user_id", str(user.id)) \
             .eq("category", "bigger_picture") \
             .limit(1).execute()
-        return {"case": res.data[0] if res.data else None}
+        bp_case = res.data[0] if res.data else None
+        if bp_case:
+            ev_res = supabase.table("case_evidence").select("content, created_at") \
+                .eq("case_id", bp_case["id"]).order("created_at", desc=True).limit(1).execute()
+            bp_case["latest_evidence"] = ev_res.data[0] if ev_res.data else None
+        return {"case": bp_case}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
