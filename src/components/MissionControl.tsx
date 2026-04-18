@@ -517,20 +517,26 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
 
   const fetchAll = useCallback(async () => {
     try {
-      const [statusRes, activityRes, casesRes, findingsRes, directivesRes, bpRes] = await Promise.all([
+      const [statusRes, activityRes, casesRes, findingsRes, directivesRes] = await Promise.all([
         axios.get('/api/agent/status'),
         axios.get('/api/agent/activity?limit=100'),
         axios.get('/api/agent/cases/tree'),
         axios.get('/api/agent/findings'),
         axios.get('/api/agent/directives'),
-        axios.get('/api/cases/bigger-picture'),
       ]);
       setStatus(statusRes.data);
       setActivity(activityRes.data.items || []);
       setCaseTree(buildCaseTree(casesRes.data.cases || []));
       setFindings(findingsRes.data);
       setDirectives(directivesRes.data.directives || []);
-      setBiggerPicture(bpRes.data.case || null);
+
+      // Fetch BP separately so a failure doesn't break the rest
+      try {
+        const bpRes = await axios.get('/api/cases/bigger-picture');
+        setBiggerPicture(bpRes.data.case || null);
+      } catch {
+        // BP not available — ignore
+      }
     } catch (err) {
       console.error('Mission control fetch error:', err);
     } finally {

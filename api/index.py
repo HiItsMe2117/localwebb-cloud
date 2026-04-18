@@ -1806,7 +1806,7 @@ Produce a professional, final investigative product."""
 # ---------------------------------------------------------------------------
 
 @app.get("/api/cases/bigger-picture")
-async def get_bigger_picture_case(user = Depends(require_paid)):
+async def get_bigger_picture_case(user = Depends(require_user)):
     """Get the user's Bigger Picture case, if it exists."""
     if not supabase:
         return JSONResponse(status_code=503, content={"error": "Supabase client not initialized."})
