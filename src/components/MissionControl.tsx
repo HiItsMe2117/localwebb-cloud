@@ -361,6 +361,11 @@ function DirectiveRowItem({ d, onNavigateToCase }: { d: DirectiveTask; onNavigat
               </span>
             )}
           </div>
+          {!expanded && d.result_summary && (
+            <p className="text-[11px] text-[rgba(235,235,245,0.4)] leading-relaxed mt-1.5 line-clamp-3">
+              {d.result_summary.length > 500 ? d.result_summary.slice(0, 497) + '...' : d.result_summary}
+            </p>
+          )}
         </div>
       </button>
 
