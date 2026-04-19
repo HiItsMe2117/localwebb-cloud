@@ -221,6 +221,22 @@ def get_supabase_client():
 
 supabase: Client = get_supabase_client()
 
+
+def batched_in_select(table: str, select_cols: str, in_column: str, ids: list, chunk_size: int = 80) -> list:
+    """Fetch rows using batched .in_() queries to avoid PostgREST URL length limits."""
+    if not ids:
+        return []
+    if len(ids) <= chunk_size:
+        res = supabase.table(table).select(select_cols).in_(in_column, ids).execute()
+        return res.data or []
+    all_rows = []
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i:i + chunk_size]
+        res = supabase.table(table).select(select_cols).in_(in_column, chunk).execute()
+        all_rows.extend(res.data or [])
+    return all_rows
+
+
 # Import and include billing router (must be after supabase and require_user are defined)
 try:
     from api.billing import router as billing_router
@@ -1674,12 +1690,15 @@ async def investigate_case(case_id: str, user = Depends(require_paid)):
     node_ids = [row["node_id"] for row in (graph_res.data or [])]
     if node_ids:
         # Get entity details from nodes table
-        nodes_res = supabase.table("nodes").select("id,label,type,description,aliases").in_("id", node_ids).execute()
-        network_entities = nodes_res.data or []
+        network_entities = batched_in_select("nodes", "id,label,type,description,aliases", "id", node_ids)
 
         # Get relationships between pinned entities
-        edges_res = supabase.table("edges").select("source,target,label,predicate,evidence_text").in_("source", node_ids).in_("target", node_ids).execute()
-        network_relationships = edges_res.data or []
+        target_set = set(node_ids)
+        network_relationships = []
+        for i in range(0, len(node_ids), 80):
+            chunk = node_ids[i:i + 80]
+            res = supabase.table("edges").select("source,target,label,predicate,evidence_text").in_("source", chunk).execute()
+            network_relationships.extend(r for r in (res.data or []) if r["target"] in target_set)
 
     case_context = {
         "title": case_data["title"],
@@ -2296,8 +2315,8 @@ async def get_aggregated_child_graph(case_id: str, user = Depends(optional_user)
             position_map = {r["node_id"]: {"x": r.get("position_x"), "y": r.get("position_y")} for r in pinned}
 
             if node_ids:
-                nodes_res = supabase.table("nodes").select("*").in_("id", node_ids).execute()
-                for n in (nodes_res.data or []):
+                nodes_data = batched_in_select("nodes", "*", "id", node_ids)
+                for n in nodes_data:
                     if n["id"] not in seen_node_ids:
                         meta = n.get("metadata") or {}
                         pos = position_map.get(n["id"], {})
@@ -2519,8 +2538,8 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
         # Fetch global node data
         nodes = []
         if node_ids:
-            nodes_res = supabase.table("nodes").select("*").in_("id", node_ids).execute()
-            for n in nodes_res.data or []:
+            nodes_data = batched_in_select("nodes", "*", "id", node_ids)
+            for n in nodes_data:
                 meta = n.get("metadata") or {}
                 pos = position_map.get(n["id"], {})
                 nodes.append({
@@ -2613,14 +2632,18 @@ async def get_case_graph(case_id: str, user = Depends(optional_user)):
         # Fetch global KG edges between pinned entities (+ custom node IDs + sticky note IDs)
         all_node_ids = node_ids + [cn["id"] for cn in custom_rows] + [sn["id"] for sn in sticky_rows]
         if len(all_node_ids) >= 2:
-            global_edges_res = supabase.table("edges").select(
-                "id, source, target, label, predicate, evidence_text, source_filename, source_page, confidence, date_mentioned"
-            ).in_("source", all_node_ids).in_("target", all_node_ids).execute()
+            edge_select = "id, source, target, label, predicate, evidence_text, source_filename, source_page, confidence, date_mentioned"
+            target_set = set(all_node_ids)
+            global_edges_data = []
+            for i in range(0, len(all_node_ids), 80):
+                chunk = all_node_ids[i:i + 80]
+                res = supabase.table("edges").select(edge_select).in_("source", chunk).execute()
+                global_edges_data.extend(r for r in (res.data or []) if r["target"] in target_set)
 
             case_edge_pairs = {(ce["source_node_id"], ce["target_node_id"]) for ce in (case_edges_res.data or [])}
             case_edge_pairs |= {(ce["target_node_id"], ce["source_node_id"]) for ce in (case_edges_res.data or [])}
 
-            for ge in (global_edges_res.data or []):
+            for ge in global_edges_data:
                 if (ge["source"], ge["target"]) in case_edge_pairs:
                     continue
                 edges.append({
@@ -3331,11 +3354,16 @@ async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequ
         node_ids = request.node_ids
 
         # Fetch node details
-        nodes_res = supabase.table("nodes").select("id, label, type, description, aliases").in_("id", node_ids).execute()
-        nodes_by_id = {n["id"]: n for n in (nodes_res.data or [])}
+        nodes_data = batched_in_select("nodes", "id, label, type, description, aliases", "id", node_ids)
+        nodes_by_id = {n["id"]: n for n in nodes_data}
 
         # Fetch all edges between the selected nodes
-        direct_edges = supabase.table("edges").select("source, target, label, predicate, evidence_text, confidence").in_("source", node_ids).in_("target", node_ids).execute()
+        target_set = set(node_ids)
+        direct_edges_data = []
+        for i in range(0, len(node_ids), 80):
+            chunk = node_ids[i:i + 80]
+            res = supabase.table("edges").select("source, target, label, predicate, evidence_text, confidence").in_("source", chunk).execute()
+            direct_edges_data.extend(r for r in (res.data or []) if r["target"] in target_set)
 
         # Fetch shared neighbors: entities connected to 2+ of the selected nodes
         all_neighbor_edges = []
@@ -3380,7 +3408,7 @@ async def analyze_case_graph_entities(case_id: str, request: AnalyzeEntitiesRequ
             entity_descriptions.append(f"- {n.get('label', nid)} ({n.get('type', 'UNKNOWN')}): {desc[:200]}")
 
         direct_edge_descriptions = []
-        for e in (direct_edges.data or []):
+        for e in direct_edges_data:
             src = nodes_by_id.get(e["source"], {}).get("label", e["source"])
             tgt = nodes_by_id.get(e["target"], {}).get("label", e["target"])
             direct_edge_descriptions.append(f"- {src} → {e.get('label', e.get('predicate', '?'))} → {tgt}")
@@ -3517,7 +3545,7 @@ Be specific, name names, and think like a journalist building a story. Keep it c
             "follow_up": follow_up,
             "search_terms": search_terms,
             "new_entities_found": len(found_entities),
-            "direct_connections": len(direct_edges.data or []),
+            "direct_connections": len(direct_edges_data),
             "shared_connections": len(shared_neighbors_detail),
             "shared_neighbors": shared_neighbors_detail[:10],
         }
@@ -3541,14 +3569,14 @@ async def chat_case_graph(case_id: str, request: GraphChatRequest, user = Depend
         node_ids = request.node_ids
 
         # Fetch node details (global nodes)
-        nodes_res = supabase.table("nodes").select("id, label, type, description, aliases").in_("id", node_ids).execute()
-        nodes_by_id = {n["id"]: n for n in (nodes_res.data or [])}
+        nodes_data = batched_in_select("nodes", "id, label, type, description, aliases", "id", node_ids)
+        nodes_by_id = {n["id"]: n for n in nodes_data}
 
         # Also fetch custom case-local nodes that may not be in the global table
         missing_ids = [nid for nid in node_ids if nid not in nodes_by_id]
         if missing_ids:
-            custom_res = supabase.table("case_graph_custom_nodes").select("id, label, type").in_("id", missing_ids).execute()
-            for cn in (custom_res.data or []):
+            custom_data = batched_in_select("case_graph_custom_nodes", "id, label, type", "id", missing_ids)
+            for cn in custom_data:
                 nodes_by_id[cn["id"]] = {
                     "id": cn["id"],
                     "label": cn.get("label", "Untitled"),
@@ -3558,11 +3586,16 @@ async def chat_case_graph(case_id: str, request: GraphChatRequest, user = Depend
                 }
 
         # Fetch case-level description overrides
-        case_desc_res = supabase.table("case_entity_descriptions").select("node_id, description").eq("case_id", case_id).in_("node_id", node_ids).execute()
-        case_descriptions = {r["node_id"]: r["description"] for r in (case_desc_res.data or [])}
+        case_desc_data = batched_in_select("case_entity_descriptions", "node_id, description", "node_id", node_ids)
+        case_descriptions = {r["node_id"]: r["description"] for r in case_desc_data}
 
         # Fetch direct edges between selected nodes
-        direct_edges = supabase.table("edges").select("source, target, label, predicate, evidence_text, confidence").in_("source", node_ids).in_("target", node_ids).execute()
+        target_set = set(node_ids)
+        direct_edges_data = []
+        for i in range(0, len(node_ids), 80):
+            chunk = node_ids[i:i + 80]
+            res = supabase.table("edges").select("source, target, label, predicate, evidence_text, confidence").in_("source", chunk).execute()
+            direct_edges_data.extend(r for r in (res.data or []) if r["target"] in target_set)
 
         # Also include case-local edges
         case_edges = supabase.table("case_graph_edges").select("source_node_id, target_node_id, label").eq("case_id", case_id).execute()
@@ -3617,7 +3650,7 @@ async def chat_case_graph(case_id: str, request: GraphChatRequest, user = Depend
             entity_lines.append(f"- {n.get('label', nid)} ({n.get('type', 'UNKNOWN')}): {desc}")
 
         edge_lines = []
-        for e in (direct_edges.data or []):
+        for e in direct_edges_data:
             src = nodes_by_id.get(e["source"], {}).get("label", e["source"])
             tgt = nodes_by_id.get(e["target"], {}).get("label", e["target"])
             evidence = (e.get("evidence_text") or "")[:150]
@@ -5577,8 +5610,8 @@ async def graph_research(case_id: str, request: GraphResearchRequest, user = Dep
         entity_lines = []
         nodes_by_id = {}
         if node_ids:
-            nodes_res = supabase.table("nodes").select("id, label, type").in_("id", node_ids).execute()
-            for n in (nodes_res.data or []):
+            nodes_data = batched_in_select("nodes", "id, label, type", "id", node_ids)
+            for n in nodes_data:
                 nodes_by_id[n["id"]] = n
                 entity_lines.append(f"- {n.get('label', n['id'])} ({n.get('type', '?')})")
         for cn in custom_nodes:
