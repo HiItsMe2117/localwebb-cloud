@@ -481,8 +481,8 @@ def execute_task(task: dict) -> dict:
 
         # Generate summary for task completion
         summary = result.get("summary") or result.get("function_analysis") or result.get("reasoning") or "Completed"
-        if isinstance(summary, str) and len(summary) > 500:
-            summary = summary[:497] + "..."
+        if isinstance(summary, str) and len(summary) > 2000:
+            summary = summary[:1997] + "..."
 
         complete_task(task_id, summary)
         update_agent_status(increment_completed=True)
