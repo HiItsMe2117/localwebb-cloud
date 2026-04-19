@@ -156,15 +156,32 @@ def _groq_generate_stream(model, contents, config):
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+def _is_prohibited(response):
+    """Return True if Gemini blocked the prompt as PROHIBITED_CONTENT."""
+    try:
+        pf = getattr(response, 'prompt_feedback', None)
+        if pf and getattr(pf, 'block_reason', None):
+            return 'PROHIBITED' in str(pf.block_reason).upper()
+    except Exception:
+        pass
+    return False
+
+
 def generate(genai_client, model, contents, config=None):
     """
     Non-streaming generation. Tries Gemini first; on 429 / RESOURCE_EXHAUSTED
-    falls back to Groq.  Returns an object with .text (and optionally .parsed).
+    or PROHIBITED_CONTENT, falls back to Groq.
+    Returns an object with .text (and optionally .parsed).
     """
     try:
-        return genai_client.models.generate_content(
+        res = genai_client.models.generate_content(
             model=model, contents=contents, config=config,
         )
+        # Check for prompt-level content block (not an exception, just empty response)
+        if _is_prohibited(res) and _get_groq_client() is not None:
+            print(f"LLM: Gemini PROHIBITED_CONTENT ({model}), falling back to Groq")
+            return _groq_generate(model, contents, config)
+        return res
     except Exception as e:
         if not _is_rate_limit(e) or _get_groq_client() is None:
             raise

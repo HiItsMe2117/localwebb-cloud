@@ -1929,8 +1929,19 @@ Produce a professional cross-case intelligence assessment in Markdown with:
             client,
             model="gemini-2.5-pro",
             contents=prompt,
+            config=types.GenerateContentConfig(
+                safety_settings=[
+                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                ],
+            ),
         )
         synthesis_text = res.text
+
+        if not synthesis_text:
+            return JSONResponse(status_code=502, content={"error": "AI model returned an empty response. Please try again."})
 
         log_usage(user, "/api/cases/bigger-picture/synthesize", "gemini-2.5-pro", res.usage_metadata)
 

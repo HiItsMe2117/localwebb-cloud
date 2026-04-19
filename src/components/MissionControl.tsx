@@ -511,9 +511,11 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
   const [loading, setLoading] = useState(true);
   const [biggerPicture, setBiggerPicture] = useState<{ id: string; latest_evidence: { content: string; created_at: string } | null } | null>(null);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [bpCooldown, setBpCooldown] = useState(0);
   const [bpExpanded, setBpExpanded] = useState(false);
   const activityRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -550,6 +552,7 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
     pollRef.current = setInterval(fetchAll, 5000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      if (cooldownRef.current) clearInterval(cooldownRef.current);
     };
   }, [fetchAll]);
 
@@ -573,13 +576,29 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
     }
   };
 
+  const startCooldown = useCallback((seconds: number) => {
+    setBpCooldown(seconds);
+    if (cooldownRef.current) clearInterval(cooldownRef.current);
+    cooldownRef.current = setInterval(() => {
+      setBpCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(cooldownRef.current!);
+          cooldownRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, []);
+
   const triggerSynthesis = async () => {
-    if (isSynthesizing) return;
+    if (isSynthesizing || bpCooldown > 0) return;
     setIsSynthesizing(true);
     try {
       await axios.post('/api/cases/bigger-picture/synthesize');
       toast.success('Bigger Picture updated');
       await fetchAll();
+      startCooldown(120);
     } catch (err) {
       console.error('Synthesis failed:', err);
       toast.error('Failed to generate Bigger Picture');
@@ -670,11 +689,11 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
                 {canDirectAgent && (
                   <button
                     onClick={triggerSynthesis}
-                    disabled={isSynthesizing}
+                    disabled={isSynthesizing || bpCooldown > 0}
                     className="flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#FFD60A]/15 text-[#FFD60A] hover:bg-[#FFD60A]/25 disabled:opacity-40 transition-colors"
                   >
                     {isSynthesizing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                    {isSynthesizing ? 'Synthesizing...' : 'Refresh'}
+                    {isSynthesizing ? 'Synthesizing...' : bpCooldown > 0 ? `${Math.floor(bpCooldown / 60)}:${String(bpCooldown % 60).padStart(2, '0')}` : 'Refresh'}
                   </button>
                 )}
                 {biggerPicture && (
@@ -728,11 +747,11 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
                 {canDirectAgent && (
                   <button
                     onClick={triggerSynthesis}
-                    disabled={isSynthesizing}
+                    disabled={isSynthesizing || bpCooldown > 0}
                     className="flex items-center gap-2 text-[13px] font-semibold px-4 py-2 rounded-xl bg-[#FFD60A]/15 text-[#FFD60A] hover:bg-[#FFD60A]/25 disabled:opacity-40 transition-colors"
                   >
                     {isSynthesizing ? <Loader2 size={14} className="animate-spin" /> : <Lightbulb size={14} />}
-                    {isSynthesizing ? 'Generating...' : 'Generate Now'}
+                    {isSynthesizing ? 'Generating...' : bpCooldown > 0 ? `Cooldown ${Math.floor(bpCooldown / 60)}:${String(bpCooldown % 60).padStart(2, '0')}` : 'Generate Now'}
                   </button>
                 )}
               </div>
