@@ -13,9 +13,11 @@ VALID_DEPTHS = {"shallow", "standard", "deep"}
 _DEPTH_PREFIX_RE = re.compile(r"^\s*\[depth=(shallow|standard|deep)\]\s*", re.IGNORECASE)
 
 
-def parse_research_depth(description: str) -> tuple[str, str]:
+def parse_research_depth(description) -> tuple[str, str]:
     """Extract a research_depth prefix from a task description.
     Returns (depth, cleaned_description). Defaults to "standard" when absent."""
+    if isinstance(description, dict):
+        description = description.get("description") or description.get("lead") or description.get("title") or str(description)
     if not description:
         return "standard", description or ""
     m = _DEPTH_PREFIX_RE.match(description)
@@ -47,7 +49,10 @@ def enqueue_task(
     on the description so no schema change is needed.
     """
     sb = get_supabase()
-    final_desc = description or ""
+    # LLM responses sometimes return dicts instead of strings for leads/theories
+    if isinstance(description, dict):
+        description = description.get("description") or description.get("lead") or description.get("title") or str(description)
+    final_desc = str(description) if description else ""
     if research_depth:
         rd = research_depth.lower()
         if rd in VALID_DEPTHS:

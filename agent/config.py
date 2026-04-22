@@ -126,6 +126,8 @@ def get_genai():
     return _genai_client
 
 
-def content_hash(text: str) -> str:
+def content_hash(text) -> str:
     """Deterministic hash for dedup in agent_memory."""
+    if not isinstance(text, str):
+        text = str(text)
     return hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
