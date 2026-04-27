@@ -1995,6 +1995,19 @@ Produce a professional cross-case intelligence assessment in Markdown with:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.post("/api/cases/bigger-picture/pause")
+async def toggle_bigger_picture_pause(user = Depends(require_paid)):
+    """Toggle the Bigger Picture auto-synthesis pause state."""
+    try:
+        current = supabase.table("agent_status").select("bp_paused").eq("id", 1).execute()
+        currently_paused = current.data[0].get("bp_paused", False) if current.data else False
+        new_state = not currently_paused
+        supabase.table("agent_status").update({"bp_paused": new_state}).eq("id", 1).execute()
+        return {"bp_paused": new_state}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/api/cases/{case_id}/notes")
 async def add_case_note(case_id: str, request: AddNoteRequest, user = Depends(require_user)):
     """Add a note to a case."""

@@ -417,6 +417,13 @@ def _maybe_enqueue_bigger_picture():
     """Enqueue a Bigger Picture synthesis task if one isn't already queued."""
     try:
         sb = get_supabase()
+
+        # Check if BP is paused
+        status = sb.table("agent_status").select("bp_paused").eq("id", 1).execute()
+        if status.data and status.data[0].get("bp_paused"):
+            print("[agent] Bigger Picture is paused — skipping")
+            return
+
         # Find the BP root case
         bp_res = sb.table("cases").select("id") \
             .eq("category", "bigger_picture") \

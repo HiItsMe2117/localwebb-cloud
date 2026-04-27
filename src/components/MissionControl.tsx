@@ -4,7 +4,7 @@ import {
   Activity, Send, ChevronRight, ChevronDown,
   Loader2, CheckCircle2, XCircle, Zap, Target,
   Clock, FolderTree, Search,
-  FileText, Link2, CircleDot, Lightbulb, Shield, ExternalLink, RefreshCw,
+  FileText, Link2, CircleDot, Lightbulb, Shield, ExternalLink, RefreshCw, Pause, Play,
 } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
@@ -26,6 +26,7 @@ interface AgentStatus {
   entities_added: number;
   cases_created: number;
   last_heartbeat: string | null;
+  bp_paused: boolean;
   queue_stats: {
     queued: number;
     completed: number;
@@ -612,6 +613,18 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
     }
   };
 
+  const toggleBpPause = async () => {
+    try {
+      const res = await axios.post('/api/cases/bigger-picture/pause');
+      const paused = res.data.bp_paused;
+      toast.success(paused ? 'Bigger Picture auto-synthesis paused' : 'Bigger Picture auto-synthesis resumed');
+      await fetchAll();
+    } catch (err) {
+      console.error('Failed to toggle BP pause:', err);
+      toast.error('Failed to toggle pause');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -690,6 +703,20 @@ export default function MissionControl({ onNavigateToCase }: MissionControlProps
                   <span className="text-[11px] text-[rgba(235,235,245,0.25)] tabular-nums">
                     {timeAgo(biggerPicture.latest_evidence.created_at)}
                   </span>
+                )}
+                {canDirectAgent && (
+                  <button
+                    onClick={toggleBpPause}
+                    className={`flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                      status?.bp_paused
+                        ? 'bg-[#30D158]/15 text-[#30D158] hover:bg-[#30D158]/25'
+                        : 'bg-[#FF453A]/15 text-[#FF453A] hover:bg-[#FF453A]/25'
+                    }`}
+                    title={status?.bp_paused ? 'Resume auto-synthesis' : 'Pause auto-synthesis'}
+                  >
+                    {status?.bp_paused ? <Play size={12} /> : <Pause size={12} />}
+                    {status?.bp_paused ? 'Resume' : 'Pause'}
+                  </button>
                 )}
                 {canDirectAgent && (
                   <button
