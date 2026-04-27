@@ -409,6 +409,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const [newDate, setNewDate] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newCategory, setNewCategory] = useState('general');
+  const [newTags, setNewTags] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
   // Selection & linking
@@ -487,8 +488,11 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewMode, setViewMode] = useState<'canvas' | 'list'>('canvas');
   const [filterCategories, setFilterCategories] = useState<Set<string>>(new Set());
+  const [filterTags, setFilterTags] = useState<Set<string>>(new Set());
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [showTagFilterDropdown, setShowTagFilterDropdown] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
+  const tagFilterRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Context menu for event editing
@@ -497,6 +501,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
   const [editDate, setEditDate] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editCategory, setEditCategory] = useState('general');
+  const [editTags, setEditTags] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const contextRef = useRef<HTMLDivElement>(null);
 
@@ -691,6 +696,12 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     return trackIds.some(tid => !disabledTrackIds.has(tid));
   }, [disabledTrackIds]);
 
+  const isEventTagVisible = useCallback((tags: string[] | undefined) => {
+    if (filterTags.size === 0) return true;
+    if (!tags || tags.length === 0) return false;
+    return tags.some(t => filterTags.has(t));
+  }, [filterTags]);
+
   // Enabled tracks (ordered by creation) — defines swim-lane order
   const enabledTracks = useMemo(
     () => tracks.filter(t => !disabledTrackIds.has(t.id)),
@@ -704,6 +715,9 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     let filtered = nodes;
     if (filterCategories.size > 0) {
       filtered = filtered.filter(n => filterCategories.has(n.data?.category || 'general'));
+    }
+    if (filterTags.size > 0) {
+      filtered = filtered.filter(n => isEventTagVisible(n.data?.tags));
     }
     filtered = filtered.filter(n => isEventTrackVisible(n.data?.track_ids));
 
@@ -793,6 +807,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
           setEditDate(newNode.data.event_date || '');
           setEditDescription(newNode.data.description || '');
           setEditCategory(newNode.data.category || 'general');
+          setEditTags((newNode.data.tags || []).join(', '));
         }
         return newNode;
       });
@@ -849,11 +864,13 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         category: newCategory,
         position_x: centerX,
         position_y: centerY,
+        tags: newTags.split(',').map(t => t.trim()).filter(Boolean),
       });
       setNewTitle('');
       setNewDate('');
       setNewDescription('');
       setNewCategory('general');
+      setNewTags('');
       setShowCreateForm(false);
       shouldAutoLayoutAfterLoad.current = true;
       await loadTimeline();
@@ -876,16 +893,18 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         event_date: editDate || null,
         description: editDescription,
         category: editCategory,
+        tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
       });
       await loadTimeline();
       setContextEvent(null);
+      setEditTags('');
     } catch (err) {
       console.error('Failed to update event:', err);
       toast.error('Failed to update event');
     } finally {
       setIsSavingEdit(false);
     }
-  }, [caseId, contextEvent, editTitle, editDate, editDescription, editCategory, loadTimeline]);
+  }, [caseId, contextEvent, editTitle, editDate, editDescription, editCategory, editTags, loadTimeline]);
 
   // ── Delete event ───────────────────────────────────────────────────────────
 
@@ -1402,6 +1421,9 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
       if (filterRef.current && !filterRef.current.contains(e.target as HTMLElement)) {
         setShowFilterDropdown(false);
       }
+      if (tagFilterRef.current && !tagFilterRef.current.contains(e.target as HTMLElement)) {
+        setShowTagFilterDropdown(false);
+      }
     };
     document.addEventListener('pointerdown', handler);
     return () => document.removeEventListener('pointerdown', handler);
@@ -1416,12 +1438,32 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
     });
   }, []);
 
+  const toggleFilterTag = useCallback((tag: string) => {
+    setFilterTags(prev => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  }, []);
+
+  const allTags = useMemo(() => {
+    const tags = new Set<string>();
+    nodes.forEach(n => {
+      (n.data?.tags || []).forEach((t: string) => tags.add(t));
+    });
+    return Array.from(tags).sort();
+  }, [nodes]);
+
   // ── Filtered & sorted list for list view ──────────────────────────────────
 
   const sortedFilteredEvents = useMemo(() => {
     let filtered = [...nodes];
     if (filterCategories.size > 0) {
       filtered = filtered.filter(n => filterCategories.has(n.data?.category || 'general'));
+    }
+    if (filterTags.size > 0) {
+      filtered = filtered.filter(n => isEventTagVisible(n.data?.tags));
     }
     filtered = filtered.filter(n => isEventTrackVisible(n.data?.track_ids));
     return filtered.sort((a, b) => {
@@ -1675,13 +1717,26 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                     <option key={key} value={key}>{label}</option>
                   ))}
                 </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 relative">
+                  <Tag size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[rgba(235,235,245,0.2)]" />
+                  <input
+                    type="text"
+                    value={newTags}
+                    onChange={e => setNewTags(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') createEvent(); }}
+                    placeholder="Tags (comma-separated: Bear Stearns, Wexner...)"
+                    className="w-full bg-[#1C1C1E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl pl-8 pr-3 py-2 text-[12px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+                  />
+                </div>
                 <button
                   onClick={createEvent}
                   disabled={!newTitle.trim() || isCreating}
-                  className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-3 py-2 rounded-xl text-[13px] font-semibold text-white transition-colors shrink-0"
+                  className="flex items-center gap-1.5 bg-[#007AFF] hover:bg-[#0071E3] disabled:opacity-50 px-4 py-2 rounded-xl text-[13px] font-semibold text-white transition-colors shrink-0"
                 >
                   {isCreating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                  Add
+                  Add Event
                 </button>
               </div>
             </div>
@@ -2031,6 +2086,13 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                           <option key={key} value={key}>{label}</option>
                         ))}
                       </select>
+                      <input
+                        type="text"
+                        value={editTags}
+                        onChange={e => setEditTags(e.target.value)}
+                        placeholder="Tags (comma-separated)"
+                        className="w-full bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+                      />
                       <div className="flex items-center gap-2 pt-1">
                         <button
                           onClick={updateEvent}
@@ -2100,6 +2162,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                       setEditDate(target.data.event_date || '');
                                       setEditDescription(target.data.description || '');
                                       setEditCategory(target.data.category || 'general');
+                                      setEditTags((target.data.tags || []).join(', '));
                                     }
                                     return target;
                                   });
@@ -2151,7 +2214,15 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                     </div>
                                   )}
                                 </div>
-                              </td>
+                                {node.data?.tags && node.data.tags.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {node.data.tags.map((tag: string) => (
+                                      <span key={tag} className="text-[9px] font-bold px-1 py-0.5 rounded bg-[#2C2C2E] text-[rgba(235,235,245,0.4)] border border-[rgba(84,84,88,0.3)]">
+                                        {tag}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}                              </td>
                               <td className="px-2 py-2.5">
                                 <span className="text-[12px] text-[rgba(235,235,245,0.45)] line-clamp-2">{node.data?.description}</span>
                               </td>
@@ -2216,6 +2287,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                         setEditDate(target.data.event_date || '');
                                         setEditDescription(target.data.description || '');
                                         setEditCategory(target.data.category || 'general');
+                                        setEditTags((target.data.tags || []).join(', '));
                                       }
                                       return target;
                                     });
@@ -2267,6 +2339,15 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                       </div>
                                     )}
                                   </div>
+                                  {node.data?.tags && node.data.tags.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {node.data.tags.map((tag: string) => (
+                                        <span key={tag} className="text-[9px] font-bold px-1 py-0.5 rounded bg-[#2C2C2E] text-[rgba(235,235,245,0.4)] border border-[rgba(84,84,88,0.3)]">
+                                          {tag}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="px-2 py-2.5">
                                   <span className="text-[12px] text-[rgba(235,235,245,0.45)] line-clamp-2">{node.data?.description}</span>
@@ -2331,6 +2412,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                                 setEditDate(target.data.event_date || '');
                                 setEditDescription(target.data.description || '');
                                 setEditCategory(target.data.category || 'general');
+                                setEditTags((target.data.tags || []).join(', '));
                               }
                               return target;
                             });
@@ -2394,6 +2476,15 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                               </div>
                             )}
                           </div>
+                          {node.data?.tags && node.data.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {node.data.tags.map((tag: string) => (
+                                <span key={tag} className="text-[9px] font-bold px-1 py-0.5 rounded bg-[#2C2C2E] text-[rgba(235,235,245,0.4)] border border-[rgba(84,84,88,0.3)]">
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-2.5">
                           <span className="text-[12px] text-[rgba(235,235,245,0.45)] line-clamp-2">{node.data?.description}</span>
@@ -2496,6 +2587,13 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                         <option key={key} value={key}>{label}</option>
                       ))}
                     </select>
+                    <input
+                      type="text"
+                      value={editTags}
+                      onChange={e => setEditTags(e.target.value)}
+                      placeholder="Tags"
+                      className="flex-1 min-w-[150px] bg-[#2C2C2E] border border-[rgba(84,84,88,0.65)] focus:border-[#007AFF] rounded-xl px-3 py-2 text-[13px] text-white placeholder:text-[rgba(235,235,245,0.2)] focus:outline-none transition-colors"
+                    />
                     <button
                       onClick={updateEvent}
                       disabled={isSavingEdit || !editTitle.trim()}
@@ -3232,6 +3330,64 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
                     </button>
                   );
                 })}
+              </div>
+            )}
+          </div>
+
+          {/* Tag filter */}
+          <div className="relative" ref={tagFilterRef}>
+            <button
+              onClick={() => setShowTagFilterDropdown(v => !v)}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+                filterTags.size > 0
+                  ? 'bg-[#5AC8FA] text-black'
+                  : 'bg-[#2C2C2E] text-[rgba(235,235,245,0.5)] hover:text-white'
+              }`}
+            >
+              <Tag size={11} />
+              Tags{filterTags.size > 0 && ` (${filterTags.size})`}
+            </button>
+            {showTagFilterDropdown && (
+              <div className="absolute bottom-full mb-1 left-0 z-40 bg-[#1C1C1E]/95 backdrop-blur-xl border border-[rgba(84,84,88,0.65)] rounded-xl shadow-2xl overflow-hidden min-w-[180px] max-h-[300px] overflow-y-auto">
+                <div className="px-3 py-2 border-b border-[rgba(84,84,88,0.35)] flex items-center justify-between sticky top-0 bg-[#1C1C1E]/95 backdrop-blur-xl z-10">
+                  <span className="text-[10px] font-semibold text-[rgba(235,235,245,0.4)] uppercase tracking-wider">Tags</span>
+                  {filterTags.size > 0 && (
+                    <button
+                      onClick={() => setFilterTags(new Set())}
+                      className="text-[10px] text-[#007AFF] hover:text-[#0071E3] font-medium"
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
+                {allTags.length === 0 ? (
+                  <div className="px-4 py-6 text-center">
+                    <p className="text-[11px] text-[rgba(235,235,245,0.3)]">No tags found</p>
+                  </div>
+                ) : (
+                  <div className="py-1">
+                    {allTags.map(tag => {
+                      const count = nodes.filter(n => (n.data?.tags || []).includes(tag)).length;
+                      return (
+                        <button
+                          key={tag}
+                          onClick={() => toggleFilterTag(tag)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[#2C2C2E] transition-colors"
+                        >
+                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                            filterTags.has(tag)
+                              ? 'bg-[#5AC8FA] border-[#5AC8FA]'
+                              : 'border-[rgba(84,84,88,0.65)]'
+                          }`}>
+                            {filterTags.has(tag) && <Check size={10} className="text-black" />}
+                          </div>
+                          <span className="text-[12px] text-[rgba(235,235,245,0.8)] flex-1 text-left truncate">{tag}</span>
+                          <span className="text-[10px] text-[rgba(235,235,245,0.3)] font-mono">{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>

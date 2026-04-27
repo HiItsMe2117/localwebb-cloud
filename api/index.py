@@ -2884,6 +2884,7 @@ class CreateTimelineEventRequest(BaseModel):
     position_y: float = 0
     track_ids: List[str] = []
     sources: Optional[List[dict]] = None
+    tags: List[str] = []
 
 class UpdateTimelineEventRequest(BaseModel):
     title: Optional[str] = None
@@ -2891,6 +2892,7 @@ class UpdateTimelineEventRequest(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = None
     track_ids: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
 
 class CreateTimelineTrackRequest(BaseModel):
     entity_node_id: Optional[str] = None
@@ -4840,6 +4842,7 @@ async def get_case_timeline(case_id: str, user = Depends(optional_user)):
                     "sourceGraphNodeId": ev.get("source_graph_node_id"),
                     "track_ids": event_tracks.get(ev["id"], []),
                     "sources": ev.get("sources"),
+                    "tags": ev.get("tags") or [],
                 },
             })
 
@@ -4879,6 +4882,7 @@ async def create_timeline_event(case_id: str, request: CreateTimelineEventReques
             "position_x": request.position_x,
             "position_y": request.position_y,
             "sources": request.sources,
+            "tags": request.tags,
         }
         result = supabase.table("case_timeline_events").insert(record).execute()
         ev = result.data[0] if result.data else None
@@ -4908,6 +4912,8 @@ async def update_timeline_event(case_id: str, event_id: str, request: UpdateTime
             updates["description"] = request.description
         if request.category is not None:
             updates["category"] = request.category
+        if request.tags is not None:
+            updates["tags"] = request.tags
 
         if updates:
             result = supabase.table("case_timeline_events").update(updates).eq("id", event_id).eq("case_id", case_id).execute()

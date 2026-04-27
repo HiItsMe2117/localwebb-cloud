@@ -76,6 +76,20 @@ function EventNode({ data, selected }: NodeProps) {
           </div>
         </div>
 
+        {/* Tags */}
+        {data.tags && data.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-1.5">
+            {data.tags.map((tag: string) => (
+              <span
+                key={tag}
+                className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-[#2C2C2E] text-[rgba(235,235,245,0.4)] border border-[rgba(84,84,88,0.3)]"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Title */}
         <p
           className="text-[13px] font-bold text-white leading-tight mb-1"
