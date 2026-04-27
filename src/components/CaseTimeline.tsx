@@ -1079,6 +1079,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         position_x: centerX + offset,
         position_y: centerY + offset,
         sources: webSources && webSources.length > 0 ? webSources : undefined,
+        tags: [],
       });
       shouldAutoLayoutAfterLoad.current = true;
       await loadTimeline();
@@ -1345,6 +1346,7 @@ function CaseTimelineInner({ caseId, readOnly = false }: CaseTimelineProps) {
         position_y: centerY + offset,
         track_ids: [generateTrack.id],
         sources: webSources && webSources.length > 0 ? webSources : undefined,
+        tags: [],
       });
       shouldAutoLayoutAfterLoad.current = true;
       await loadTimeline();
